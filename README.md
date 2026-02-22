@@ -45,7 +45,7 @@ The system is built around **3 Airflow DAGs** and a **WebSocket streaming servic
 | Pipeline | Type | Trigger |
 |----------|------|---------|
 | Real-time speech translation | WebSocket stream (FastAPI) | Court official starts session |
-| `document_pipeline_dag` | Airflow DAG | User uploads a PDF |
+| `document_pipeline_dag` | Airflow DAG (not yet implemented) | User uploads a PDF |
 | `form_scraper_dag` | Airflow DAG (scheduled) | Weekly, every Monday |
 | `form_pretranslation_dag` | Airflow DAG | Triggered by scraper when new/updated forms found |
 
@@ -103,6 +103,8 @@ Users can request a second language translation without re-uploading. The pipeli
 ## Government Form Management
 
 ### Scraping (form_scraper_dag, weekly)
+
+*(For detailed setup, configuration, anomaly detection, and manual testing of the data pipelines, please see the [Data Pipeline README](./data_pipeline/README.md)).*
 
 The scraper visits mass.gov court form pages, downloads each form, generates a SHA-256 content hash, and compares against the existing catalog. It handles five scenarios:
 
@@ -225,10 +227,25 @@ Every code change goes through GitHub Actions:
 │   │   ├── documents.py           # Document upload + translation
 │   │   └── forms.py               # Government form browsing
 │   └── frontend/                  # React app
+├── data_pipeline/                 # Dedicated Airflow scraper pipeline workspace
+│   ├── dags/
+│   │   ├── form_scraper_dag.py        # Weekly scrape mass.gov
+│   │   ├── form_pretranslation_dag.py # Translate new court forms
+│   │   └── src/
+│   │       ├── scrape_forms.py        # Core scraper script
+│   │       ├── preprocess_forms.py    # Form validation and sanitation
+│   │       └── bias_detection.py      # Language and division coverage checks
+│   ├── scripts/
+│   │   └── validate_catalog.py        # Catalog schema validation script
+│   ├── tests/                         # 66 pipeline unit tests
+│   ├── forms/                         # Downloaded PDFs (DVC tracked)
+│   ├── Dockerfile
+│   ├── docker-compose.yml             # 5 Airflow services + Postgres
+│   ├── dvc.yaml                       # Data versioning config
+│   ├── requirements.txt
+│   └── README.md                      # Detailed pipeline docs
 ├── dags/
-│   ├── document_pipeline_dag.py   # DAG 1: User document translation
-│   ├── form_pretranslation_dag.py # DAG 2: Translate new court forms
-│   └── form_scraper_dag.py        # DAG 3: Weekly scrape mass.gov
+│   └── document_pipeline_dag.py   # DAG 1: User document translation
 ├── scripts/
 │   ├── capture_audio.py           # WebRTC audio handling
 │   ├── voice_activity.py          # Silero VAD
@@ -243,8 +260,7 @@ Every code change goes through GitHub Actions:
 │   ├── reconstruct_pdf.py         # PyMuPDF layout reconstruction
 │   ├── validate_input.py          # TFDV validation
 │   ├── pii_scrub.py               # Microsoft Presidio
-│   ├── log_metadata.py            # Logging utility
-│   └── scrape_forms.py            # mass.gov form scraper
+│   └── log_metadata.py            # Logging utility
 ├── monitoring/
 │   ├── drift_detect.py            # Evidently AI
 │   └── anomaly_detect.py          # TFDV anomaly checks
@@ -269,10 +285,6 @@ Every code change goes through GitHub Actions:
 │   ├── test.yml                   # PR → pytest
 │   ├── build.yml                  # Merge → Docker build → push
 │   └── deploy.yml                 # Release → Terraform → GKE
-├── Dockerfile
-├── docker-compose.yml
-├── dvc.yaml
-├── requirements.txt
 └── README.md
 ```
 
