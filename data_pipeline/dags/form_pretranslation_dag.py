@@ -222,6 +222,8 @@ def task_load_form_entry(**context) -> dict:
         # Record which translations already exist (partial case)
         "already_has_es": already_has_es,
         "already_has_pt": already_has_pt,
+        "existing_es_path": latest.get("file_path_es"),   # ← Added THIS
+        "existing_pt_path": latest.get("file_path_pt"),   # ← Added THIS
         # Flag mislabeled files so OCR can handle them gracefully
         "is_mislabeled": "mislabeled" in str(entry.get("preprocessing_flags", [])),
     }
@@ -430,6 +432,7 @@ def task_reconstruct_pdf_spanish(**context) -> dict:
 
     if form_meta.get("skip") or form_meta.get("already_has_es"):
         logger.info("Skipping Spanish PDF reconstruction — already exists.")
+        existing_es = form_meta.get("existing_es_path")
         ti.xcom_push(key="path_es", value=form_meta["versions"][0]["file_path_es"]
                      if not form_meta.get("skip") else None)
         return {}
@@ -460,6 +463,7 @@ def task_reconstruct_pdf_portuguese(**context) -> dict:
 
     if form_meta.get("skip") or form_meta.get("already_has_pt"):
         logger.info("Skipping Portuguese PDF reconstruction — already exists.")
+        existing_pt = form_meta.get("existing_pt_path")
         ti.xcom_push(key="path_pt", value=None)
         return {}
 
