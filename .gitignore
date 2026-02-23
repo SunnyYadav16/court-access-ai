@@ -211,3 +211,30 @@ __marimo__/
 
 # Gemini AI agent artifacts
 .gemini/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── Airflow (data_pipeline) ──
+data_pipeline/logs/
+data_pipeline/plugins/
+data_pipeline/config/
+data_pipeline/airflow/
+
+# ── Downloaded PDFs (tracked by DVC, not Git) ──
+data_pipeline/forms/
+
+# ── DVC local remote storage ──
+data_pipeline/dvc_storage/
+
+# ── DVC-tracked data files (pointer .dvc files ARE pushed) ──
+data_pipeline/dags/data/form_catalog.json
+
+# ── Generated runtime reports ──
+data_pipeline/dags/data/anomaly_report.json
+data_pipeline/dags/data/preprocess_report.json
+data_pipeline/dags/data/bias_report.json
+data_pipeline/dags/data/prev_catalog_metrics.json

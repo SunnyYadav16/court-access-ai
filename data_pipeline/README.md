@@ -1,10 +1,14 @@
-# CourtAccess AI — Form Scraper Data Pipeline
+# CourtAccess AI — Data Pipeline
 
 **MLOps Data Pipeline for Massachusetts Trial Court Language Access**
 
 Part of the CourtAccess AI system — an AI-driven platform providing real-time courtroom interpretation and legal document translation for non-English speakers in the Massachusetts Trial Court system.
 
-This pipeline automatically scrapes Massachusetts court forms from mass.gov, downloads PDFs (including existing Spanish and Portuguese translations), tracks changes with 5-scenario classification, preprocesses data, validates schema, detects anomalies and coverage bias, and versions everything using DVC.
+This pipeline consists of **two Airflow DAGs**:
+
+1. **`form_scraper_dag`** (scheduled weekly) — Scrapes Massachusetts court forms from mass.gov, downloads PDFs (including existing Spanish and Portuguese translations), tracks changes with 5-scenario classification, preprocesses data, validates schema, detects anomalies and coverage bias, and versions everything using DVC.
+
+2. **`form_pretranslation_dag`** (triggered by scraper) — Translates new or updated court forms to Spanish and Portuguese via OCR → translation → legal review → PDF reconstruction, then updates the form catalog and versions the output with DVC.
 
 ---
 
@@ -15,6 +19,7 @@ This pipeline automatically scrapes Massachusetts court forms from mass.gov, dow
 - [Setup Instructions](#setup-instructions)
 - [Running the Pipeline](#running-the-pipeline)
 - [Pipeline Tasks (8 Stages)](#pipeline-tasks-8-stages)
+- [Pre-Translation Pipeline](#pre-translation-pipeline-form_pretranslation_dag)
 - [Data Acquisition](#data-acquisition)
 - [Data Preprocessing](#data-preprocessing)
 - [Data Schema & Validation](#data-schema--validation)
@@ -88,13 +93,17 @@ form_scraper_dag (Airflow DAG — Scheduled Every Monday 06:00 UTC)
 ```
 data_pipeline/
 ├── dags/                                  # Airflow DAGs and source code
-│   ├── form_scraper_dag.py                # Main DAG — 8 tasks
-│   ├── form_pretranslation_dag.py         # Placeholder — future DAG for AI translation
+│   ├── form_scraper_dag.py                # Scraper DAG — 8 tasks (weekly)
+│   ├── form_pretranslation_dag.py         # Pre-translation DAG — 11 tasks (triggered)
 │   ├── src/                               # Modular pipeline source code
 │   │   ├── __init__.py
 │   │   ├── scrape_forms.py                # Core scraping logic + 5 scenario handlers
 │   │   ├── preprocess_forms.py            # Data cleaning, normalization, file validation
-│   │   └── bias_detection.py              # Data slicing and coverage equity analysis
+│   │   ├── bias_detection.py              # Language and division coverage checks
+│   │   ├── ocr_printed.py                 # OCR text extraction (stub → PaddleOCR v3)
+│   │   ├── translate_text.py              # Translation (stub → NLLB-200)
+│   │   ├── legal_review.py                # Legal term validation (stub → Groq/Llama)
+│   │   └── reconstruct_pdf.py             # PDF reconstruction with PyMuPDF
 │   └── data/                              # Pipeline outputs (generated at runtime)
 │       ├── form_catalog.json              # Form metadata catalog (DVC tracked)
 │       ├── catalog_metrics.json           # Validation metrics (DVC metrics)
@@ -180,19 +189,19 @@ This automatically:
 
 Open `http://localhost:8080` and log in with `airflow` / `airflow`.
 
-### Step 5 — Verify DAG is Visible
+### Step 5 — Verify DAGs are Visible
 
 ```bash
 docker compose exec airflow-scheduler airflow dags list
 ```
 
-You should see `form_scraper_dag` in the output.
+You should see both `form_scraper_dag` and `form_pretranslation_dag` in the output.
 
 ---
 
 ## Running the Pipeline
 
-### Trigger Manually
+### Trigger the Scraper Manually
 
 ```bash
 docker compose exec airflow-scheduler airflow dags unpause form_scraper_dag
@@ -201,15 +210,30 @@ docker compose exec airflow-scheduler airflow dags trigger form_scraper_dag
 
 Or use the Airflow UI: toggle the DAG on → click the play button.
 
+The scraper's `trigger_pretranslation` task automatically triggers `form_pretranslation_dag` for any new or updated forms (Scenarios A & B).
+
+### Trigger Pre-Translation Manually
+
+To translate a specific form without running the full scraper:
+
+```bash
+docker compose exec airflow-scheduler airflow dags unpause form_pretranslation_dag
+docker compose exec airflow-scheduler airflow dags trigger form_pretranslation_dag \
+  --conf '{"form_id": "<uuid-from-catalog>"}'
+```
+
+The `form_id` must exist in `dags/data/form_catalog.json` with a valid `file_path_original`.
+
 ### Automatic Schedule
 
-The DAG runs every Monday at 06:00 UTC automatically. No manual intervention needed after the initial setup.
+The scraper DAG runs every Monday at 06:00 UTC automatically. The pretranslation DAG has no schedule — it is only triggered by the scraper or manually.
 
 ### Monitor Progress
 
-In the Airflow UI: click `form_scraper_dag` → click the running DAG run → click any task → **Logs** tab.
+In the Airflow UI: click the DAG name → click the running DAG run → click any task → **Logs** tab.
 
-The full run takes approximately 20-40 minutes (scraping 11 departments with rate-limit sleeps between batches).
+- **Scraper** runs take approximately 20-40 minutes (scraping 11 departments with rate-limit sleeps between batches).
+- **Pre-translation** runs take approximately 1-5 minutes per form (depending on PDF size and page count).
 
 ### View Outputs
 
@@ -226,7 +250,7 @@ cat dags/data/anomaly_report.json
 # Bias report
 cat dags/data/bias_report.json
 
-# Downloaded PDFs
+# Downloaded and translated PDFs
 ls forms/
 ```
 
@@ -241,9 +265,98 @@ ls forms/
 | 3 | `validate_catalog` | Inline in DAG | Validates JSON schema, checks duplicates, verifies PDFs exist, generates metrics |
 | 4 | `detect_anomalies` | Inline in DAG | Compares against previous run, checks thresholds, generates anomaly report |
 | 5 | `detect_bias` | `src/bias_detection.py` | Data slicing by division/language/section, flags coverage imbalances |
-| 6 | `trigger_pretranslation` | Inline in DAG | Queues forms for AI translation (placeholder for DAG 2) |
+| 6 | `trigger_pretranslation` | Inline in DAG | Triggers `form_pretranslation_dag` for new/updated forms (Scenarios A & B) |
 | 7 | `log_summary` | Inline in DAG | Prints consolidated report to Airflow logs |
 | 8 | `dvc_version_data` | Inline in DAG | Runs `dvc add` + `dvc push` to version data |
+
+---
+
+## Pre-Translation Pipeline (form_pretranslation_dag)
+
+Triggered by `form_scraper_dag` when Scenario A (new form) or Scenario B (updated form) is detected. Processes **one form per DAG run**.
+
+### Pipeline Flow
+
+```
+form_pretranslation_dag (Airflow DAG — Triggered, no schedule)
+┌──────────────────────────────────────────────────────────────────────────┐
+│                                                                          │
+│  load_form_entry                                                         │
+│  │  Read form_id from trigger conf, locate catalog entry                │
+│  │  Validate original PDF exists, detect partial translations           │
+│  │  Skip form if ES + PT already exist from mass.gov                    │
+│  ▼                                                                      │
+│  ocr_extract_text                                                        │
+│  │  Extract text regions with bounding boxes from original PDF          │
+│  │  (Stub: PyMuPDF native. Production: PaddleOCR v3 + Qwen2.5-VL)      │
+│  ▼                                                                      │
+│  ┌─────────────────────────┬─────────────────────────┐                   │
+│  │  translate_spanish      │  translate_portuguese    │  (parallel)      │
+│  │  → legal_review_spanish │  → legal_review_portuguese│ (parallel)      │
+│  │  → reconstruct_pdf_es   │  → reconstruct_pdf_pt    │  (parallel)      │
+│  └─────────────┬───────────┴───────────┬─────────────┘                   │
+│                ▼                       ▼                                 │
+│  store_and_update_catalog                                                │
+│  │  Write translated PDF paths into form_catalog.json                   │
+│  │  Update languages_available, set needs_human_review=True             │
+│  │  Append audit notes if legal review was skipped                      │
+│  ▼                                                                      │
+│  dvc_version_data                                                        │
+│  │  Track updated catalog + translated PDFs with DVC                    │
+│  ▼                                                                      │
+│  log_summary                                                             │
+│     Print audit-style summary to Airflow logs                           │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+### Trigger Configuration
+
+The DAG expects a trigger conf with the `form_id` to translate:
+
+```json
+{"form_id": "<uuid-from-catalog>"}
+```
+
+### Tasks (11 Stages)
+
+| # | Task ID | Module | What It Does |
+|---|---------|--------|-------------|
+| 1 | `load_form_entry` | Inline in DAG | Loads catalog entry, validates original PDF exists, detects partial translations |
+| 2 | `ocr_extract_text` | `src/ocr_printed.py` | Extracts text regions with bbox coordinates from PDF |
+| 3 | `translate_spanish` | `src/translate_text.py` | Translates OCR regions to Spanish (skips if ES already exists) |
+| 4 | `translate_portuguese` | `src/translate_text.py` | Translates OCR regions to Portuguese (skips if PT already exists) |
+| 5 | `legal_review_spanish` | `src/legal_review.py` | Validates Spanish legal terms via Llama/Groq with 3x retry |
+| 6 | `legal_review_portuguese` | `src/legal_review.py` | Validates Portuguese legal terms via Llama/Groq with 3x retry |
+| 7 | `reconstruct_pdf_spanish` | `src/reconstruct_pdf.py` | Rebuilds PDF with Spanish text using PyMuPDF |
+| 8 | `reconstruct_pdf_portuguese` | `src/reconstruct_pdf.py` | Rebuilds PDF with Portuguese text using PyMuPDF |
+| 9 | `store_and_update_catalog` | Inline in DAG | Updates catalog with translated paths and audit notes |
+| 10 | `dvc_version_data` | Inline in DAG | Runs `dvc add` + `dvc push` to version translations |
+| 11 | `log_summary` | Inline in DAG | Prints audit-style summary with per-language status |
+
+### Partial Translation Handling
+
+The scraper may download existing Spanish or Portuguese translations from mass.gov. The pretranslation DAG handles this:
+
+- **Both ES + PT exist** → Entire DAG skips (nothing to do)
+- **Only ES exists** → Skips Spanish tasks, runs Portuguese pipeline only
+- **Only PT exists** → Skips Portuguese tasks, runs Spanish pipeline only
+- **Neither exists** → Runs full parallel translation for both languages
+
+### Legal Review Retry
+
+Legal review calls Groq/Llama with exponential backoff (1s, 3s, 9s). If all retries fail, the pipeline **continues** but appends an audit note and leaves `needs_human_review = True` so the form is flagged for mandatory human review.
+
+### Stub Modules
+
+Four `src/` modules are stub implementations that will be swapped for production models:
+
+| Module | Stub Behaviour | Production Replacement |
+|--------|---------------|------------------------|
+| `src/ocr_printed.py` | PyMuPDF native text extraction | PaddleOCR v3 + Qwen2.5-VL |
+| `src/translate_text.py` | Prefixes text with language tag | NLLB-200 via CTranslate2 |
+| `src/legal_review.py` | Always returns OK | Groq API (Llama 3.1) |
+| `src/reconstruct_pdf.py` | PyMuPDF layout reconstruction | Same (already production-ready) |
 
 ---
 

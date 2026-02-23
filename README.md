@@ -118,7 +118,21 @@ Temporary server errors (5xx, timeouts) do not trigger archival.
 
 ### Pre-Translation (form_pretranslation_dag)
 
-New or updated forms are processed through: OCR → translate to Spanish → translate to Portuguese → legal review for each language → PDF reconstruction → store in GCS. All forms are flagged as "Machine-translated, pending human verification" until a court translator reviews and approves.
+*(For detailed task breakdown, trigger configuration, partial translation handling, and stub module reference, see the [Data Pipeline README](./data_pipeline/README.md#pre-translation-pipeline-form_pretranslation_dag)).*
+
+Triggered automatically by `form_scraper_dag` when new or updated forms are found (Scenarios A & B). Processes one form per DAG run through 11 tasks:
+
+1. **Load** catalog entry and validate original PDF exists on disk
+2. **OCR** text extraction with bounding box coordinates
+3. **Translate** to Spanish and Portuguese in parallel (skips languages that already exist from mass.gov)
+4. **Legal review** via Llama/Groq with 3x exponential backoff retry per language
+5. **Reconstruct** translated PDFs preserving original layout using PyMuPDF
+6. **Update catalog** with translated file paths, languages available, and audit notes
+7. **DVC version** the updated catalog and translated PDFs
+
+All translated forms are flagged as `needs_human_review = True` ("Machine-translated, pending human verification") until a court translator reviews and approves. If legal review fails after all retries, an audit note is appended and the form remains flagged for mandatory human review.
+
+> **Note:** OCR, translation, and legal review currently use stub implementations. These will be replaced with PaddleOCR v3, NLLB-200, and Groq/Llama respectively before production deployment.
 
 ---
 
@@ -230,11 +244,15 @@ Every code change goes through GitHub Actions:
 ├── data_pipeline/                 # Dedicated Airflow scraper pipeline workspace
 │   ├── dags/
 │   │   ├── form_scraper_dag.py        # Weekly scrape mass.gov
-│   │   ├── form_pretranslation_dag.py # Translate new court forms
+│   │   ├── form_pretranslation_dag.py # Translate new/updated court forms (11 tasks)
 │   │   └── src/
 │   │       ├── scrape_forms.py        # Core scraper script
 │   │       ├── preprocess_forms.py    # Form validation and sanitation
-│   │       └── bias_detection.py      # Language and division coverage checks
+│   │       ├── bias_detection.py      # Language and division coverage checks
+│   │       ├── ocr_printed.py         # OCR extraction (stub → PaddleOCR v3)
+│   │       ├── translate_text.py      # Translation (stub → NLLB-200)
+│   │       ├── legal_review.py        # Legal term review (stub → Groq/Llama)
+│   │       └── reconstruct_pdf.py     # PDF reconstruction (PyMuPDF)
 │   ├── scripts/
 │   │   └── validate_catalog.py        # Catalog schema validation script
 │   ├── tests/                         # 66 pipeline unit tests
