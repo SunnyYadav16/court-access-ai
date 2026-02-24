@@ -1,4 +1,3 @@
-
 """
 =============================================================================
 FILE: dags/src/translate_text.py
@@ -20,6 +19,7 @@ OUTPUT CONTRACT:
   }
 =============================================================================
 """
+
 import logging
 import os
 
@@ -53,7 +53,7 @@ def _stub_translate(text: str, source_lang: str, target_lang: str) -> dict:
     distinguishable from the original.
     NOTE: NOT a real translation — for pipeline testing only.
     """
-    tag        = _LANG_LABELS.get(target_lang, target_lang)
+    tag = _LANG_LABELS.get(target_lang, target_lang)
     translated = f"[{tag}] {text}"
     logger.debug("[STUB TRANSLATE] %s→%s: '%s…'", source_lang, target_lang, text[:30])
     return {"original": text, "translated": translated, "confidence": 0.50}
@@ -73,17 +73,17 @@ def _real_translate(text: str, source_lang: str, target_lang: str) -> dict:
             "NLLB_MODEL_PATH",
             "/opt/models/nllb-200-distilled-1.3B-ct2",
         )
-        tokenizer  = AutoTokenizer.from_pretrained(model_path)
+        tokenizer = AutoTokenizer.from_pretrained(model_path)
         translator = ctranslate2.Translator(model_path, device="cpu")
 
         tokenizer.src_lang = source_lang
-        inputs     = tokenizer(text, return_tensors="pt")
-        tgt_id     = tokenizer.convert_tokens_to_ids(target_lang)
-        results    = translator.translate_batch(
+        inputs = tokenizer(text, return_tensors="pt")
+        tgt_id = tokenizer.convert_tokens_to_ids(target_lang)
+        results = translator.translate_batch(
             [inputs["input_ids"][0].tolist()],
             target_prefix=[[tgt_id]],
         )
-        ids        = results[0].hypotheses[0][1:]
+        ids = results[0].hypotheses[0][1:]
         translated = tokenizer.decode(ids, skip_special_tokens=True)
         return {"original": text, "translated": translated, "confidence": 0.91}
 

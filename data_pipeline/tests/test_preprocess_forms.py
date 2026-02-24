@@ -1,16 +1,14 @@
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "dags"))
 
 import src.preprocess_forms as pf
 
-
 # ══════════════════════════════════════════════════════════════════════════════
 # File type detection
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestDetectFileType:
     def test_detects_pdf(self, tmp_path):
@@ -41,6 +39,7 @@ class TestDetectFileType:
 # Form name normalization
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestNormalizeFormName:
     def test_strips_whitespace(self):
         assert pf._normalize_form_name("  My Form  ") == "My Form"
@@ -65,6 +64,7 @@ class TestNormalizeFormName:
 # ══════════════════════════════════════════════════════════════════════════════
 # Slug normalization
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestNormalizeSlug:
     def test_lowercases_and_replaces_spaces(self):
@@ -91,14 +91,10 @@ class TestNormalizeSlug:
 # run_preprocessing integration
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestRunPreprocessing:
     def test_preprocessing_normalizes_fields(self, tmp_path):
-        catalog = [{
-            "form_id": "test-id",
-            "form_name": "  Ugly Name.pdf ",
-            "form_slug": "ugly_slug!",
-            "versions": []
-        }]
+        catalog = [{"form_id": "test-id", "form_name": "  Ugly Name.pdf ", "form_slug": "ugly_slug!", "versions": []}]
 
         report = pf.run_preprocessing(catalog, str(tmp_path))
 
@@ -111,13 +107,7 @@ class TestRunPreprocessing:
         f = tmp_path / "empty.pdf"
         f.write_bytes(b"")
 
-        catalog = [{
-            "form_id": "test-id",
-            "form_name": "Test",
-            "versions": [{
-                "file_path_original": str(f)
-            }]
-        }]
+        catalog = [{"form_id": "test-id", "form_name": "Test", "versions": [{"file_path_original": str(f)}]}]
 
         report = pf.run_preprocessing(catalog, str(tmp_path))
 
@@ -127,15 +117,9 @@ class TestRunPreprocessing:
 
     def test_preprocessing_flags_tiny_file(self, tmp_path):
         f = tmp_path / "tiny.pdf"
-        f.write_bytes(b"%PDF-1.4\n...") # Under 1024 bytes
-        
-        catalog = [{
-            "form_id": "test-id",
-            "form_name": "Test",
-            "versions": [{
-                "file_path_original": str(f)
-            }]
-        }]
+        f.write_bytes(b"%PDF-1.4\n...")  # Under 1024 bytes
+
+        catalog = [{"form_id": "test-id", "form_name": "Test", "versions": [{"file_path_original": str(f)}]}]
 
         report = pf.run_preprocessing(catalog, str(tmp_path))
 
@@ -145,15 +129,9 @@ class TestRunPreprocessing:
 
     def test_preprocessing_flags_mislabeled_file(self, tmp_path):
         f = tmp_path / "fake.pdf"
-        f.write_bytes(b"<!DOCTYPE html>" + b" " * 2000) # HTML content, over 1024 bytes
+        f.write_bytes(b"<!DOCTYPE html>" + b" " * 2000)  # HTML content, over 1024 bytes
 
-        catalog = [{
-            "form_id": "test-id",
-            "form_name": "Test",
-            "versions": [{
-                "file_path_original": str(f)
-            }]
-        }]
+        catalog = [{"form_id": "test-id", "form_name": "Test", "versions": [{"file_path_original": str(f)}]}]
 
         report = pf.run_preprocessing(catalog, str(tmp_path))
 
@@ -163,15 +141,9 @@ class TestRunPreprocessing:
 
     def test_preprocessing_flags_truncated_pdf(self, tmp_path):
         f = tmp_path / "trunc.pdf"
-        f.write_bytes(b"%PDF-1.4\n" + b"x" * 2000) # Valid magic bytes, >1024 len, but missing %%EOF
+        f.write_bytes(b"%PDF-1.4\n" + b"x" * 2000)  # Valid magic bytes, >1024 len, but missing %%EOF
 
-        catalog = [{
-            "form_id": "test-id",
-            "form_name": "Test",
-            "versions": [{
-                "file_path_original": str(f)
-            }]
-        }]
+        catalog = [{"form_id": "test-id", "form_name": "Test", "versions": [{"file_path_original": str(f)}]}]
 
         report = pf.run_preprocessing(catalog, str(tmp_path))
 
@@ -192,7 +164,7 @@ class TestRunPreprocessing:
             {
                 "form_id": "id3",
                 "content_hash": "hash456",  # Different hash
-            }
+            },
         ]
 
         report = pf.run_preprocessing(catalog, str(tmp_path))

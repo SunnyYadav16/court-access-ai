@@ -1,4 +1,3 @@
-
 """
 =============================================================================
 FILE: dags/src/reconstruct_pdf.py
@@ -15,6 +14,7 @@ When those are upgraded to real models, the region format they produce
 must match the output contract of src/ocr_printed.py and src/translate_text.py.
 =============================================================================
 """
+
 import logging
 from pathlib import Path
 
@@ -58,10 +58,21 @@ def reconstruct_pdf(
 
     doc = fitz.open(original_path)
 
+    # Guard: fitz.open() succeeds on non-PDF files (HTML error pages, etc.)
+    # but any shape/draw operation will raise "ValueError: is no PDF".
+    # Check early so the failure is clear and the file can be flagged.
+    if not doc.is_pdf:
+        doc.close()
+        raise ValueError(
+            f"File is not a valid PDF: '{original_path}'. "
+            "The scraper may have downloaded an HTML error page saved with a .pdf extension. "
+            "Check preprocessing flags — this form should be marked as 'mislabeled'."
+        )
+
     for region in translated_regions:
         translated = region.get("translated_text", "").strip()
-        bbox       = region.get("bbox")
-        page_num   = region.get("page", 0)
+        bbox = region.get("bbox")
+        page_num = region.get("page", 0)
 
         # Skip empty regions or missing bbox
         if not translated or not bbox:
@@ -69,7 +80,8 @@ def reconstruct_pdf(
         if page_num >= len(doc):
             logger.warning(
                 "Region references page %d but doc has %d page(s). Skipping.",
-                page_num, len(doc),
+                page_num,
+                len(doc),
             )
             continue
 
@@ -85,14 +97,17 @@ def reconstruct_pdf(
 
         # Step 3: Insert translated text with dynamic font shrinking
         font_size = max(region.get("font_size", 10.0), 6.0)
-        inserted  = False
+        inserted = False
         while font_size >= 5.0:
             rc = page.insert_textbox(
-                rect, translated,
-                fontname=fontname, fontsize=font_size,
-                color=(0, 0, 0), align=fitz.TEXT_ALIGN_LEFT,
+                rect,
+                translated,
+                fontname=fontname,
+                fontsize=font_size,
+                color=(0, 0, 0),
+                align=fitz.TEXT_ALIGN_LEFT,
             )
-            if rc >= 0:    # rc >= 0 means text fitted
+            if rc >= 0:  # rc >= 0 means text fitted
                 inserted = True
                 break
             font_size -= 0.5
@@ -101,13 +116,17 @@ def reconstruct_pdf(
             # Last resort: insert truncated text at minimum size
             truncated = translated[:60] + "…"
             page.insert_textbox(
-                rect, truncated,
-                fontname=fontname, fontsize=5.0,
-                color=(0, 0, 0), align=fitz.TEXT_ALIGN_LEFT,
+                rect,
+                truncated,
+                fontname=fontname,
+                fontsize=5.0,
+                color=(0, 0, 0),
+                align=fitz.TEXT_ALIGN_LEFT,
             )
             logger.warning(
                 "Text too long for bbox %s on page %d — truncated to 60 chars.",
-                bbox, page_num,
+                bbox,
+                page_num,
             )
 
     # Save with garbage collection and compression

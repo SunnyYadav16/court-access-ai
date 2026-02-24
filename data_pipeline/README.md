@@ -153,7 +153,7 @@ Generate the required keys and add them to `.env`:
 
 ```bash
 # Generate Fernet key (using Docker to avoid needing local python packages)
-docker run --rm apache/airflow:3.0.2 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+docker run --rm apache/airflow:3.1.7 python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 
 # Generate secret key
 python3 -c "import secrets; print(secrets.token_hex(32))"
@@ -386,6 +386,8 @@ Four `src/` modules are stub implementations that will be swapped for production
 
 **Departments Scraped:** Appeals Court, Boston Municipal Court, District Court, Housing Court, Juvenile Court, Land Court, Superior Court, Attorney Forms, Criminal Matter Forms, Criminal Records Forms, Trial Court eFiling Forms.
 
+> **Dev note:** In `src/scrape_forms.py`, all departments except Appeals Court are commented out by default to speed up local testing. Uncomment all entries in `COURT_FORM_PAGES` before running in production or staging.
+
 ---
 
 ## Data Preprocessing
@@ -527,7 +529,9 @@ dvc status
 
 ### Storage
 
-Development uses a local DVC remote (`dvc_storage/`). For production, replace with GCS:
+Development uses a local DVC remote. The `dvc_storage/` directory in your project is bind-mounted into all Airflow containers at `/opt/airflow/dvc_storage` — this is where `dvc push` writes, and it persists across `docker compose down/up` cycles.
+
+For production, swap to GCS:
 
 ```bash
 dvc remote add -d gcs_storage gs://courtaccess-forms

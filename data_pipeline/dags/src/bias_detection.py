@@ -121,42 +121,48 @@ def run_bias_detection(catalog: list[dict]) -> dict:
 
         # Flag underserved divisions (form count)
         if total < mean_forms * UNDERSERVED_THRESHOLD:
-            bias_flags.append({
-                "type": "underserved_division",
-                "dimension": "division",
-                "slice": div,
-                "severity": "WARNING",
-                "detail": f"'{div}' has {total} forms — below {UNDERSERVED_THRESHOLD * 100:.0f}% "
-                          f"of the mean ({mean_forms:.0f}). May indicate incomplete scraping.",
-                "value": total,
-                "threshold": round(mean_forms * UNDERSERVED_THRESHOLD, 1),
-            })
+            bias_flags.append(
+                {
+                    "type": "underserved_division",
+                    "dimension": "division",
+                    "slice": div,
+                    "severity": "WARNING",
+                    "detail": f"'{div}' has {total} forms — below {UNDERSERVED_THRESHOLD * 100:.0f}% "
+                    f"of the mean ({mean_forms:.0f}). May indicate incomplete scraping.",
+                    "value": total,
+                    "threshold": round(mean_forms * UNDERSERVED_THRESHOLD, 1),
+                }
+            )
 
         # Flag divisions with low ES translation coverage
         if total > 0 and es_pct < TRANSLATION_COVERAGE_THRESHOLD:
-            bias_flags.append({
-                "type": "low_translation_coverage",
-                "dimension": "division × language",
-                "slice": f"{div} → Spanish",
-                "severity": "WARNING",
-                "detail": f"'{div}' has {es_pct}% Spanish coverage ({es_count}/{total}). "
-                          f"LEP Spanish speakers in this division are underserved.",
-                "value": es_pct,
-                "threshold": TRANSLATION_COVERAGE_THRESHOLD,
-            })
+            bias_flags.append(
+                {
+                    "type": "low_translation_coverage",
+                    "dimension": "division x language",
+                    "slice": f"{div} → Spanish",
+                    "severity": "WARNING",
+                    "detail": f"'{div}' has {es_pct}% Spanish coverage ({es_count}/{total}). "
+                    f"LEP Spanish speakers in this division are underserved.",
+                    "value": es_pct,
+                    "threshold": TRANSLATION_COVERAGE_THRESHOLD,
+                }
+            )
 
         # Flag divisions with low PT translation coverage
         if total > 0 and pt_pct < TRANSLATION_COVERAGE_THRESHOLD:
-            bias_flags.append({
-                "type": "low_translation_coverage",
-                "dimension": "division × language",
-                "slice": f"{div} → Portuguese",
-                "severity": "WARNING",
-                "detail": f"'{div}' has {pt_pct}% Portuguese coverage ({pt_count}/{total}). "
-                          f"LEP Portuguese speakers in this division are underserved.",
-                "value": pt_pct,
-                "threshold": TRANSLATION_COVERAGE_THRESHOLD,
-            })
+            bias_flags.append(
+                {
+                    "type": "low_translation_coverage",
+                    "dimension": "division x language",
+                    "slice": f"{div} → Portuguese",
+                    "severity": "WARNING",
+                    "detail": f"'{div}' has {pt_pct}% Portuguese coverage ({pt_count}/{total}). "
+                    f"LEP Portuguese speakers in this division are underserved.",
+                    "value": pt_pct,
+                    "threshold": TRANSLATION_COVERAGE_THRESHOLD,
+                }
+            )
 
     division_stats = _compute_stats(form_counts)
 
@@ -164,14 +170,8 @@ def run_bias_detection(catalog: list[dict]) -> dict:
     # Slice 2: By Language (overall translation coverage)
     # ══════════════════════════════════════════════════════════════════════════
 
-    total_with_es = sum(
-        1 for f in active_forms
-        if f.get("versions") and f["versions"][0].get("file_path_es")
-    )
-    total_with_pt = sum(
-        1 for f in active_forms
-        if f.get("versions") and f["versions"][0].get("file_path_pt")
-    )
+    total_with_es = sum(1 for f in active_forms if f.get("versions") and f["versions"][0].get("file_path_es"))
+    total_with_pt = sum(1 for f in active_forms if f.get("versions") and f["versions"][0].get("file_path_pt"))
 
     es_overall_pct = round((total_with_es / total_active) * 100, 1) if total_active > 0 else 0
     pt_overall_pct = round((total_with_pt / total_active) * 100, 1) if total_active > 0 else 0
@@ -196,17 +196,19 @@ def run_bias_detection(catalog: list[dict]) -> dict:
     if es_pt_gap > 30:
         higher = "Spanish" if es_overall_pct > pt_overall_pct else "Portuguese"
         lower = "Portuguese" if higher == "Spanish" else "Spanish"
-        bias_flags.append({
-            "type": "language_coverage_gap",
-            "dimension": "language",
-            "slice": f"{higher} vs {lower}",
-            "severity": "WARNING",
-            "detail": f"{higher} has {max(es_overall_pct, pt_overall_pct)}% coverage "
-                      f"while {lower} has {min(es_overall_pct, pt_overall_pct)}%. "
-                      f"Gap of {es_pt_gap:.1f}% indicates unequal language support.",
-            "value": es_pt_gap,
-            "threshold": 30,
-        })
+        bias_flags.append(
+            {
+                "type": "language_coverage_gap",
+                "dimension": "language",
+                "slice": f"{higher} vs {lower}",
+                "severity": "WARNING",
+                "detail": f"{higher} has {max(es_overall_pct, pt_overall_pct)}% coverage "
+                f"while {lower} has {min(es_overall_pct, pt_overall_pct)}%. "
+                f"Gap of {es_pt_gap:.1f}% indicates unequal language support.",
+                "value": es_pt_gap,
+                "threshold": 30,
+            }
+        )
 
     # ══════════════════════════════════════════════════════════════════════════
     # Slice 3: By Section Heading
@@ -302,7 +304,9 @@ def run_bias_detection(catalog: list[dict]) -> dict:
         for flag in bias_flags:
             logger.warning(
                 "  [%s] %s — %s",
-                flag["severity"], flag["type"], flag["detail"],
+                flag["severity"],
+                flag["type"],
+                flag["detail"],
             )
     else:
         logger.info("  No bias flags — coverage is balanced across all slices.")

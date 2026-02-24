@@ -27,14 +27,15 @@ x-airflow-common:
 
     PYTHONPATH: /opt/airflow/dags
 
-  volumes:
+  volumes: &airflow-common-volumes
     - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
     - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
     - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
     - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
     - ${AIRFLOW_PROJ_DIR:-.}/forms:/opt/airflow/forms
     # DVC needs access to its config and local remote storage
-    - ${AIRFLOW_PROJ_DIR:-.}/.git:/opt/airflow/.git
+    # .git is at the monorepo root (one level above data_pipeline/)
+    - ${AIRFLOW_PROJ_DIR:-.}/../.git:/opt/airflow/.git
     - ${AIRFLOW_PROJ_DIR:-.}/.dvc:/opt/airflow/.dvc
     - ${AIRFLOW_PROJ_DIR:-.}/dvc_storage:/opt/airflow/dvc_storage
   user: "${AIRFLOW_UID:-50000}:0"
@@ -133,16 +134,15 @@ services:
     command:
       - -c
       - |
-        mkdir -p /sources/logs /sources/dags /sources/plugins /sources/forms /sources/dvc_storage
-        chown -R "${AIRFLOW_UID:-50000}:0" /sources/{logs,dags,plugins,forms,dvc_storage}
+        mkdir -p /opt/airflow/dags/data /opt/airflow/forms /opt/airflow/dvc_storage
+        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/forms /opt/airflow/dvc_storage
 
         # ── Initialize DVC if not already set up ──
-        cd /sources
+        cd /opt/airflow
         if [ ! -d ".dvc" ]; then
-          git init 2>/dev/null || true
           dvc init
-          dvc remote add -d local_storage /sources/dvc_storage
-          chown -R "${AIRFLOW_UID:-50000}:0" /sources/.dvc
+          dvc remote add -d local_storage /opt/airflow/dvc_storage
+          chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/.dvc
           echo "DVC initialized with local remote"
         else
           echo "DVC already initialized (skipping)"
@@ -156,8 +156,7 @@ services:
       _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
       _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
     user: "0:0"
-    volumes:
-      - ${AIRFLOW_PROJ_DIR:-.}:/sources
+    volumes: *airflow-common-volumes
 
 volumes:
   postgres-db-volume:
