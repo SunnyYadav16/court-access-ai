@@ -527,23 +527,23 @@ def task_trigger_pretranslation(**context) -> None:
     )
 
     # ── Uncomment this block once form_pretranslation_dag is implemented ──────
-    # from airflow.operators.trigger_dagrun import TriggerDagRunOperator
-    # for form_id in queue:
-    #     TriggerDagRunOperator(
-    #         task_id=f"trigger_pretranslation_{form_id}",
-    #         trigger_dag_id="form_pretranslation_dag",
-    #         conf={"form_id": form_id},
-    #         dag=dag,
-    #     ).execute(context)
+    from airflow.operators.trigger_dagrun import TriggerDagRunOperator
+    for form_id in queue:
+        TriggerDagRunOperator(
+            task_id=f"trigger_pretranslation_{form_id}",
+            trigger_dag_id="form_pretranslation_dag",
+            conf={"form_id": form_id},
+            dag=dag,
+        ).execute(context)
     # ─────────────────────────────────────────────────────────────────────────
 
-    # Placeholder: just log for now.
-    for form_id in queue:
-        logger.info(
-            "[PLACEHOLDER] Would trigger form_pretranslation_dag "
-            "with conf={'form_id': '%s'}",
-            form_id,
-        )
+    #  Placeholder: just log for now.
+    # for form_id in queue:
+    #     logger.info(
+    #         "[PLACEHOLDER] Would trigger form_pretranslation_dag "
+    #         "with conf={'form_id': '%s'}",
+    #         form_id,
+    #     )
 
 
 def task_log_summary(**context) -> None:
