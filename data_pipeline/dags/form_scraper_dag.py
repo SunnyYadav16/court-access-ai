@@ -12,48 +12,73 @@ Pipeline flow:
 import json
 import logging
 import subprocess
-
-from airflow import DAG
 from datetime import datetime
 from pathlib import Path
-from airflow.providers.standard.operators.python import PythonOperator
 
-from src.scrape_forms import run_scrape
-from src.preprocess_forms import run_preprocessing
+from airflow import DAG
+from airflow.providers.standard.operators.python import PythonOperator
 from src.bias_detection import run_bias_detection
+from src.preprocess_forms import run_preprocessing
+from src.scrape_forms import run_scrape
 
 logger = logging.getLogger(__name__)
 
 # ── Paths (inside Docker container) ──────────────────────────────────────────
-CATALOG_PATH       = "/opt/airflow/dags/data/form_catalog.json"
-FORMS_DIR          = "/opt/airflow/forms"
-METRICS_PATH       = "/opt/airflow/dags/data/catalog_metrics.json"
-ANOMALY_REPORT_PATH    = "/opt/airflow/dags/data/anomaly_report.json"
+CATALOG_PATH = "/opt/airflow/dags/data/form_catalog.json"
+FORMS_DIR = "/opt/airflow/forms"
+METRICS_PATH = "/opt/airflow/dags/data/catalog_metrics.json"
+ANOMALY_REPORT_PATH = "/opt/airflow/dags/data/anomaly_report.json"
 PREPROCESS_REPORT_PATH = "/opt/airflow/dags/data/preprocess_report.json"
-BIAS_REPORT_PATH       = "/opt/airflow/dags/data/bias_report.json"
-PROJECT_ROOT           = "/opt/airflow"
+BIAS_REPORT_PATH = "/opt/airflow/dags/data/bias_report.json"
+PROJECT_ROOT = "/opt/airflow"
 
 # ── Anomaly thresholds ───────────────────────────────────────────────────────
-THRESHOLD_FORM_DROP_PCT       = 20     # Alert if active forms drop >20%
-THRESHOLD_MASS_NEW_FORMS      = 50     # Alert if >50 new forms in one run
-THRESHOLD_DOWNLOAD_FAIL_PCT   = 10     # Alert if >10% of forms fail to download
-THRESHOLD_MIN_PDF_SIZE_BYTES  = 1024   # Alert if PDF is <1KB (likely error page)
-THRESHOLD_MAX_PDF_SIZE_BYTES  = 50 * 1024 * 1024  # Alert if PDF is >50MB
-THRESHOLD_SCHEMA_ERRORS       = 0      # Alert if any schema validation errors
+THRESHOLD_FORM_DROP_PCT = 20  # Alert if active forms drop >20%
+THRESHOLD_MASS_NEW_FORMS = 50  # Alert if >50 new forms in one run
+THRESHOLD_DOWNLOAD_FAIL_PCT = 10  # Alert if >10% of forms fail to download
+THRESHOLD_MIN_PDF_SIZE_BYTES = 1024  # Alert if PDF is <1KB (likely error page)
+THRESHOLD_MAX_PDF_SIZE_BYTES = 50 * 1024 * 1024  # Alert if PDF is >50MB
+THRESHOLD_SCHEMA_ERRORS = 0  # Alert if any schema validation errors
+
+# ── Catalog schema ────────────────────────────────────────────────────────────
+REQUIRED_TOP_FIELDS = {
+    "form_id",
+    "form_name",
+    "form_slug",
+    "source_url",
+    "status",
+    "content_hash",
+    "current_version",
+    "needs_human_review",
+    "created_at",
+    "last_scraped_at",
+    "appearances",
+    "versions",
+}
+REQUIRED_VERSION_FIELDS = {
+    "version",
+    "content_hash",
+    "file_path_original",
+    "file_path_es",
+    "file_path_pt",
+    "created_at",
+}
+REQUIRED_APPEARANCE_FIELDS = {"division", "section_heading"}
 
 # ── DAG default args ──────────────────────────────────────────────────────────
 DEFAULT_ARGS = {
-    "owner":            "courtaccess",
-    "depends_on_past":  False,
-    "retries":          1,           # Retry once on transient failures.
-    "retry_delay":      60,          # Wait 60 s before retry (seconds).
-    "email_on_failure": False,       # Set to True + add email when ready.
-    "email_on_retry":   False,
+    "owner": "courtaccess",
+    "depends_on_past": False,
+    "retries": 1,  # Retry once on transient failures.
+    "retry_delay": 60,  # Wait 60 s before retry (seconds).
+    "email_on_failure": False,  # Set to True + add email when ready.
+    "email_on_retry": False,
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Task functions
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def task_scrape_and_classify(**context) -> dict:
     """
@@ -91,7 +116,7 @@ def task_preprocess_data(**context) -> dict:
         logger.error("Catalog file not found — cannot preprocess.")
         return {"error": "catalog_missing"}
 
-    with open(catalog_path, "r", encoding="utf-8") as f:
+    with open(catalog_path, encoding="utf-8") as f:
         catalog = json.load(f)
 
     # Run preprocessing (modifies catalog entries in-place)
@@ -123,17 +148,6 @@ def task_validate_catalog(**context) -> dict:
 
     logger.info("Starting catalog validation.")
 
-    REQUIRED_TOP_FIELDS = {
-        "form_id", "form_name", "form_slug", "source_url", "status",
-        "content_hash", "current_version", "needs_human_review",
-        "created_at", "last_scraped_at", "appearances", "versions",
-    }
-    REQUIRED_VERSION_FIELDS = {
-        "version", "content_hash", "file_path_original",
-        "file_path_es", "file_path_pt", "created_at",
-    }
-    REQUIRED_APPEARANCE_FIELDS = {"division", "section_heading"}
-
     errors = []
     warnings = []
 
@@ -143,7 +157,7 @@ def task_validate_catalog(**context) -> dict:
         logger.error("Catalog file not found: %s", CATALOG_PATH)
         return {"valid": False, "errors": 1}
 
-    with open(catalog_path, "r", encoding="utf-8") as f:
+    with open(catalog_path, encoding="utf-8") as f:
         catalog = json.load(f)
 
     status_counts = Counter()
@@ -152,7 +166,7 @@ def task_validate_catalog(**context) -> dict:
     forms_with_pt = 0
     missing_pdfs = 0
     total_versions = 0
-    seen_ids  = set()
+    seen_ids = set()
     seen_urls = set()
 
     for i, entry in enumerate(catalog):
@@ -219,22 +233,22 @@ def task_validate_catalog(**context) -> dict:
                     forms_with_pt += 1
 
     # Build metrics
-    active   = status_counts.get("active", 0)
+    active = status_counts.get("active", 0)
     archived = status_counts.get("archived", 0)
 
     metrics = {
-        "valid":              len(errors) == 0,
-        "total_forms":        len(catalog),
-        "active_forms":       active,
-        "archived_forms":     archived,
-        "total_versions":     total_versions,
-        "forms_with_es":      forms_with_es,
-        "forms_with_pt":      forms_with_pt,
-        "unique_divisions":   len(division_counts),
+        "valid": len(errors) == 0,
+        "total_forms": len(catalog),
+        "active_forms": active,
+        "archived_forms": archived,
+        "total_versions": total_versions,
+        "forms_with_es": forms_with_es,
+        "forms_with_pt": forms_with_pt,
+        "unique_divisions": len(division_counts),
         "division_breakdown": dict(division_counts),
-        "missing_pdfs":       missing_pdfs,
-        "errors":             len(errors),
-        "warnings":           len(warnings),
+        "missing_pdfs": missing_pdfs,
+        "errors": len(errors),
+        "warnings": len(warnings),
     }
 
     # Save metrics to JSON (DVC tracks this)
@@ -247,9 +261,14 @@ def task_validate_catalog(**context) -> dict:
         "Validation complete: %d forms, %d active, %d archived, "
         "%d errors, %d warnings, %d missing PDFs, "
         "%d with ES, %d with PT",
-        len(catalog), active, archived,
-        len(errors), len(warnings), missing_pdfs,
-        forms_with_es, forms_with_pt,
+        len(catalog),
+        active,
+        archived,
+        len(errors),
+        len(warnings),
+        missing_pdfs,
+        forms_with_es,
+        forms_with_pt,
     )
 
     if errors:
@@ -276,8 +295,8 @@ def task_detect_anomalies(**context) -> dict:
       5. Schema violations   — any errors from validate_catalog
       6. Missing PDFs        — files in catalog but not on disk
     """
-    ti      = context["ti"]
-    result  = ti.xcom_pull(task_ids="scrape_and_classify", key="scrape_result")
+    ti = context["ti"]
+    result = ti.xcom_pull(task_ids="scrape_and_classify", key="scrape_result")
     metrics = ti.xcom_pull(task_ids="validate_catalog", key="validation_metrics")
 
     if not result or not metrics:
@@ -293,9 +312,9 @@ def task_detect_anomalies(**context) -> dict:
     metrics_path = Path(METRICS_PATH)
     if prev_metrics_path.exists():
         try:
-            with open(prev_metrics_path, "r", encoding="utf-8") as f:
+            with open(prev_metrics_path, encoding="utf-8") as f:
                 prev_metrics = json.load(f)
-        except (json.JSONDecodeError, IOError):
+        except (OSError, json.JSONDecodeError):
             logger.warning("Could not load previous metrics — first run or corrupted file.")
 
     # ── Check 1: Form count drop ─────────────────────────────────────────────
@@ -305,54 +324,57 @@ def task_detect_anomalies(**context) -> dict:
         drop_pct = ((prev_active - curr_active) / prev_active) * 100
 
         if drop_pct > THRESHOLD_FORM_DROP_PCT:
-            anomalies.append({
-                "check":    "form_count_drop",
-                "severity": "CRITICAL",
-                "message":  f"Active forms dropped by {drop_pct:.1f}% "
-                            f"({prev_active} → {curr_active}). "
-                            f"Threshold: {THRESHOLD_FORM_DROP_PCT}%",
-                "prev":     prev_active,
-                "current":  curr_active,
-            })
+            anomalies.append(
+                {
+                    "check": "form_count_drop",
+                    "severity": "CRITICAL",
+                    "message": f"Active forms dropped by {drop_pct:.1f}% "
+                    f"({prev_active} → {curr_active}). "
+                    f"Threshold: {THRESHOLD_FORM_DROP_PCT}%",
+                    "prev": prev_active,
+                    "current": curr_active,
+                }
+            )
 
     # ── Check 2: Mass new forms ───────────────────────────────────────────────
     new_count = counts.get("new", 0)
     if new_count > THRESHOLD_MASS_NEW_FORMS:
-        anomalies.append({
-            "check":    "mass_new_forms",
-            "severity": "WARNING",
-            "message":  f"{new_count} new forms detected in a single run. "
-                        f"Threshold: {THRESHOLD_MASS_NEW_FORMS}. "
-                        f"Possible scraper bug or mass.gov restructure.",
-            "count":    new_count,
-        })
+        anomalies.append(
+            {
+                "check": "mass_new_forms",
+                "severity": "WARNING",
+                "message": f"{new_count} new forms detected in a single run. "
+                f"Threshold: {THRESHOLD_MASS_NEW_FORMS}. "
+                f"Possible scraper bug or mass.gov restructure.",
+                "count": new_count,
+            }
+        )
 
     # ── Check 3: Download failure rate ────────────────────────────────────────
     total_checked = sum(counts.values())
-    total_new_updated = counts.get("new", 0) + counts.get("updated", 0)
     total_expected = metrics.get("total_forms", 0)
-    if total_expected > 0 and total_checked > 0:
-        # If we found significantly fewer forms than last time
-        if prev_metrics:
-            prev_total = prev_metrics.get("total_forms", 0)
-            if prev_total > 0:
-                found_pct = (total_checked / prev_total) * 100
-                fail_pct = 100 - found_pct
-                if fail_pct > THRESHOLD_DOWNLOAD_FAIL_PCT:
-                    anomalies.append({
-                        "check":    "download_failure_rate",
+    if total_expected > 0 and total_checked > 0 and prev_metrics:
+        prev_total = prev_metrics.get("total_forms", 0)
+        if prev_total > 0:
+            found_pct = (total_checked / prev_total) * 100
+            fail_pct = 100 - found_pct
+            if fail_pct > THRESHOLD_DOWNLOAD_FAIL_PCT:
+                anomalies.append(
+                    {
+                        "check": "download_failure_rate",
                         "severity": "WARNING",
-                        "message":  f"Only {total_checked}/{prev_total} forms found "
-                                    f"({fail_pct:.1f}% failure rate). "
-                                    f"Threshold: {THRESHOLD_DOWNLOAD_FAIL_PCT}%",
-                        "found":    total_checked,
+                        "message": f"Only {total_checked}/{prev_total} forms found "
+                        f"({fail_pct:.1f}% failure rate). "
+                        f"Threshold: {THRESHOLD_DOWNLOAD_FAIL_PCT}%",
+                        "found": total_checked,
                         "expected": prev_total,
-                    })
+                    }
+                )
 
     # ── Check 4: Tiny or huge PDFs ────────────────────────────────────────────
     forms_dir = Path(FORMS_DIR)
-    tiny_pdfs  = []
-    huge_pdfs  = []
+    tiny_pdfs = []
+    huge_pdfs = []
     if forms_dir.exists():
         for pdf_file in forms_dir.rglob("*.pdf"):
             size = pdf_file.stat().st_size
@@ -362,49 +384,56 @@ def task_detect_anomalies(**context) -> dict:
                 huge_pdfs.append({"file": str(pdf_file), "size_bytes": size})
 
     if tiny_pdfs:
-        anomalies.append({
-            "check":    "tiny_pdfs",
-            "severity": "WARNING",
-            "message":  f"{len(tiny_pdfs)} PDF(s) are under {THRESHOLD_MIN_PDF_SIZE_BYTES} bytes "
-                        f"— likely HTML error pages saved as .pdf",
-            "count":    len(tiny_pdfs),
-            "files":    tiny_pdfs[:10],  # Cap at 10 to avoid huge report
-        })
+        anomalies.append(
+            {
+                "check": "tiny_pdfs",
+                "severity": "WARNING",
+                "message": f"{len(tiny_pdfs)} PDF(s) are under {THRESHOLD_MIN_PDF_SIZE_BYTES} bytes "
+                f"— likely HTML error pages saved as .pdf",
+                "count": len(tiny_pdfs),
+                "files": tiny_pdfs[:10],  # Cap at 10 to avoid huge report
+            }
+        )
 
     if huge_pdfs:
-        anomalies.append({
-            "check":    "huge_pdfs",
-            "severity": "WARNING",
-            "message":  f"{len(huge_pdfs)} PDF(s) exceed "
-                        f"{THRESHOLD_MAX_PDF_SIZE_BYTES // (1024*1024)}MB",
-            "count":    len(huge_pdfs),
-            "files":    huge_pdfs[:10],
-        })
+        anomalies.append(
+            {
+                "check": "huge_pdfs",
+                "severity": "WARNING",
+                "message": f"{len(huge_pdfs)} PDF(s) exceed {THRESHOLD_MAX_PDF_SIZE_BYTES // (1024 * 1024)}MB",
+                "count": len(huge_pdfs),
+                "files": huge_pdfs[:10],
+            }
+        )
 
     # ── Check 5: Schema validation errors ─────────────────────────────────────
     schema_errors = metrics.get("errors", 0)
     if schema_errors > THRESHOLD_SCHEMA_ERRORS:
-        anomalies.append({
-            "check":    "schema_violations",
-            "severity": "CRITICAL",
-            "message":  f"{schema_errors} schema validation error(s) found in catalog. "
-                        f"Data integrity is compromised.",
-            "count":    schema_errors,
-        })
+        anomalies.append(
+            {
+                "check": "schema_violations",
+                "severity": "CRITICAL",
+                "message": f"{schema_errors} schema validation error(s) found in catalog. "
+                f"Data integrity is compromised.",
+                "count": schema_errors,
+            }
+        )
 
     # ── Check 6: Missing PDFs ─────────────────────────────────────────────────
     missing_pdfs = metrics.get("missing_pdfs", 0)
     if missing_pdfs > 0:
-        anomalies.append({
-            "check":    "missing_pdfs",
-            "severity": "WARNING",
-            "message":  f"{missing_pdfs} PDF(s) referenced in catalog but not found on disk.",
-            "count":    missing_pdfs,
-        })
+        anomalies.append(
+            {
+                "check": "missing_pdfs",
+                "severity": "WARNING",
+                "message": f"{missing_pdfs} PDF(s) referenced in catalog but not found on disk.",
+                "count": missing_pdfs,
+            }
+        )
 
     # ── Determine overall severity ────────────────────────────────────────────
     has_critical = any(a["severity"] == "CRITICAL" for a in anomalies)
-    has_warning  = any(a["severity"] == "WARNING" for a in anomalies)
+    has_warning = any(a["severity"] == "WARNING" for a in anomalies)
 
     if has_critical:
         overall_severity = "CRITICAL"
@@ -415,17 +444,17 @@ def task_detect_anomalies(**context) -> dict:
 
     # ── Build anomaly report ──────────────────────────────────────────────────
     report = {
-        "timestamp":      datetime.utcnow().isoformat() + "Z",
-        "severity":       overall_severity,
-        "anomaly_count":  len(anomalies),
-        "anomalies":      anomalies,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "severity": overall_severity,
+        "anomaly_count": len(anomalies),
+        "anomalies": anomalies,
         "thresholds": {
-            "form_drop_pct":      THRESHOLD_FORM_DROP_PCT,
-            "mass_new_forms":     THRESHOLD_MASS_NEW_FORMS,
-            "download_fail_pct":  THRESHOLD_DOWNLOAD_FAIL_PCT,
+            "form_drop_pct": THRESHOLD_FORM_DROP_PCT,
+            "mass_new_forms": THRESHOLD_MASS_NEW_FORMS,
+            "download_fail_pct": THRESHOLD_DOWNLOAD_FAIL_PCT,
             "min_pdf_size_bytes": THRESHOLD_MIN_PDF_SIZE_BYTES,
             "max_pdf_size_bytes": THRESHOLD_MAX_PDF_SIZE_BYTES,
-            "schema_errors":      THRESHOLD_SCHEMA_ERRORS,
+            "schema_errors": THRESHOLD_SCHEMA_ERRORS,
         },
     }
 
@@ -438,6 +467,7 @@ def task_detect_anomalies(**context) -> dict:
     # Save current metrics as "previous" for next run comparison
     if metrics_path.exists():
         import shutil
+
         shutil.copy2(str(metrics_path), str(prev_metrics_path))
 
     # ── Log alerts ────────────────────────────────────────────────────────────
@@ -452,7 +482,8 @@ def task_detect_anomalies(**context) -> dict:
 
         logger.info(
             "Anomaly detection complete: %d anomaly(ies), severity: %s",
-            len(anomalies), overall_severity,
+            len(anomalies),
+            overall_severity,
         )
 
     # Push to XCom for log_summary
@@ -480,7 +511,7 @@ def task_detect_bias(**context) -> dict:
         logger.error("Catalog file not found — cannot detect bias.")
         return {"error": "catalog_missing"}
 
-    with open(catalog_path, "r", encoding="utf-8") as f:
+    with open(catalog_path, encoding="utf-8") as f:
         catalog = json.load(f)
 
     # Run bias detection
@@ -507,7 +538,7 @@ def task_trigger_pretranslation(**context) -> None:
     When form_pretranslation_dag is ready, uncomment the TriggerDagRunOperator
     block below and remove the placeholder.
     """
-    ti     = context["ti"]
+    ti = context["ti"]
     result = ti.xcom_pull(task_ids="scrape_and_classify", key="scrape_result")
 
     if result is None:
@@ -528,6 +559,7 @@ def task_trigger_pretranslation(**context) -> None:
 
     # ── Uncomment this block once form_pretranslation_dag is implemented ──────
     from airflow.operators.trigger_dagrun import TriggerDagRunOperator
+
     for form_id in queue:
         TriggerDagRunOperator(
             task_id=f"trigger_pretranslation_{form_id}",
@@ -552,12 +584,12 @@ def task_log_summary(**context) -> None:
     Includes scrape results, preprocessing report, validation metrics,
     anomaly report, and bias report.
     """
-    ti      = context["ti"]
-    result  = ti.xcom_pull(task_ids="scrape_and_classify", key="scrape_result")
+    ti = context["ti"]
+    result = ti.xcom_pull(task_ids="scrape_and_classify", key="scrape_result")
     preproc = ti.xcom_pull(task_ids="preprocess_data", key="preprocess_report")
     metrics = ti.xcom_pull(task_ids="validate_catalog", key="validation_metrics")
     anomaly = ti.xcom_pull(task_ids="detect_anomalies", key="anomaly_report")
-    bias    = ti.xcom_pull(task_ids="detect_bias", key="bias_report")
+    bias = ti.xcom_pull(task_ids="detect_bias", key="bias_report")
 
     if result is None:
         logger.warning("No scrape result available for summary.")
@@ -575,8 +607,12 @@ def task_log_summary(**context) -> None:
         "  Renamed             : %d\n"
         "  No change           : %d\n"
         "  Pre-translation jobs: %d",
-        total, c["new"], c["updated"], c["deleted"],
-        c["renamed"], c["no_change"],
+        total,
+        c["new"],
+        c["updated"],
+        c["deleted"],
+        c["renamed"],
+        c["no_change"],
         len(result.get("pretranslation_queue", [])),
     )
 
@@ -620,9 +656,7 @@ def task_log_summary(**context) -> None:
 
     if anomaly:
         logger.info(
-            "══ Anomaly Report ══\n"
-            "  Severity       : %s\n"
-            "  Anomalies found: %d",
+            "══ Anomaly Report ══\n  Severity       : %s\n  Anomalies found: %d",
             anomaly.get("severity", "unknown"),
             anomaly.get("anomaly_count", 0),
         )
@@ -644,8 +678,7 @@ def task_log_summary(**context) -> None:
         lang = bias.get("slices", {}).get("by_language", {}).get("data", {})
         if lang:
             logger.info(
-                "  Spanish coverage     : %s%%\n"
-                "  Portuguese coverage  : %s%%",
+                "  Spanish coverage     : %s%%\n  Portuguese coverage  : %s%%",
                 lang.get("Spanish", {}).get("coverage_pct", 0),
                 lang.get("Portuguese", {}).get("coverage_pct", 0),
             )
@@ -671,7 +704,7 @@ def task_dvc_version_data(**context) -> None:
     def _run_dvc(cmd: list[str]) -> bool:
         """Run a DVC command and return True on success."""
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # noqa: S603 — cmd is always a hardcoded DVC list, never user input
                 cmd,
                 cwd=PROJECT_ROOT,
                 capture_output=True,
@@ -687,7 +720,9 @@ def task_dvc_version_data(**context) -> None:
             else:
                 logger.warning(
                     "DVC command failed (rc=%d): %s\n  stderr: %s",
-                    result.returncode, " ".join(cmd), result.stderr.strip(),
+                    result.returncode,
+                    " ".join(cmd),
+                    result.stderr.strip(),
                 )
                 return False
         except subprocess.TimeoutExpired:
@@ -723,13 +758,12 @@ def task_dvc_version_data(**context) -> None:
 with DAG(
     dag_id="form_scraper_dag",
     description="Weekly scrape of mass.gov court forms — preprocess, validate, detect anomalies, version & update catalog",
-    schedule="0 6 * * 1",            # Every Monday at 06:00 UTC
+    schedule="0 6 * * 1",  # Every Monday at 06:00 UTC
     start_date=datetime(2024, 1, 1),
     default_args=DEFAULT_ARGS,
     catchup=False,
     tags=["courtaccess", "forms", "scraping", "preprocessing", "dvc", "anomaly-detection", "bias-detection"],
 ) as dag:
-
     t1_scrape = PythonOperator(
         task_id="scrape_and_classify",
         python_callable=task_scrape_and_classify,

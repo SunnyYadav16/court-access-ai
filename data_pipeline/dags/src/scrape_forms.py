@@ -31,9 +31,8 @@ import json
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 import requests
 from playwright.sync_api import sync_playwright
@@ -80,20 +79,18 @@ HEADERS = {
 COURT_FORM_PAGES = [
     # Appellate Courts
     {"division": "Appeals Court", "url": "https://www.mass.gov/lists/appeals-court-forms"},
-
     # Trial Court Departments
-    {"division": "Boston Municipal Court", "url": "https://www.mass.gov/lists/boston-municipal-court-forms"},
-    {"division": "District Court", "url": "https://www.mass.gov/lists/district-court-forms"},
-    {"division": "Housing Court", "url": "https://www.mass.gov/lists/housing-court-forms"},
-    {"division": "Juvenile Court", "url": "https://www.mass.gov/lists/juvenile-court-forms"},
-    {"division": "Land Court", "url": "https://www.mass.gov/lists/land-court-forms"},
-    {"division": "Superior Court", "url": "https://www.mass.gov/lists/superior-court-forms"},
-
+    # {"division": "Boston Municipal Court", "url": "https://www.mass.gov/lists/boston-municipal-court-forms"},
+    # {"division": "District Court", "url": "https://www.mass.gov/lists/district-court-forms"},
+    # {"division": "Housing Court", "url": "https://www.mass.gov/lists/housing-court-forms"},
+    # {"division": "Juvenile Court", "url": "https://www.mass.gov/lists/juvenile-court-forms"},
+    # {"division": "Land Court", "url": "https://www.mass.gov/lists/land-court-forms"},
+    # {"division": "Superior Court", "url": "https://www.mass.gov/lists/superior-court-forms"},
     # Cross-department form collections
-    {"division": "Attorney Forms", "url": "https://www.mass.gov/lists/attorney-court-forms"},
-    {"division": "Criminal Matter Forms", "url": "https://www.mass.gov/lists/court-forms-for-criminal-matters"},
-    {"division": "Criminal Records Forms", "url": "https://www.mass.gov/lists/court-forms-for-criminal-records"},
-    {"division": "Trial Court eFiling Forms", "url": "https://www.mass.gov/lists/trial-court-efiling-forms"},
+    # {"division": "Attorney Forms", "url": "https://www.mass.gov/lists/attorney-court-forms"},
+    # {"division": "Criminal Matter Forms", "url": "https://www.mass.gov/lists/court-forms-for-criminal-matters"},
+    # {"division": "Criminal Records Forms", "url": "https://www.mass.gov/lists/court-forms-for-criminal-records"},
+    # {"division": "Trial Court eFiling Forms", "url": "https://www.mass.gov/lists/trial-court-efiling-forms"},
 ]
 
 
@@ -101,12 +98,13 @@ COURT_FORM_PAGES = [
 # Catalog helpers  (swap these two functions to migrate to Cloud SQL later)
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def _load_catalog() -> list[dict]:
     """Return the full catalog as a list of form-dicts."""
     if not CATALOG_PATH.exists():
         logger.info("Catalog file not found — starting with empty catalog.")
         return []
-    with open(CATALOG_PATH, "r", encoding="utf-8") as fh:
+    with open(CATALOG_PATH, encoding="utf-8") as fh:
         return json.load(fh)
 
 
@@ -120,15 +118,15 @@ def _save_catalog(catalog: list[dict]) -> None:
 
 def _now() -> str:
     """ISO-8601 UTC timestamp string."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
-def _find_by_url(catalog: list[dict], url: str) -> Optional[dict]:
+def _find_by_url(catalog: list[dict], url: str) -> dict | None:
     """Return the catalog entry whose source_url matches, or None."""
     return next((f for f in catalog if f["source_url"] == url), None)
 
 
-def _find_by_hash(catalog: list[dict], content_hash: str) -> Optional[dict]:
+def _find_by_hash(catalog: list[dict], content_hash: str) -> dict | None:
     """Return the first catalog entry whose content_hash matches, or None.
     content_hash is stored at the top level (denormalized from latest version)."""
     return next((f for f in catalog if f["content_hash"] == content_hash), None)
@@ -137,6 +135,7 @@ def _find_by_hash(catalog: list[dict], content_hash: str) -> Optional[dict]:
 # ══════════════════════════════════════════════════════════════════════════════
 # Slug & path helpers
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def _slug_from_url(url: str) -> str:
     """Extract a human-readable slug from a mass.gov download URL.
@@ -157,7 +156,8 @@ def _sha256(data: bytes) -> str:
 # PDF downloading & hashing
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _download_pdf_playwright(url: str) -> Optional[bytes]:
+
+def _download_pdf_playwright(url: str) -> bytes | None:
     """
     Download a PDF using Playwright — needed because mass.gov blocks
     plain requests() calls with 403. Playwright has the full browser
@@ -187,10 +187,10 @@ def _download_pdf_playwright(url: str) -> Optional[bytes]:
 
     except Exception as exc:
         logger.warning("Playwright download failed for %s: %s", url, exc)
-        raise requests.exceptions.RequestException(str(exc))
+        raise requests.exceptions.RequestException(str(exc)) from exc
 
 
-def _download_pdf(url: str) -> Optional[bytes]:
+def _download_pdf(url: str) -> bytes | None:
     """
     Download a PDF from *url*.
     First tries plain requests (fast). Falls back to Playwright if blocked.
@@ -239,6 +239,7 @@ def _download_pdf(url: str) -> Optional[bytes]:
 # Filename uses slug (human-readable — cosmetic only).
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def _version_dir(form_id: str, version: int) -> Path:
     """Return (and create) the directory forms/{form_id}/v{version}/."""
     d = FORMS_DIR / form_id / f"v{version}"
@@ -253,8 +254,7 @@ def _save_original(form_id: str, version: int, slug: str, pdf_bytes: bytes) -> s
     return str(dest)
 
 
-def _save_translation(form_id: str, version: int, slug: str,
-                      lang: str, pdf_bytes: bytes) -> str:
+def _save_translation(form_id: str, version: int, slug: str, lang: str, pdf_bytes: bytes) -> str:
     """Save a translation PDF to forms/{form_id}/v{version}/{slug}_{lang}.pdf.
     lang should be 'es' or 'pt'."""
     dest = _version_dir(form_id, version) / f"{slug}_{lang}.pdf"
@@ -265,6 +265,7 @@ def _save_translation(form_id: str, version: int, slug: str,
 # ══════════════════════════════════════════════════════════════════════════════
 # mass.gov page scraper
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
     """
@@ -368,30 +369,28 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
                 if pt_url and not pt_url.startswith("http"):
                     pt_url = "https://www.mass.gov" + pt_url
 
-                forms.append({
-                    "name": name,
-                    "url": href,
-                    "section_heading": item["section_heading"],
-                    "es_url": es_url,
-                    "pt_url": pt_url,
-                })
+                forms.append(
+                    {
+                        "name": name,
+                        "url": href,
+                        "section_heading": item["section_heading"],
+                        "es_url": es_url,
+                        "pt_url": pt_url,
+                    }
+                )
 
             logger.info(
-                "Found %d forms on %s — sleeping %ds before downloading...",
-                len(forms), page_url, PRE_DOWNLOAD_SLEEP
+                "Found %d forms on %s — sleeping %ds before downloading...", len(forms), page_url, PRE_DOWNLOAD_SLEEP
             )
             time.sleep(PRE_DOWNLOAD_SLEEP)
 
             # Download PDFs in batches with a sleep between each batch.
             # For each form: download English, then Spanish/Portuguese if available.
             total = len(forms)
-            batches = [forms[i:i + BATCH_SIZE] for i in range(0, total, BATCH_SIZE)]
+            batches = [forms[i : i + BATCH_SIZE] for i in range(0, total, BATCH_SIZE)]
 
             for batch_num, batch in enumerate(batches, start=1):
-                logger.info(
-                    "Downloading batch %d/%d (%d forms)...",
-                    batch_num, len(batches), len(batch)
-                )
+                logger.info("Downloading batch %d/%d (%d forms)...", batch_num, len(batches), len(batch))
                 for form in batch:
                     try:
                         # ── Download English original ──
@@ -403,35 +402,25 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
                             if api_response.status == 404:
                                 logger.info("404 for %s — skipping", form["url"])
                             else:
-                                logger.warning(
-                                    "HTTP %d for %s", api_response.status, form["url"]
-                                )
+                                logger.warning("HTTP %d for %s", api_response.status, form["url"])
                             continue
 
                         pdf_bytes = api_response.body()
-                        logger.debug(
-                            "Downloaded: %s (%d bytes)",
-                            form["name"], len(pdf_bytes)
-                        )
+                        logger.debug("Downloaded: %s (%d bytes)", form["name"], len(pdf_bytes))
 
                         # ── Download Spanish translation (if available) ──
                         es_bytes = None
                         if form["es_url"]:
                             try:
                                 es_resp = context.request.get(
-                                    form["es_url"], timeout=30000,
+                                    form["es_url"],
+                                    timeout=30000,
                                 )
                                 if es_resp.status == 200:
                                     es_bytes = es_resp.body()
-                                    logger.debug(
-                                        "Downloaded ES: %s (%d bytes)",
-                                        form["name"], len(es_bytes)
-                                    )
+                                    logger.debug("Downloaded ES: %s (%d bytes)", form["name"], len(es_bytes))
                                 else:
-                                    logger.debug(
-                                        "ES translation HTTP %d for %s",
-                                        es_resp.status, form["es_url"]
-                                    )
+                                    logger.debug("ES translation HTTP %d for %s", es_resp.status, form["es_url"])
                             except Exception as exc:
                                 logger.debug("Failed to download ES for %s: %s", form["name"], exc)
 
@@ -440,41 +429,35 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
                         if form["pt_url"]:
                             try:
                                 pt_resp = context.request.get(
-                                    form["pt_url"], timeout=30000,
+                                    form["pt_url"],
+                                    timeout=30000,
                                 )
                                 if pt_resp.status == 200:
                                     pt_bytes = pt_resp.body()
-                                    logger.debug(
-                                        "Downloaded PT: %s (%d bytes)",
-                                        form["name"], len(pt_bytes)
-                                    )
+                                    logger.debug("Downloaded PT: %s (%d bytes)", form["name"], len(pt_bytes))
                                 else:
-                                    logger.debug(
-                                        "PT translation HTTP %d for %s",
-                                        pt_resp.status, form["pt_url"]
-                                    )
+                                    logger.debug("PT translation HTTP %d for %s", pt_resp.status, form["pt_url"])
                             except Exception as exc:
                                 logger.debug("Failed to download PT for %s: %s", form["name"], exc)
 
-                        results.append({
-                            "name": form["name"],
-                            "url": form["url"],
-                            "bytes": pdf_bytes,
-                            "es_bytes": es_bytes,
-                            "pt_bytes": pt_bytes,
-                            "division": division,
-                            "section_heading": form["section_heading"],
-                        })
+                        results.append(
+                            {
+                                "name": form["name"],
+                                "url": form["url"],
+                                "bytes": pdf_bytes,
+                                "es_bytes": es_bytes,
+                                "pt_bytes": pt_bytes,
+                                "division": division,
+                                "section_heading": form["section_heading"],
+                            }
+                        )
 
                     except Exception as exc:
                         logger.warning("Failed to download %s: %s", form["url"], exc)
 
                 # Sleep between batches — skip sleep after the last batch.
                 if batch_num < len(batches):
-                    logger.info(
-                        "Batch %d complete. Sleeping %ds before next batch...",
-                        batch_num, BATCH_SLEEP_SEC
-                    )
+                    logger.info("Batch %d complete. Sleeping %ds before next batch...", batch_num, BATCH_SLEEP_SEC)
                     time.sleep(BATCH_SLEEP_SEC)
 
             browser.close()
@@ -482,16 +465,14 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
     except Exception as exc:
         logger.error("Playwright error on %s: %s", page_url, exc)
 
-    logger.info(
-        "Downloaded %d/%d PDFs from %s",
-        len(results), len(seen), page_url
-    )
+    logger.info("Downloaded %d/%d PDFs from %s", len(results), len(seen), page_url)
     return results
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Appearances helper
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def _merge_appearances(entry: dict, new_appearances: list[dict]) -> None:
     """Add any new division+heading pairs to the entry's appearances list.
@@ -503,7 +484,9 @@ def _merge_appearances(entry: dict, new_appearances: list[dict]) -> None:
             existing_divisions.add(app["division"])
             logger.debug(
                 "Added appearance: '%s' → division '%s', heading '%s'",
-                entry["form_name"], app["division"], app["section_heading"],
+                entry["form_name"],
+                app["division"],
+                app["section_heading"],
             )
 
 
@@ -511,8 +494,8 @@ def _merge_appearances(entry: dict, new_appearances: list[dict]) -> None:
 # The five scenario handlers
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _handle_new_form(catalog, form_name, pdf_url, pdf_bytes,
-                     es_bytes, pt_bytes, appearances, pretranslation_queue):
+
+def _handle_new_form(catalog, form_name, pdf_url, pdf_bytes, es_bytes, pt_bytes, appearances, pretranslation_queue):
     """Scenario A — brand-new URL not in catalog."""
     form_id = str(uuid.uuid4())
     hash_val = _sha256(pdf_bytes)
@@ -561,8 +544,7 @@ def _handle_new_form(catalog, form_name, pdf_url, pdf_bytes,
     logger.info("Scenario A — New form: '%s' | form_id=%s", form_name, form_id)
 
 
-def _handle_updated_form(entry, pdf_bytes, new_hash, es_bytes, pt_bytes,
-                         pretranslation_queue):
+def _handle_updated_form(entry, pdf_bytes, new_hash, es_bytes, pt_bytes, pretranslation_queue):
     """Scenario B — URL exists but content hash has changed."""
     old_version = entry["current_version"]
     new_version = old_version + 1
@@ -583,14 +565,17 @@ def _handle_updated_form(entry, pdf_bytes, new_hash, es_bytes, pt_bytes,
         logger.info("  ↳ Saved existing PT translation for '%s'", entry["form_name"])
 
     # Append new version at the front (newest first). Old versions stay untouched.
-    entry["versions"].insert(0, {
-        "version": new_version,
-        "content_hash": new_hash,
-        "file_path_original": file_path,
-        "file_path_es": file_path_es,
-        "file_path_pt": file_path_pt,
-        "created_at": ts,
-    })
+    entry["versions"].insert(
+        0,
+        {
+            "version": new_version,
+            "content_hash": new_hash,
+            "file_path_original": file_path,
+            "file_path_es": file_path_es,
+            "file_path_pt": file_path_pt,
+            "created_at": ts,
+        },
+    )
 
     entry["current_version"] = new_version
     entry["content_hash"] = new_hash
@@ -601,7 +586,9 @@ def _handle_updated_form(entry, pdf_bytes, new_hash, es_bytes, pt_bytes,
     pretranslation_queue.append(entry["form_id"])
     logger.info(
         "Scenario B — Updated form: '%s' | v%d → v%d",
-        entry["form_name"], old_version, new_version,
+        entry["form_name"],
+        old_version,
+        new_version,
     )
 
 
@@ -611,7 +598,8 @@ def _handle_deleted_form(entry):
     entry["last_scraped_at"] = _now()
     logger.info(
         "Scenario C — Form archived (404): '%s' | form_id=%s",
-        entry["form_name"], entry["form_id"],
+        entry["form_name"],
+        entry["form_id"],
     )
 
 
@@ -634,6 +622,7 @@ def _handle_no_change(entry):
 # ══════════════════════════════════════════════════════════════════════════════
 # Public entry-point called by the DAG
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def run_scrape() -> dict:
     """
@@ -661,10 +650,12 @@ def run_scrape() -> dict:
             # Track every appearance (even for duplicate URLs across departments).
             if url not in all_appearances:
                 all_appearances[url] = []
-            all_appearances[url].append({
-                "division": form["division"],
-                "section_heading": form["section_heading"],
-            })
+            all_appearances[url].append(
+                {
+                    "division": form["division"],
+                    "section_heading": form["section_heading"],
+                }
+            )
 
             # Only keep first occurrence for download/processing.
             if url not in seen_urls:
@@ -695,15 +686,24 @@ def run_scrape() -> dict:
                 counts["renamed"] += 1
             else:
                 _handle_new_form(
-                    catalog, form_name, pdf_url, pdf_bytes,
-                    es_bytes, pt_bytes,
-                    form_appearances, pretranslation_queue,
+                    catalog,
+                    form_name,
+                    pdf_url,
+                    pdf_bytes,
+                    es_bytes,
+                    pt_bytes,
+                    form_appearances,
+                    pretranslation_queue,
                 )
                 counts["new"] += 1
         elif existing["content_hash"] != new_hash:
             _handle_updated_form(
-                existing, pdf_bytes, new_hash,
-                es_bytes, pt_bytes, pretranslation_queue,
+                existing,
+                pdf_bytes,
+                new_hash,
+                es_bytes,
+                pt_bytes,
+                pretranslation_queue,
             )
             _merge_appearances(existing, form_appearances)
             counts["updated"] += 1
@@ -740,11 +740,13 @@ def run_scrape() -> dict:
 
     total = sum(counts.values())
     logger.info(
-        "Weekly form scrape completed. %d forms checked. "
-        "%d new, %d updated, %d archived, %d renamed, %d no-change.",
+        "Weekly form scrape completed. %d forms checked. %d new, %d updated, %d archived, %d renamed, %d no-change.",
         total,
-        counts["new"], counts["updated"], counts["deleted"],
-        counts["renamed"], counts["no_change"],
+        counts["new"],
+        counts["updated"],
+        counts["deleted"],
+        counts["renamed"],
+        counts["no_change"],
     )
 
     return {

@@ -1,4 +1,3 @@
-
 """
 =============================================================================
 FILE: dags/src/legal_review.py
@@ -26,12 +25,13 @@ RAISE on failure (so the DAG retry logic triggers):
   Any exception — ConnectionError, HTTPError, TimeoutError, etc.
 =============================================================================
 """
+
 import logging
 import os
 
 logger = logging.getLogger(__name__)
 
-_USE_REAL    = os.getenv("USE_REAL_LEGAL_REVIEW", "false").lower() == "true"
+_USE_REAL = os.getenv("USE_REAL_LEGAL_REVIEW", "false").lower() == "true"
 _GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
 
@@ -62,12 +62,13 @@ def _real_review(text: str, lang: str) -> dict:
     Enable by setting USE_REAL_LEGAL_REVIEW=true and GROQ_API_KEY.
     """
     import json as _json
+
     try:
         from groq import Groq
 
         lang_label = {"spa_Latn": "Spanish", "por_Latn": "Portuguese"}.get(lang, lang)
-        client     = Groq(api_key=_GROQ_API_KEY)
-        prompt     = (
+        client = Groq(api_key=_GROQ_API_KEY)
+        prompt = (
             f"You are a legal translation reviewer for Massachusetts courts. "
             f"Review this {lang_label} translation for legal accuracy. "
             f"Respond ONLY with JSON: "
@@ -81,12 +82,14 @@ def _real_review(text: str, lang: str) -> dict:
             temperature=0.1,
             max_tokens=500,
         )
-        raw    = response.choices[0].message.content.strip()
-        raw    = raw.replace("```json", "").replace("```", "").strip()
+        raw = response.choices[0].message.content.strip()
+        raw = raw.replace("```json", "").replace("```", "").strip()
         result = _json.loads(raw)
         logger.info(
             "[REAL LEGAL REVIEW] lang=%s status=%s corrections=%d",
-            lang, result.get("status"), len(result.get("corrections", [])),
+            lang,
+            result.get("status"),
+            len(result.get("corrections", [])),
         )
         return result
     except Exception as exc:

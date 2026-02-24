@@ -10,10 +10,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "dags"))
 
 import src.scrape_forms as sf
 
-
 # ══════════════════════════════════════════════════════════════════════════════
 # Fixtures & helpers
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 @pytest.fixture(autouse=True)
 def tmp_dirs(tmp_path, monkeypatch):
@@ -78,6 +78,7 @@ def _make_catalog_entry(**overrides) -> dict:
 # Catalog helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestCatalogHelpers:
     def test_load_empty_when_missing(self):
         """Catalog file doesn't exist → returns empty list."""
@@ -120,6 +121,7 @@ class TestCatalogHelpers:
 # Slug extraction
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestSlugFromUrl:
     def test_standard_download_url(self):
         url = "https://www.mass.gov/doc/affidavit-of-indigency/download"
@@ -142,6 +144,7 @@ class TestSlugFromUrl:
 # SHA-256 helper
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestSha256:
     def test_known_value(self):
         result = sf._sha256(b"")
@@ -157,6 +160,7 @@ class TestSha256:
 # ══════════════════════════════════════════════════════════════════════════════
 # File system helpers
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestFileHelpers:
     def test_version_dir_creates_directory(self):
@@ -201,49 +205,47 @@ class TestFileHelpers:
 # Appearances helper
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestMergeAppearances:
     def test_adds_new_division(self):
-        entry = _make_catalog_entry(appearances=[
-            {"division": "District Court", "section_heading": "General"}
-        ])
-        sf._merge_appearances(entry, [
-            {"division": "Housing Court", "section_heading": "Indigency"}
-        ])
+        entry = _make_catalog_entry(appearances=[{"division": "District Court", "section_heading": "General"}])
+        sf._merge_appearances(entry, [{"division": "Housing Court", "section_heading": "Indigency"}])
         assert len(entry["appearances"]) == 2
         assert entry["appearances"][1]["division"] == "Housing Court"
 
     def test_skips_duplicate_division(self):
-        entry = _make_catalog_entry(appearances=[
-            {"division": "District Court", "section_heading": "General"}
-        ])
-        sf._merge_appearances(entry, [
-            {"division": "District Court", "section_heading": "General"}
-        ])
+        entry = _make_catalog_entry(appearances=[{"division": "District Court", "section_heading": "General"}])
+        sf._merge_appearances(entry, [{"division": "District Court", "section_heading": "General"}])
         assert len(entry["appearances"]) == 1
 
     def test_adds_multiple_new_divisions(self):
         entry = _make_catalog_entry(appearances=[])
-        sf._merge_appearances(entry, [
-            {"division": "District Court", "section_heading": "General"},
-            {"division": "Housing Court", "section_heading": "Indigency"},
-            {"division": "Land Court", "section_heading": "Forms"},
-        ])
+        sf._merge_appearances(
+            entry,
+            [
+                {"division": "District Court", "section_heading": "General"},
+                {"division": "Housing Court", "section_heading": "Indigency"},
+                {"division": "Land Court", "section_heading": "Forms"},
+            ],
+        )
         assert len(entry["appearances"]) == 3
 
     def test_mixed_new_and_existing(self):
-        entry = _make_catalog_entry(appearances=[
-            {"division": "District Court", "section_heading": "General"}
-        ])
-        sf._merge_appearances(entry, [
-            {"division": "District Court", "section_heading": "General"},  # dup
-            {"division": "Housing Court", "section_heading": "Indigency"},  # new
-        ])
+        entry = _make_catalog_entry(appearances=[{"division": "District Court", "section_heading": "General"}])
+        sf._merge_appearances(
+            entry,
+            [
+                {"division": "District Court", "section_heading": "General"},  # dup
+                {"division": "Housing Court", "section_heading": "Indigency"},  # new
+            ],
+        )
         assert len(entry["appearances"]) == 2
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Scenario A — new form
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestScenarioA:
     def test_adds_entry_to_catalog(self):
@@ -252,9 +254,14 @@ class TestScenarioA:
         pdf = _make_pdf("new form")
         appearances = [{"division": "District Court", "section_heading": "General"}]
         sf._handle_new_form(
-            catalog, "New Form",
+            catalog,
+            "New Form",
             "https://www.mass.gov/doc/new-form/download",
-            pdf, None, None, appearances, queue,
+            pdf,
+            None,
+            None,
+            appearances,
+            queue,
         )
 
         assert len(catalog) == 1
@@ -272,8 +279,14 @@ class TestScenarioA:
         queue = []
         pdf = _make_pdf("versioned")
         sf._handle_new_form(
-            catalog, "F", "https://www.mass.gov/doc/f/download",
-            pdf, None, None, [], queue,
+            catalog,
+            "F",
+            "https://www.mass.gov/doc/f/download",
+            pdf,
+            None,
+            None,
+            [],
+            queue,
         )
         versions = catalog[0]["versions"]
         assert len(versions) == 1
@@ -288,8 +301,14 @@ class TestScenarioA:
             {"division": "Housing Court", "section_heading": "Indigency"},
         ]
         sf._handle_new_form(
-            catalog, "F", "https://www.mass.gov/doc/f/download",
-            _make_pdf(), None, None, apps, queue,
+            catalog,
+            "F",
+            "https://www.mass.gov/doc/f/download",
+            _make_pdf(),
+            None,
+            None,
+            apps,
+            queue,
         )
         assert len(catalog[0]["appearances"]) == 2
 
@@ -297,8 +316,14 @@ class TestScenarioA:
         catalog = []
         queue = []
         sf._handle_new_form(
-            catalog, "F", "https://www.mass.gov/doc/f/download",
-            _make_pdf(), None, None, [], queue,
+            catalog,
+            "F",
+            "https://www.mass.gov/doc/f/download",
+            _make_pdf(),
+            None,
+            None,
+            [],
+            queue,
         )
         assert len(queue) == 1
         assert queue[0] == catalog[0]["form_id"]
@@ -308,8 +333,14 @@ class TestScenarioA:
         queue = []
         pdf = _make_pdf("disk test")
         sf._handle_new_form(
-            catalog, "F", "https://www.mass.gov/doc/f/download",
-            pdf, None, None, [], queue,
+            catalog,
+            "F",
+            "https://www.mass.gov/doc/f/download",
+            pdf,
+            None,
+            None,
+            [],
+            queue,
         )
         path = catalog[0]["versions"][0]["file_path_original"]
         assert Path(path).exists()
@@ -320,8 +351,14 @@ class TestScenarioA:
         queue = []
         es_pdf = _make_pdf("spanish")
         sf._handle_new_form(
-            catalog, "F", "https://www.mass.gov/doc/f/download",
-            _make_pdf(), es_pdf, None, [], queue,
+            catalog,
+            "F",
+            "https://www.mass.gov/doc/f/download",
+            _make_pdf(),
+            es_pdf,
+            None,
+            [],
+            queue,
         )
         es_path = catalog[0]["versions"][0]["file_path_es"]
         assert es_path is not None
@@ -333,8 +370,14 @@ class TestScenarioA:
         queue = []
         pt_pdf = _make_pdf("portuguese")
         sf._handle_new_form(
-            catalog, "F", "https://www.mass.gov/doc/f/download",
-            _make_pdf(), None, pt_pdf, [], queue,
+            catalog,
+            "F",
+            "https://www.mass.gov/doc/f/download",
+            _make_pdf(),
+            None,
+            pt_pdf,
+            [],
+            queue,
         )
         pt_path = catalog[0]["versions"][0]["file_path_pt"]
         assert pt_path is not None
@@ -344,8 +387,14 @@ class TestScenarioA:
         catalog = []
         queue = []
         sf._handle_new_form(
-            catalog, "F", "https://www.mass.gov/doc/f/download",
-            _make_pdf(), None, None, [], queue,
+            catalog,
+            "F",
+            "https://www.mass.gov/doc/f/download",
+            _make_pdf(),
+            None,
+            None,
+            [],
+            queue,
         )
         v = catalog[0]["versions"][0]
         assert v["file_path_es"] is None
@@ -355,6 +404,7 @@ class TestScenarioA:
 # ══════════════════════════════════════════════════════════════════════════════
 # Scenario B — updated form
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestScenarioB:
     def test_increments_version(self):
@@ -404,7 +454,12 @@ class TestScenarioB:
         es_pdf = _make_pdf("es v2")
         pt_pdf = _make_pdf("pt v2")
         sf._handle_updated_form(
-            entry, _make_pdf("v2"), _sha256(b"v2"), es_pdf, pt_pdf, [],
+            entry,
+            _make_pdf("v2"),
+            _sha256(b"v2"),
+            es_pdf,
+            pt_pdf,
+            [],
         )
         v = entry["versions"][0]
         assert v["file_path_es"] is not None
@@ -423,6 +478,7 @@ class TestScenarioB:
 # ══════════════════════════════════════════════════════════════════════════════
 # Scenario C — deleted form (404)
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestScenarioC:
     def test_marks_as_archived(self):
@@ -453,6 +509,7 @@ class TestScenarioC:
 # Scenario D — renamed form
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestScenarioD:
     def test_updates_name(self):
         entry = _make_catalog_entry(form_name="Old Name")
@@ -472,6 +529,7 @@ class TestScenarioD:
     def test_does_not_queue_pretranslation(self):
         """Rename should NOT touch the pretranslation queue."""
         import inspect
+
         sig = inspect.signature(sf._handle_renamed_form)
         assert "pretranslation_queue" not in sig.parameters
 
@@ -485,6 +543,7 @@ class TestScenarioD:
 # ══════════════════════════════════════════════════════════════════════════════
 # Scenario E — no change
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestScenarioE:
     def test_updates_last_scraped_at(self):
@@ -513,6 +572,7 @@ class TestScenarioE:
 # _download_pdf — network behaviour
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestDownloadPdf:
     def test_returns_bytes_on_200(self):
         mock_resp = MagicMock()
@@ -528,28 +588,37 @@ class TestDownloadPdf:
             assert sf._download_pdf("https://example.com/a.pdf") is None
 
     def test_raises_on_500(self):
+        import requests as req_lib
+
         mock_resp = MagicMock()
         mock_resp.status_code = 500
-        mock_resp.raise_for_status.side_effect = Exception("500 Server Error")
-        with patch("src.scrape_forms.requests.get", return_value=mock_resp):
-            with pytest.raises(Exception):
-                sf._download_pdf("https://example.com/a.pdf")
+        mock_resp.raise_for_status.side_effect = req_lib.exceptions.HTTPError("500 Server Error")
+        with (
+            patch("src.scrape_forms.requests.get", return_value=mock_resp),
+            pytest.raises(req_lib.exceptions.RequestException),
+        ):
+            sf._download_pdf("https://example.com/a.pdf")
 
     def test_raises_on_network_error(self):
         import requests as req_lib
-        with patch(
+
+        with (
+            patch(
                 "src.scrape_forms.requests.get",
                 side_effect=req_lib.exceptions.ConnectionError("no network"),
+            ),
+            pytest.raises(req_lib.exceptions.ConnectionError),
         ):
-            with pytest.raises(req_lib.exceptions.ConnectionError):
-                sf._download_pdf("https://example.com/a.pdf")
+            sf._download_pdf("https://example.com/a.pdf")
 
     def test_falls_back_to_playwright_on_403(self):
         """403 from requests should trigger Playwright fallback."""
         mock_resp = MagicMock()
         mock_resp.status_code = 403
-        with patch("src.scrape_forms.requests.get", return_value=mock_resp), \
-                patch("src.scrape_forms._download_pdf_playwright", return_value=b"pw data") as pw_mock:
+        with (
+            patch("src.scrape_forms.requests.get", return_value=mock_resp),
+            patch("src.scrape_forms._download_pdf_playwright", return_value=b"pw data") as pw_mock,
+        ):
             result = sf._download_pdf("https://example.com/a.pdf")
             assert result == b"pw data"
             pw_mock.assert_called_once()
@@ -558,6 +627,7 @@ class TestDownloadPdf:
 # ══════════════════════════════════════════════════════════════════════════════
 # run_scrape — integration-level (all network calls mocked)
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestRunScrape:
     """
@@ -584,21 +654,27 @@ class TestRunScrape:
                 raise val
             return val  # bytes or None
 
-        with patch("src.scrape_forms._scrape_and_download_page", side_effect=fake_scrape), \
-                patch("src.scrape_forms._download_pdf", side_effect=fake_download):
+        with (
+            patch("src.scrape_forms._scrape_and_download_page", side_effect=fake_scrape),
+            patch("src.scrape_forms._download_pdf", side_effect=fake_download),
+        ):
             return sf.run_scrape()
 
     def test_new_form_increments_count(self):
         pdf = _make_pdf("brand new")
-        result = self._run(scraped_forms=[{
-            "name": "Form A",
-            "url": "https://mass.gov/doc/a/download",
-            "bytes": pdf,
-            "es_bytes": None,
-            "pt_bytes": None,
-            "division": "District Court",
-            "section_heading": "General",
-        }])
+        result = self._run(
+            scraped_forms=[
+                {
+                    "name": "Form A",
+                    "url": "https://mass.gov/doc/a/download",
+                    "bytes": pdf,
+                    "es_bytes": None,
+                    "pt_bytes": None,
+                    "division": "District Court",
+                    "section_heading": "General",
+                }
+            ]
+        )
         assert result["counts"]["new"] == 1
         assert len(result["pretranslation_queue"]) == 1
 
@@ -613,15 +689,19 @@ class TestRunScrape:
         )
         sf._save_catalog([entry])
 
-        result = self._run(scraped_forms=[{
-            "name": "Form A",
-            "url": "https://mass.gov/doc/a/download",
-            "bytes": pdf,
-            "es_bytes": None,
-            "pt_bytes": None,
-            "division": "District Court",
-            "section_heading": "General",
-        }])
+        result = self._run(
+            scraped_forms=[
+                {
+                    "name": "Form A",
+                    "url": "https://mass.gov/doc/a/download",
+                    "bytes": pdf,
+                    "es_bytes": None,
+                    "pt_bytes": None,
+                    "division": "District Court",
+                    "section_heading": "General",
+                }
+            ]
+        )
         assert result["counts"]["no_change"] == 1
         assert result["counts"]["new"] == 0
 
@@ -635,15 +715,19 @@ class TestRunScrape:
         )
         sf._save_catalog([entry])
 
-        result = self._run(scraped_forms=[{
-            "name": "Form A",
-            "url": "https://mass.gov/doc/a/download",
-            "bytes": new_pdf,
-            "es_bytes": None,
-            "pt_bytes": None,
-            "division": "District Court",
-            "section_heading": "General",
-        }])
+        result = self._run(
+            scraped_forms=[
+                {
+                    "name": "Form A",
+                    "url": "https://mass.gov/doc/a/download",
+                    "bytes": new_pdf,
+                    "es_bytes": None,
+                    "pt_bytes": None,
+                    "division": "District Court",
+                    "section_heading": "General",
+                }
+            ]
+        )
         assert result["counts"]["updated"] == 1
         assert len(result["pretranslation_queue"]) == 1
 
@@ -663,6 +747,7 @@ class TestRunScrape:
 
     def test_transient_error_does_not_archive(self):
         import requests as req_lib
+
         entry = _make_catalog_entry(
             source_url="https://mass.gov/doc/flaky/download",
             status="active",
@@ -671,10 +756,7 @@ class TestRunScrape:
 
         result = self._run(
             scraped_forms=[],
-            download_map={
-                "https://mass.gov/doc/flaky/download":
-                    req_lib.exceptions.ConnectionError("timeout")
-            },
+            download_map={"https://mass.gov/doc/flaky/download": req_lib.exceptions.ConnectionError("timeout")},
         )
         assert result["counts"]["deleted"] == 0
         catalog = sf._load_catalog()
@@ -691,15 +773,19 @@ class TestRunScrape:
         )
         sf._save_catalog([entry])
 
-        result = self._run(scraped_forms=[{
-            "name": "New Name",
-            "url": "https://mass.gov/doc/new-url/download",
-            "bytes": pdf,
-            "es_bytes": None,
-            "pt_bytes": None,
-            "division": "District Court",
-            "section_heading": "General",
-        }])
+        result = self._run(
+            scraped_forms=[
+                {
+                    "name": "New Name",
+                    "url": "https://mass.gov/doc/new-url/download",
+                    "bytes": pdf,
+                    "es_bytes": None,
+                    "pt_bytes": None,
+                    "division": "District Court",
+                    "section_heading": "General",
+                }
+            ]
+        )
         assert result["counts"]["renamed"] == 1
         assert result["counts"]["new"] == 0
 
@@ -727,9 +813,11 @@ class TestRunScrape:
             {"division": "Housing Court", "url": "https://mass.gov/lists/housing-court-forms"},
         ]
 
-        with patch("src.scrape_forms._scrape_and_download_page", side_effect=fake_scrape), \
-                patch("src.scrape_forms._download_pdf", side_effect=fake_download), \
-                patch("src.scrape_forms.COURT_FORM_PAGES", test_pages):
+        with (
+            patch("src.scrape_forms._scrape_and_download_page", side_effect=fake_scrape),
+            patch("src.scrape_forms._download_pdf", side_effect=fake_download),
+            patch("src.scrape_forms.COURT_FORM_PAGES", test_pages),
+        ):
             result = sf.run_scrape()
 
         catalog = sf._load_catalog()
@@ -750,15 +838,19 @@ class TestRunScrape:
         pdf = _make_pdf("english")
         es_pdf = _make_pdf("spanish")
         pt_pdf = _make_pdf("portuguese")
-        result = self._run(scraped_forms=[{
-            "name": "Translated Form",
-            "url": "https://mass.gov/doc/translated/download",
-            "bytes": pdf,
-            "es_bytes": es_pdf,
-            "pt_bytes": pt_pdf,
-            "division": "District Court",
-            "section_heading": "General",
-        }])
+        self._run(
+            scraped_forms=[
+                {
+                    "name": "Translated Form",
+                    "url": "https://mass.gov/doc/translated/download",
+                    "bytes": pdf,
+                    "es_bytes": es_pdf,
+                    "pt_bytes": pt_pdf,
+                    "division": "District Court",
+                    "section_heading": "General",
+                }
+            ]
+        )
         catalog = sf._load_catalog()
         v = catalog[0]["versions"][0]
         assert v["file_path_es"] is not None

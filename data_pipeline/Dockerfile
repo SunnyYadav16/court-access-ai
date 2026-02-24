@@ -1,4 +1,4 @@
-FROM apache/airflow:3.0.2
+FROM apache/airflow:3.1.7
 
 # Install system dependencies for Playwright (Chromium) and DVC (git) as root
 USER root

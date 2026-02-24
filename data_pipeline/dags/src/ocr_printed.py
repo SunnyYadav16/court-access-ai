@@ -28,6 +28,7 @@ OUTPUT CONTRACT:
   }
 =============================================================================
 """
+
 import logging
 from pathlib import Path
 
@@ -54,21 +55,20 @@ def _pymupdf_extract(pdf_path: str) -> dict:
         import fitz  # PyMuPDF — already in requirements.txt
     except ImportError as exc:
         raise ImportError(
-            "PyMuPDF (fitz) is required. "
-            "It is listed in requirements.txt and should be in the Docker image."
+            "PyMuPDF (fitz) is required. It is listed in requirements.txt and should be in the Docker image."
         ) from exc
 
     if not Path(pdf_path).exists():
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
-    doc     = fitz.open(pdf_path)
+    doc = fitz.open(pdf_path)
     regions = []
 
     for page_num, page in enumerate(doc):
         # get_text("dict") returns blocks → lines → spans with bbox + font info
         text_dict = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)
         for block in text_dict.get("blocks", []):
-            if block.get("type") != 0:   # skip image blocks
+            if block.get("type") != 0:  # skip image blocks
                 continue
             for line in block.get("lines", []):
                 for span in line.get("spans", []):
@@ -76,14 +76,16 @@ def _pymupdf_extract(pdf_path: str) -> dict:
                     if not text:
                         continue
                     x0, y0, x1, y1 = span["bbox"]
-                    regions.append({
-                        "text":       text,
-                        "bbox":       [x0, y0, x1, y1],
-                        "confidence": 0.99,   # native PDF text = high confidence
-                        "page":       page_num,
-                        "font_size":  round(span.get("size", 11.0), 1),
-                        "is_bold":    bool(span.get("flags", 0) & 16),
-                    })
+                    regions.append(
+                        {
+                            "text": text,
+                            "bbox": [x0, y0, x1, y1],
+                            "confidence": 0.99,  # native PDF text = high confidence
+                            "page": page_num,
+                            "font_size": round(span.get("size", 11.0), 1),
+                            "is_bold": bool(span.get("flags", 0) & 16),
+                        }
+                    )
 
     doc.close()
 
@@ -98,8 +100,7 @@ def _pymupdf_extract(pdf_path: str) -> dict:
     full_text = "\n".join(r["text"] for r in regions)
     logger.info(
         "[STUB OCR] Extracted %d region(s) from '%s' using PyMuPDF native.",
-        len(regions), pdf_path,
+        len(regions),
+        pdf_path,
     )
     return {"regions": regions, "full_text": full_text}
-
-

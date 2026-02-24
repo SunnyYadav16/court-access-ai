@@ -11,26 +11,39 @@ Called by DVC:  dvc repro (stage: validate_catalog)
 import json
 import logging
 import sys
-from pathlib import Path
 from collections import Counter
+from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 CATALOG_PATH = Path("dags/data/form_catalog.json")
-FORMS_DIR    = Path("forms")
+FORMS_DIR = Path("forms")
 METRICS_PATH = Path("dags/data/catalog_metrics.json")
 
 # ── Required fields per entry ─────────────────────────────────────────────────
 REQUIRED_TOP_FIELDS = {
-    "form_id", "form_name", "form_slug", "source_url", "status",
-    "content_hash", "current_version", "needs_human_review",
-    "created_at", "last_scraped_at", "appearances", "versions",
+    "form_id",
+    "form_name",
+    "form_slug",
+    "source_url",
+    "status",
+    "content_hash",
+    "current_version",
+    "needs_human_review",
+    "created_at",
+    "last_scraped_at",
+    "appearances",
+    "versions",
 }
 REQUIRED_VERSION_FIELDS = {
-    "version", "content_hash", "file_path_original",
-    "file_path_es", "file_path_pt", "created_at",
+    "version",
+    "content_hash",
+    "file_path_original",
+    "file_path_es",
+    "file_path_pt",
+    "created_at",
 }
 REQUIRED_APPEARANCE_FIELDS = {"division", "section_heading"}
 
@@ -47,7 +60,7 @@ def validate() -> dict:
 
     # ── 2. Load and parse JSON ────────────────────────────────────────────────
     try:
-        with open(CATALOG_PATH, "r", encoding="utf-8") as f:
+        with open(CATALOG_PATH, encoding="utf-8") as f:
             catalog = json.load(f)
     except json.JSONDecodeError as e:
         logger.error("Invalid JSON in catalog: %s", e)
@@ -68,7 +81,7 @@ def validate() -> dict:
     missing_pdfs = 0
     total_versions = 0
 
-    seen_ids  = set()
+    seen_ids = set()
     seen_urls = set()
 
     for i, entry in enumerate(catalog):
@@ -148,18 +161,18 @@ def validate() -> dict:
     archived = status_counts.get("archived", 0)
 
     metrics = {
-        "valid":              len(errors) == 0,
-        "total_forms":        total_forms,
-        "active_forms":       active,
-        "archived_forms":     archived,
-        "total_versions":     total_versions,
-        "forms_with_es":      forms_with_es,
-        "forms_with_pt":      forms_with_pt,
-        "unique_divisions":   len(division_counts),
+        "valid": len(errors) == 0,
+        "total_forms": total_forms,
+        "active_forms": active,
+        "archived_forms": archived,
+        "total_versions": total_versions,
+        "forms_with_es": forms_with_es,
+        "forms_with_pt": forms_with_pt,
+        "unique_divisions": len(division_counts),
         "division_breakdown": dict(division_counts),
-        "missing_pdfs":       missing_pdfs,
-        "errors":             len(errors),
-        "warnings":           len(warnings),
+        "missing_pdfs": missing_pdfs,
+        "errors": len(errors),
+        "warnings": len(warnings),
     }
 
     # Log summary

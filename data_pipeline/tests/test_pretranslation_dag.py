@@ -15,32 +15,32 @@ Run with:
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
 # ── Path setup (matches teammate's pattern exactly) ───────────────────────────
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "dags"))
 
-import src.ocr_printed as ocr
-import src.translate_text as tt
 import src.legal_review as lr
+import src.ocr_printed as ocr
 import src.reconstruct_pdf as rp
-
+import src.translate_text as tt
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def _make_pdf(path: Path) -> None:
     """Create a minimal real PDF using PyMuPDF for reconstruction tests."""
     import fitz
-    doc  = fitz.open()
+
+    doc = fitz.open()
     page = doc.new_page(width=595, height=842)
     page.insert_text((100, 100), "COMMONWEALTH OF MASSACHUSETTS", fontsize=12)
-    page.insert_text((100, 130), "Notice of Appearance",          fontsize=10)
-    page.insert_text((100, 160), "Defendant:",                    fontsize=10)
-    page.insert_text((100, 190), "Plaintiff:",                    fontsize=10)
+    page.insert_text((100, 130), "Notice of Appearance", fontsize=10)
+    page.insert_text((100, 160), "Defendant:", fontsize=10)
+    page.insert_text((100, 190), "Plaintiff:", fontsize=10)
     doc.save(str(path))
     doc.close()
 
@@ -48,14 +48,38 @@ def _make_pdf(path: Path) -> None:
 def _sample_regions() -> list[dict]:
     """Realistic OCR regions used across multiple tests."""
     return [
-        {"text": "COMMONWEALTH OF MASSACHUSETTS", "bbox": [100, 100, 500, 120],
-         "confidence": 0.99, "page": 0, "font_size": 12.0, "is_bold": True},
-        {"text": "Notice of Appearance",          "bbox": [100, 130, 400, 150],
-         "confidence": 0.97, "page": 0, "font_size": 10.0, "is_bold": False},
-        {"text": "Defendant:",                    "bbox": [100, 160, 200, 180],
-         "confidence": 0.95, "page": 0, "font_size": 10.0, "is_bold": False},
-        {"text": "Plaintiff:",                    "bbox": [100, 190, 200, 210],
-         "confidence": 0.95, "page": 0, "font_size": 10.0, "is_bold": False},
+        {
+            "text": "COMMONWEALTH OF MASSACHUSETTS",
+            "bbox": [100, 100, 500, 120],
+            "confidence": 0.99,
+            "page": 0,
+            "font_size": 12.0,
+            "is_bold": True,
+        },
+        {
+            "text": "Notice of Appearance",
+            "bbox": [100, 130, 400, 150],
+            "confidence": 0.97,
+            "page": 0,
+            "font_size": 10.0,
+            "is_bold": False,
+        },
+        {
+            "text": "Defendant:",
+            "bbox": [100, 160, 200, 180],
+            "confidence": 0.95,
+            "page": 0,
+            "font_size": 10.0,
+            "is_bold": False,
+        },
+        {
+            "text": "Plaintiff:",
+            "bbox": [100, 190, 200, 210],
+            "confidence": 0.95,
+            "page": 0,
+            "font_size": 10.0,
+            "is_bold": False,
+        },
     ]
 
 
@@ -63,13 +87,13 @@ def _sample_regions() -> list[dict]:
 # src/ocr_printed.py
 # ══════════════════════════════════════════════════════════════════════════════
 
-class TestOcrPrinted:
 
+class TestOcrPrinted:
     def test_returns_dict_with_regions_and_full_text(self, tmp_path):
         pdf = tmp_path / "test.pdf"
         _make_pdf(pdf)
         result = ocr.extract_text_from_pdf(str(pdf))
-        assert "regions"   in result
+        assert "regions" in result
         assert "full_text" in result
 
     def test_regions_is_list(self, tmp_path):
@@ -90,10 +114,10 @@ class TestOcrPrinted:
         _make_pdf(pdf)
         result = ocr.extract_text_from_pdf(str(pdf))
         for region in result["regions"]:
-            assert "text"       in region, f"Missing 'text' in {region}"
-            assert "bbox"       in region, f"Missing 'bbox' in {region}"
+            assert "text" in region, f"Missing 'text' in {region}"
+            assert "bbox" in region, f"Missing 'bbox' in {region}"
             assert "confidence" in region, f"Missing 'confidence' in {region}"
-            assert "page"       in region, f"Missing 'page' in {region}"
+            assert "page" in region, f"Missing 'page' in {region}"
 
     def test_bbox_is_list_of_four_numbers(self, tmp_path):
         pdf = tmp_path / "test.pdf"
@@ -114,8 +138,8 @@ class TestOcrPrinted:
         """full_text must equal all region texts joined by newline."""
         pdf = tmp_path / "test.pdf"
         _make_pdf(pdf)
-        result    = ocr.extract_text_from_pdf(str(pdf))
-        expected  = "\n".join(r["text"] for r in result["regions"])
+        result = ocr.extract_text_from_pdf(str(pdf))
+        expected = "\n".join(r["text"] for r in result["regions"])
         assert result["full_text"] == expected
 
     def test_raises_file_not_found_for_missing_pdf(self, tmp_path):
@@ -142,16 +166,16 @@ class TestOcrPrinted:
 # src/translate_text.py
 # ══════════════════════════════════════════════════════════════════════════════
 
-class TestTranslateText:
 
+class TestTranslateText:
     def test_returns_dict_with_three_keys(self):
         result = tt.translate_text("Defendant:", "eng_Latn", "spa_Latn")
-        assert "original"   in result
+        assert "original" in result
         assert "translated" in result
         assert "confidence" in result
 
     def test_original_field_matches_input(self):
-        text   = "Notice of Appearance"
+        text = "Notice of Appearance"
         result = tt.translate_text(text, "eng_Latn", "spa_Latn")
         assert result["original"] == text
 
@@ -198,11 +222,11 @@ class TestTranslateText:
 # src/legal_review.py
 # ══════════════════════════════════════════════════════════════════════════════
 
-class TestLegalReview:
 
+class TestLegalReview:
     def test_returns_dict_with_status_and_corrections(self):
         result = lr.review_legal_terms("ORIGINAL: ...\nSPANISH: ...", "spa_Latn")
-        assert "status"      in result
+        assert "status" in result
         assert "corrections" in result
 
     def test_stub_returns_ok_status(self):
@@ -236,26 +260,27 @@ class TestLegalReview:
 # src/reconstruct_pdf.py
 # ══════════════════════════════════════════════════════════════════════════════
 
-class TestReconstructPdf:
 
+class TestReconstructPdf:
     def test_creates_output_file(self, tmp_path):
         orig = tmp_path / "orig.pdf"
-        out  = tmp_path / "es.pdf"
+        out = tmp_path / "es.pdf"
         _make_pdf(orig)
         rp.reconstruct_pdf(str(orig), _sample_regions_translated("ES"), str(out))
         assert out.exists()
 
     def test_output_file_is_not_empty(self, tmp_path):
         orig = tmp_path / "orig.pdf"
-        out  = tmp_path / "es.pdf"
+        out = tmp_path / "es.pdf"
         _make_pdf(orig)
         rp.reconstruct_pdf(str(orig), _sample_regions_translated("ES"), str(out))
         assert out.stat().st_size > 0
 
     def test_output_is_valid_pdf(self, tmp_path):
         import fitz
+
         orig = tmp_path / "orig.pdf"
-        out  = tmp_path / "es.pdf"
+        out = tmp_path / "es.pdf"
         _make_pdf(orig)
         rp.reconstruct_pdf(str(orig), _sample_regions_translated("ES"), str(out))
         doc = fitz.open(str(out))
@@ -264,7 +289,7 @@ class TestReconstructPdf:
 
     def test_empty_regions_still_produces_pdf(self, tmp_path):
         orig = tmp_path / "orig.pdf"
-        out  = tmp_path / "out.pdf"
+        out = tmp_path / "out.pdf"
         _make_pdf(orig)
         rp.reconstruct_pdf(str(orig), [], str(out))
         assert out.exists()
@@ -278,9 +303,9 @@ class TestReconstructPdf:
             )
 
     def test_creates_output_directory_if_needed(self, tmp_path):
-        orig    = tmp_path / "orig.pdf"
+        orig = tmp_path / "orig.pdf"
         out_dir = tmp_path / "subdir" / "v1"
-        out     = out_dir / "es.pdf"
+        out = out_dir / "es.pdf"
         _make_pdf(orig)
         out_dir.mkdir(parents=True)
         rp.reconstruct_pdf(str(orig), _sample_regions_translated("ES"), str(out))
@@ -288,8 +313,8 @@ class TestReconstructPdf:
 
     def test_portuguese_produces_separate_file(self, tmp_path):
         orig = tmp_path / "orig.pdf"
-        es   = tmp_path / "es.pdf"
-        pt   = tmp_path / "pt.pdf"
+        es = tmp_path / "es.pdf"
+        pt = tmp_path / "pt.pdf"
         _make_pdf(orig)
         rp.reconstruct_pdf(str(orig), _sample_regions_translated("ES"), str(es))
         rp.reconstruct_pdf(str(orig), _sample_regions_translated("PT"), str(pt))
@@ -299,33 +324,51 @@ class TestReconstructPdf:
     def test_output_size_reasonable(self, tmp_path):
         """Output PDF should be at least 1KB — not a zero-byte or corrupted file."""
         orig = tmp_path / "orig.pdf"
-        out  = tmp_path / "es.pdf"
+        out = tmp_path / "es.pdf"
         _make_pdf(orig)
         rp.reconstruct_pdf(str(orig), _sample_regions_translated("ES"), str(out))
         assert out.stat().st_size > 1024
 
     def test_regions_with_missing_translated_text_skipped(self, tmp_path):
         """Regions with empty translated_text should not cause errors."""
-        orig    = tmp_path / "orig.pdf"
-        out     = tmp_path / "es.pdf"
+        orig = tmp_path / "orig.pdf"
+        out = tmp_path / "es.pdf"
         _make_pdf(orig)
         regions = [
-            {"text": "Title", "translated_text": "",
-             "bbox": [100, 100, 400, 120], "page": 0, "font_size": 12.0, "is_bold": False},
-            {"text": "Body",  "translated_text": "[ES] Body text",
-             "bbox": [100, 130, 400, 150], "page": 0, "font_size": 10.0, "is_bold": False},
+            {
+                "text": "Title",
+                "translated_text": "",
+                "bbox": [100, 100, 400, 120],
+                "page": 0,
+                "font_size": 12.0,
+                "is_bold": False,
+            },
+            {
+                "text": "Body",
+                "translated_text": "[ES] Body text",
+                "bbox": [100, 130, 400, 150],
+                "page": 0,
+                "font_size": 10.0,
+                "is_bold": False,
+            },
         ]
         rp.reconstruct_pdf(str(orig), regions, str(out))
         assert out.exists()
 
     def test_bold_regions_handled(self, tmp_path):
         """Bold regions should not cause errors in reconstruction."""
-        orig    = tmp_path / "orig.pdf"
-        out     = tmp_path / "es.pdf"
+        orig = tmp_path / "orig.pdf"
+        out = tmp_path / "es.pdf"
         _make_pdf(orig)
         regions = [
-            {"text": "BOLD TITLE", "translated_text": "[ES] TITULO EN NEGRITA",
-             "bbox": [100, 100, 400, 120], "page": 0, "font_size": 12.0, "is_bold": True},
+            {
+                "text": "BOLD TITLE",
+                "translated_text": "[ES] TITULO EN NEGRITA",
+                "bbox": [100, 100, 400, 120],
+                "page": 0,
+                "font_size": 12.0,
+                "is_bold": True,
+            },
         ]
         rp.reconstruct_pdf(str(orig), regions, str(out))
         assert out.exists()
@@ -333,7 +376,4 @@ class TestReconstructPdf:
 
 def _sample_regions_translated(lang_tag: str) -> list[dict]:
     """Return sample OCR regions with translated_text set."""
-    return [
-        {**r, "translated_text": f"[{lang_tag}] {r['text']}"}
-        for r in _sample_regions()
-    ]
+    return [{**r, "translated_text": f"[{lang_tag}] {r['text']}"} for r in _sample_regions()]
