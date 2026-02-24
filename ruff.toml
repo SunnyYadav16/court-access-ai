@@ -1,0 +1,40 @@
+target-version = "py311"
+line-length = 120
+
+src = ["app", "scripts", "dags", "monitoring", "tests"]
+
+[lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort (import sorting)
+    "N",     # pep8-naming
+    "UP",    # pyupgrade (modernize syntax)
+    "B",     # flake8-bugbear (common bugs)
+    "S",     # flake8-bandit (security subset)
+    "A",     # flake8-builtins (shadowing builtins)
+    "T20",   # flake8-print (no stray print statements)
+    "SIM",   # flake8-simplify
+    "RUF",   # ruff-specific rules
+]
+ignore = [
+    "E501",  # line length handled by formatter
+]
+
+# Allow fix for all enabled rules when --fix is provided
+fixable = ["ALL"]
+unfixable = []
+
+[lint.per-file-ignores]
+"tests/**" = ["S101", "S106"]  # allow assert and hardcoded passwords in tests
+"dags/**" = ["T201"]           # allow print in DAGs for Airflow logging
+"scripts/**" = ["T201"]        # allow print in scripts
+
+[lint.isort]
+known-first-party = ["app", "scripts"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
