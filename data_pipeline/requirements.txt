@@ -1,14 +1,17 @@
 # ── Airflow ──
 apache-airflow==3.0.2
- 
+
 # ── Web scraping ──
 requests>=2.32.0
 beautifulsoup4==4.12.3
 lxml==5.1.0
 playwright>=1.40.0
- 
+
 # ── Data versioning ──
 dvc>=3.50.0
- 
+
+# ── PDF processing ──
+pymupdf>=1.23.0
+
 # ── Testing ──
 pytest==9.0.2

@@ -222,8 +222,8 @@ def task_load_form_entry(**context) -> dict:
         # Record which translations already exist (partial case)
         "already_has_es": already_has_es,
         "already_has_pt": already_has_pt,
-        "existing_es_path": latest.get("file_path_es"),   # ← Added THIS
-        "existing_pt_path": latest.get("file_path_pt"),   # ← Added THIS
+        "existing_es_path": latest.get("file_path_es"),  
+        "existing_pt_path": latest.get("file_path_pt"),   
         # Flag mislabeled files so OCR can handle them gracefully
         "is_mislabeled": "mislabeled" in str(entry.get("preprocessing_flags", [])),
     }
