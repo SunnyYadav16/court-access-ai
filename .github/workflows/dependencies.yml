@@ -17,15 +17,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Install Trivy directly from the official script — avoids the
+      # aquasecurity/setup-trivy action which fails to unpack v0.69.x releases.
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sh -s -- -b /usr/local/bin v0.61.0
+
       - name: Run Trivy (filesystem scan)
-        uses: aquasecurity/trivy-action@0.34.1
-        with:
-          scan-type: fs
-          scan-ref: .
-          format: sarif
-          output: trivy-results.sarif
-          severity: CRITICAL,HIGH
-          exit-code: 0
+        run: |
+          trivy fs . \
+            --format sarif \
+            --output trivy-results.sarif \
+            --severity CRITICAL,HIGH \
+            --exit-code 0
 
       - name: Upload Trivy SARIF
         if: always()
