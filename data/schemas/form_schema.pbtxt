@@ -1,0 +1,214 @@
+# CourtAccess AI — TFDV Feature Schema
+# data/schemas/form_schema.pbtxt
+#
+# This schema defines the expected feature types for the court form dataset
+# used in TensorFlow Data Validation (TFDV) drift detection and anomaly detection.
+#
+# Usage:
+#   import tensorflow_data_validation as tfdv
+#   schema = tfdv.load_schema_text("data/schemas/form_schema.pbtxt")
+#   stats = tfdv.generate_statistics_from_dataframe(df)
+#   anomalies = tfdv.validate_statistics(stats, schema)
+#
+# Schema version: 1.0.0
+# Last updated: 2024-01-01
+#
+# Features are organised by pipeline stage:
+#   - Scraper output (raw): form_id, form_name, source_url, ...
+#   - Preprocessing output: content_hash, has_spanish, has_portuguese, ...
+#   - Translation input: text_segment, source_language, target_language
+#   - Bias monitoring: division, length_tokens, pii_score, ...
+
+feature {
+  name: "form_id"
+  type: BYTES
+  presence { min_fraction: 1.0 min_count: 1 }
+  shape { dim { size: 1 } }
+  annotation { tag: "identifier" }
+}
+
+feature {
+  name: "form_name"
+  type: BYTES
+  presence { min_fraction: 1.0 min_count: 1 }
+  shape { dim { size: 1 } }
+  annotation { tag: "text" }
+}
+
+feature {
+  name: "source_url"
+  type: BYTES
+  presence { min_fraction: 1.0 min_count: 1 }
+  shape { dim { size: 1 } }
+  annotation { tag: "url" }
+}
+
+feature {
+  name: "content_hash"
+  type: BYTES
+  presence { min_fraction: 1.0 min_count: 1 }
+  shape { dim { size: 1 } }
+  annotation { tag: "integrity" }
+}
+
+feature {
+  name: "division"
+  type: BYTES
+  presence { min_fraction: 0.95 min_count: 1 }
+  shape { dim { size: -1 } }
+  value_count { min: 1 max: 10 }
+  domain: "court_division_domain"
+  annotation { tag: "categorical" tag: "bias_sensitive" }
+}
+
+feature {
+  name: "has_spanish"
+  type: INT
+  bool_domain {}
+  presence { min_fraction: 1.0 min_count: 1 }
+  shape { dim { size: 1 } }
+  annotation { tag: "availability" }
+}
+
+feature {
+  name: "has_portuguese"
+  type: INT
+  bool_domain {}
+  presence { min_fraction: 1.0 min_count: 1 }
+  shape { dim { size: 1 } }
+  annotation { tag: "availability" }
+}
+
+feature {
+  name: "languages_available"
+  type: BYTES
+  presence { min_fraction: 0.5 min_count: 0 }
+  value_count { min: 0 max: 10 }
+  annotation { tag: "availability" }
+}
+
+feature {
+  name: "current_version"
+  type: INT
+  int_domain { min: 1 max: 999 }
+  presence { min_fraction: 1.0 min_count: 1 }
+  shape { dim { size: 1 } }
+  annotation { tag: "version_control" }
+}
+
+feature {
+  name: "needs_human_review"
+  type: INT
+  bool_domain {}
+  presence { min_fraction: 1.0 min_count: 1 }
+  shape { dim { size: 1 } }
+  annotation { tag: "review_flag" }
+}
+
+feature {
+  name: "status"
+  type: BYTES
+  presence { min_fraction: 1.0 min_count: 1 }
+  shape { dim { size: 1 } }
+  string_domain { value: "active" value: "archived" }
+  annotation { tag: "categorical" }
+}
+
+feature {
+  name: "last_scraped_at"
+  type: BYTES
+  presence { min_fraction: 0.0 min_count: 0 }
+  shape { dim { size: 1 } }
+  annotation { tag: "timestamp" }
+}
+
+# ── Translation pipeline features ────────────────────────────────────────────
+
+feature {
+  name: "text_segment"
+  type: BYTES
+  presence { min_fraction: 1.0 min_count: 1 }
+  shape { dim { size: 1 } }
+  annotation { tag: "text" tag: "nlp_input" }
+}
+
+feature {
+  name: "source_language"
+  type: BYTES
+  presence { min_fraction: 1.0 min_count: 1 }
+  shape { dim { size: 1 } }
+  string_domain { value: "en" }
+  annotation { tag: "language_code" }
+}
+
+feature {
+  name: "target_language"
+  type: BYTES
+  presence { min_fraction: 1.0 min_count: 1 }
+  shape { dim { size: 1 } }
+  string_domain { value: "es" value: "pt" }
+  annotation { tag: "language_code" }
+}
+
+feature {
+  name: "length_tokens"
+  type: INT
+  int_domain { min: 1 max: 4096 }
+  presence { min_fraction: 0.9 min_count: 1 }
+  shape { dim { size: 1 } }
+  annotation { tag: "nlp_feature" tag: "bias_sensitive" }
+}
+
+feature {
+  name: "length_chars"
+  type: INT
+  int_domain { min: 1 max: 16000 }
+  presence { min_fraction: 0.9 min_count: 1 }
+  shape { dim { size: 1 } }
+  annotation { tag: "nlp_feature" }
+}
+
+# ── Bias monitoring features ──────────────────────────────────────────────────
+
+feature {
+  name: "pii_score"
+  type: FLOAT
+  float_domain { min: 0.0 max: 1.0 }
+  presence { min_fraction: 0.0 min_count: 0 }
+  shape { dim { size: 1 } }
+  annotation { tag: "privacy" tag: "bias_monitoring" }
+}
+
+feature {
+  name: "translation_confidence"
+  type: FLOAT
+  float_domain { min: 0.0 max: 1.0 }
+  presence { min_fraction: 0.0 min_count: 0 }
+  shape { dim { size: 1 } }
+  annotation { tag: "quality_metric" tag: "bias_monitoring" }
+}
+
+feature {
+  name: "legal_review_score"
+  type: FLOAT
+  float_domain { min: 0.0 max: 1.0 }
+  presence { min_fraction: 0.0 min_count: 0 }
+  shape { dim { size: 1 } }
+  annotation { tag: "quality_metric" tag: "llm_output" }
+}
+
+# ── Controlled vocabularies (string domains) ──────────────────────────────────
+
+string_domain {
+  name: "court_division_domain"
+  value: "Civil"
+  value: "Criminal"
+  value: "District"
+  value: "Housing"
+  value: "Juvenile"
+  value: "Land Court"
+  value: "Municipal"
+  value: "Probate and Family"
+  value: "Superior"
+  value: "Supreme Judicial Court"
+}
