@@ -1,0 +1,37 @@
+# DVC pointer file for the TFDV statistical baseline (reference statistics)
+# Used by courtaccess/monitoring/drift.py to detect distribution shift
+# in the form catalog dataset between weekly scraper runs.
+#
+# Artifact: tfdv-baseline-stats — TFRecord files containing reference statistics
+# generated from the initial form catalog dataset on first production scrape.
+#
+# To regenerate the baseline:
+#   python3 -c "
+#   from courtaccess.monitoring.drift import generate_baseline_stats
+#   generate_baseline_stats('courtaccess/data/form_catalog.json', 'models/tfdv-baseline-stats/')
+#   "
+#
+# To fetch: dvc pull models/tfdv-baseline-stats.dvc
+
+outs:
+- md5: 6512bd43d9caa6e02c990b0a82652dea  # placeholder — replace after first `dvc push`
+  size: 280000
+  hash: md5
+  path: tfdv-baseline-stats
+  isdir: true
+  cache: true
+  persist: false
+
+meta:
+  model_type: monitoring_baseline
+  framework: tensorflow_data_validation
+  version: "1.0.0"
+  generated_from: courtaccess/data/form_catalog.json
+  courtaccess_path: /opt/models/tfdv-baseline-stats
+  used_by:
+    - courtaccess/monitoring/drift.py
+    - dags/form_pretranslation_dag.py
+  refresh_schedule: weekly  # regenerated after each form_scraper_dag run when drift detected
+  alert_threshold:
+    jensen_shannon_divergence: 0.1
+    z_score_numeric_features: 3.0
