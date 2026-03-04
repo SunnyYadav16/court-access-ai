@@ -14,7 +14,7 @@ Massachusetts courts face a systemic language access crisis. Approximately 45% o
 
 The system provides two core capabilities:
 
-**Real-Time Speech Translation.** Court officials initiate a live session. The system captures audio from the browser microphone, transcribes speech to text, translates between English and the target language, validates legal terminology, and plays back the translated audio, all in near real-time. This runs as a continuous WebSocket stream, not a batch job.
+**Real-Time Speech Translation.** Court officials initiate a live session. The system captures audio from the browser microphone, transcribes speech to text, translates between English and the target language, validates legal terminology, and plays back the translated audio — all in near real-time via a continuous WebSocket stream.
 
 **Document Translation.** Users upload legal PDFs or browse a library of pre-translated Massachusetts court forms. Uploaded documents go through OCR, PII detection, translation, legal term validation, and PDF reconstruction that preserves the original layout. Pre-translated government forms are scraped weekly from mass.gov, translated, and stored for instant access.
 
@@ -40,16 +40,12 @@ Home Screen
 
 ### Pipeline Architecture
 
-The system is built around **3 Airflow DAGs** and a **WebSocket streaming service**:
-
 | Pipeline | Type | Trigger |
 |----------|------|---------|
 | Real-time speech translation | WebSocket stream (FastAPI) | Court official starts session |
-| `document_pipeline_dag` | Airflow DAG (not yet implemented) | User uploads a PDF |
-| `form_scraper_dag` | Airflow DAG (scheduled) | Weekly, every Monday |
-| `form_pretranslation_dag` | Airflow DAG | Triggered by scraper when new/updated forms found |
-
-The real-time pipeline is **not** an Airflow DAG. It runs as a continuous WebSocket connection inside FastAPI because real-time audio streaming requires persistent, low-latency connections, not batch orchestration.
+| `document_pipeline_dag` | Airflow DAG | User uploads a PDF |
+| `form_scraper_dag` | Airflow DAG (scheduled) | Weekly, every Monday at 06:00 UTC |
+| `form_pretranslation_dag` | Airflow DAG | Triggered by scraper when new/updated forms detected |
 
 ### Authentication and Access Control
 
@@ -64,75 +60,224 @@ The real-time pipeline is **not** an Airflow DAG. It runs as a continuous WebSoc
 
 ## AI Models
 
-All models are used as pre-trained with no fine-tuning. The MLOps pipeline manages versioning, serving, monitoring, and updates of these models.
+All models are pre-trained with no fine-tuning. The MLOps pipeline manages versioning, serving, monitoring, and updates.
 
 | Model | Role | Details |
 |-------|------|---------|
 | **Faster-Whisper Large V3** | Speech-to-text (ASR) | CTranslate2 INT8 quantization, ~60x realtime |
 | **NLLB-200 Distilled 1.3B** | Translation (English ↔ Spanish/Portuguese) | Meta's No Language Left Behind model |
-| **Llama 3.1** | Legal term validation + document classification | Via Groq API. Async for real-time, sync for documents |
+| **Llama 4 Scout** | Legal term validation + document classification | Via Groq API. Async for real-time, sync for documents |
 | **PaddleOCR v3** | Printed text extraction from PDFs | DBNet detection + SVTR recognition, >95% accuracy |
 | **Qwen2.5-VL** | Handwritten text extraction | Vision-language model, ~90% accuracy on handwriting |
 | **Silero VAD v4** | Voice activity detection | Filters silence before ASR to prevent hallucinations |
 | **Piper TTS** | Text-to-speech | Generates spoken audio in Spanish/Portuguese |
 | **Microsoft Presidio** | PII detection | Custom recognizers for MA docket patterns, SSN, etc. |
 
----
+Model weights are tracked via DVC and stored in GCS (`gs://courtaccess-models/`). Each model has a `.dvc` pointer file committed to Git. To pull model weights:
 
-## Document Translation Pipeline (document_pipeline_dag)
-
-Step-by-step flow when a user uploads a PDF:
-
-1. **FastAPI** receives upload + target language, creates session and translation request in Cloud SQL, saves PDF to GCS, triggers Airflow DAG via REST API
-2. **TFDV** validates the file (format, size, corruption, page count)
-3. **Llama 3.1** classifies first 3 pages and hard rejects non-legal documents
-4. **PyMuPDF** splits PDF into individual page images
-5. **PaddleOCR** extracts printed text with bounding box coordinates
-6. **Qwen2.5-VL** extracts handwritten text from low-confidence regions
-7. Printed and handwritten results merged by reading order
-8. **Presidio** scans for PII (findings logged, not auto-redacted)
-9. **NLLB-200** translates each text region independently
-10. **Llama 3.1** validates legal terminology (synchronous)
-11. **PyMuPDF** reconstructs PDF by redacting original text, inserting translated text, and preserving images/signatures
-12. Translated PDF saved to GCS, signed URL generated, user downloads directly from GCS
-
-Users can request a second language translation without re-uploading. The pipeline re-runs from step 4 (skipping validation and classification).
+```bash
+dvc pull
+```
 
 ---
 
-## Government Form Management
+## Project Structure
 
-### Scraping (form_scraper_dag, weekly)
+```
+court-access-ai/
+├── api/                          # FastAPI application
+│   ├── main.py                   # App factory, lifespan, health check
+│   ├── auth.py                   # JWT token creation/verification
+│   ├── dependencies.py           # Shared FastAPI dependencies (CurrentUser, DBSession)
+│   ├── routes/
+│   │   ├── auth.py               # /auth/register, /login, /me, /refresh, /logout
+│   │   ├── documents.py          # /documents/upload, GET, DELETE
+│   │   ├── forms.py              # /forms/ — government form catalog
+│   │   └── realtime.py           # /ws/session — WebSocket real-time stream
+│   ├── schemas/schemas.py        # Pydantic request/response models
+│   └── tests/                    # API integration tests (FastAPI TestClient)
+│
+├── courtaccess/                  # Core Python package
+│   ├── core/
+│   │   ├── config.py             # Pydantic settings (env-driven)
+│   │   ├── logger.py             # Structured logging
+│   │   ├── translation.py        # NLLB-200 translation (stub → real)
+│   │   ├── legal_review.py       # Llama legal term validation (stub → Groq)
+│   │   ├── ocr_printed.py        # PaddleOCR v3 (stub → real)
+│   │   ├── ocr_handwritten.py    # Qwen2.5-VL (stub → real)
+│   │   ├── reconstruct_pdf.py    # PyMuPDF layout reconstruction
+│   │   ├── pii_scrub.py          # Microsoft Presidio
+│   │   ├── classify_document.py  # Llama document classifier
+│   │   ├── ingest_document.py    # PyMuPDF page splitter
+│   │   ├── validation.py         # Form preprocessing + catalog validation
+│   │   └── tests/
+│   ├── forms/
+│   │   ├── scraper.py            # mass.gov scraper (Playwright)
+│   │   ├── catalog.py            # Form catalog management
+│   │   └── tests/
+│   ├── speech/
+│   │   ├── vad.py                # Silero VAD (silence filtering)
+│   │   ├── transcribe.py         # Faster-Whisper ASR
+│   │   ├── tts.py                # Piper TTS
+│   │   ├── session.py            # WebSocket session management
+│   │   └── tests/
+│   └── monitoring/
+│       ├── drift.py              # TFDV drift detection + bias analysis
+│       ├── anomaly.py            # Anomaly detection (form count, schema, PDF size)
+│       └── tests/
+│
+├── dags/                         # Airflow DAGs
+│   ├── form_scraper_dag.py       # Weekly scrape → preprocess → validate → version
+│   ├── form_pretranslation_dag.py # OCR → translate → legal review → reconstruct
+│   └── document_pipeline_dag.py  # User document translation pipeline
+│
+├── db/                           # Database layer
+│   ├── models.py                 # SQLAlchemy ORM models
+│   ├── database.py               # Async engine + session factory
+│   └── migrations/               # Alembic migrations
+│       └── versions/001_initial_schema.py
+│
+├── frontend/                     # React + Vite frontend
+│   └── src/
+│       ├── pages/                # LandingPage, SessionPage, DocumentsPage, FormsPage, ...
+│       ├── components/           # Navbar, shared components
+│       ├── hooks/                # useAuth, useWebSocket
+│       ├── services/api.js       # Axios API client
+│       └── store/authStore.js    # Zustand auth state
+│
+├── models/                       # DVC pointer files (weights stored in GCS)
+│   ├── whisper-large-v3.dvc
+│   ├── nllb-200-distilled-1.3B-ct2.dvc
+│   ├── piper-tts-es.dvc
+│   ├── piper-tts-pt.dvc
+│   ├── spacy-en-core-web-lg.dvc
+│   ├── tfdv-baseline-stats.dvc
+│   └── llama4-scout-legal-review.dvc
+│
+├── data/
+│   ├── glossaries/               # Legal term glossaries (ES, PT)
+│   └── schemas/                  # TFDV schema definitions
+│
+├── docs/
+│   ├── architecture.md
+│   ├── bias_detection_report.md
+│   └── contributing/git-push-workflow.md
+│
+├── .github/workflows/
+│   ├── test.yml                  # PR → pytest (204 tests)
+│   ├── lint.yml                  # Ruff + Bandit + Gitleaks
+│   ├── dependencies.yml          # Trivy filesystem vulnerability scan
+│   └── build.yml                 # Docker build + push to GCP Artifact Registry
+│
+├── Dockerfile                    # Multi-stage: api + airflow targets
+├── gpu.Dockerfile                # GPU inference target (CUDA 12, PyTorch)
+├── docker-compose.yml            # Local dev: Airflow + API + Postgres + MLflow
+├── dvc.yaml                      # DVC pipeline stages
+├── pyproject.toml                # Package definition + all dependencies
+├── requirements.txt              # Flat mirror of pyproject.toml (CI/local convenience)
+├── requirements-dev.txt          # Dev tooling: ruff, bandit, pytest, pre-commit
+├── ruff.toml                     # Ruff lint + format config
+├── .pre-commit-config.yaml       # Pre-commit hooks
+├── .gitleaks.toml                # Secret detection config
+└── .env.example                  # Environment variable template
+```
 
-*(For detailed setup, configuration, anomaly detection, and manual testing of the data pipelines, please see the [Data Pipeline README](./data_pipeline/README.md)).*
+---
 
-The scraper visits mass.gov court form pages, downloads each form, generates a SHA-256 content hash, and compares against the existing catalog. It handles five scenarios:
+## Local Setup
 
-- **New form**: download, catalog, trigger translation
-- **Updated form** (hash changed): archive old version, re-translate
-- **Deleted form** (confirmed 404 only): mark as archived, keep in system with notice
-- **Renamed form** (same hash): update name, no re-translation
-- **No changes**: update last-checked timestamp
+### Prerequisites
 
-Temporary server errors (5xx, timeouts) do not trigger archival.
+- Python 3.12
+- [uv](https://docs.astral.sh/uv/) — fast Python package manager
+- Docker + Docker Compose
+- DVC (`pip install dvc`)
 
-### Pre-Translation (form_pretranslation_dag)
+### 1. Clone and set up the environment
 
-*(For detailed task breakdown, trigger configuration, partial translation handling, and stub module reference, see the [Data Pipeline README](./data_pipeline/README.md#pre-translation-pipeline-form_pretranslation_dag)).*
+```bash
+git clone https://github.com/SunnyYadav16/court-access-ai.git
+cd court-access-ai
 
-Triggered automatically by `form_scraper_dag` when new or updated forms are found (Scenarios A & B). Processes one form per DAG run through 11 tasks:
+# Create venv and install all dependencies
+uv venv
+uv pip install -e .
+uv pip install -r requirements-dev.txt
+```
 
-1. **Load** catalog entry and validate original PDF exists on disk
-2. **OCR** text extraction with bounding box coordinates
-3. **Translate** to Spanish and Portuguese in parallel (skips languages that already exist from mass.gov)
-4. **Legal review** via Llama/Groq with 3x exponential backoff retry per language
-5. **Reconstruct** translated PDFs preserving original layout using PyMuPDF
-6. **Update catalog** with translated file paths, languages available, and audit notes
-7. **DVC version** the updated catalog and translated PDFs
+### 2. Configure environment variables
 
-All translated forms are flagged as `needs_human_review = True` ("Machine-translated, pending human verification") until a court translator reviews and approves. If legal review fails after all retries, an audit note is appended and the form remains flagged for mandatory human review.
+```bash
+cp .env.example .env
+# Edit .env and fill in all required values (see .env.example for instructions)
+```
 
-> **Note:** OCR, translation, and legal review currently use stub implementations. These will be replaced with PaddleOCR v3, NLLB-200, and Groq/Llama respectively before production deployment.
+### 3. Pull model weights from DVC remote
+
+```bash
+dvc pull   # Downloads model weights from gs://courtaccess-models/
+```
+
+### 4. Start local services
+
+```bash
+docker compose up -d
+```
+
+This starts:
+- **Airflow** (webserver, scheduler, dag-processor, triggerer) → http://localhost:8080
+- **FastAPI** → http://localhost:8000
+- **PostgreSQL** → port 5432
+- **MLflow** (if configured) → http://localhost:5000
+
+### 5. Run tests
+
+```bash
+pytest   # runs all 204 tests across api/, courtaccess/, db/
+```
+
+---
+
+## CI/CD
+
+| Workflow | Trigger | What it does |
+|----------|---------|-------------|
+| `test.yml` | Every push / PR | `pytest` (204 tests), blocks merge on failure |
+| `lint.yml` | Every push / PR | `ruff check`, `ruff format --check`, `bandit`, `gitleaks` |
+| `dependencies.yml` | Every push / PR | Trivy filesystem scan → SARIF uploaded to GitHub Security |
+| `build.yml` | Merge to `main` | Docker build + push to GCP Artifact Registry |
+
+---
+
+## Data Pipeline
+
+### Form Scraping (`form_scraper_dag`, weekly Mon 06:00 UTC)
+
+Scrapes mass.gov court form pages, downloads each form PDF, hashes it, and compares against the existing catalog at `courtaccess/data/form_catalog.json`.
+
+Five scenarios handled:
+- **New form** → download, catalog entry, trigger pre-translation
+- **Updated form** (hash changed) → archive old version, re-translate
+- **Deleted form** (confirmed 404 only) → mark archived, retain in system
+- **Renamed form** (same hash) → update name, no re-translation
+- **No change** → update last-checked timestamp
+
+### Pre-Translation (`form_pretranslation_dag`, triggered by scraper)
+
+Processes one form per DAG run through: Load catalog → OCR → Translate (ES + PT in parallel) → Legal review → Reconstruct PDF → Update catalog → DVC version.
+
+All machine-translated forms are flagged `needs_human_review = True` until a court translator approves them.
+
+### DVC Data Versioning
+
+```
+dvc.yaml stages:
+  scrape_forms        → writes courtaccess/data/form_catalog.json
+  validate_catalog    → writes data/catalog_metrics.json
+  pretranslate_forms  → reads courtaccess/data/form_catalog.json
+```
+
+Both DAGs call `dvc add` + `dvc push` after updating the catalog.
 
 ---
 
@@ -142,63 +287,56 @@ All translated forms are flagged as `needs_human_review = True` ("Machine-transl
 |---------|------|-----------|
 | GCS `courtaccess-uploads/` | User-uploaded PDFs | Auto-deleted after 24 hours |
 | GCS `courtaccess-translated/` | Translated output PDFs | Auto-deleted after 24 hours |
-| GCS `courtaccess-forms/` | Pre-translated government forms (+ archived versions) | Permanent |
+| GCS `courtaccess-forms/` | Pre-translated government forms + archived versions | Permanent |
 | GCS `courtaccess-models/` | Pre-trained model weights (DVC tracked) | Permanent, versioned |
-| Cloud SQL (PostgreSQL) | Sessions, translation requests, audit logs, form catalog, user accounts | Permanent (metadata only, no files) |
+| Cloud SQL (PostgreSQL) | Sessions, translation requests, audit logs, form catalog, user accounts | Permanent (metadata only) |
+| `courtaccess/data/` | Local form catalog JSON (DVC tracked) | Version-controlled |
 
-No raw audio is stored. Real-time sessions retain only session metadata and confidence scores.
-
-All files encrypted at rest with Customer-Managed Encryption Keys (CMEK) via Cloud KMS.
+No raw audio is stored. All files encrypted at rest (CMEK via Cloud KMS).
 
 ---
 
 ## Database Schema
 
-**`sessions`**: One per user interaction. Holds session type (realtime/document), target language, uploaded file GCS path, status, timestamps.
+**`users`** — User accounts with roles (public, court_official, interpreter, admin).
 
-**`translation_requests`**: One per language translation. Links to a session. Holds target language, classification result, output file path, confidence scores, PII count, Llama correction count, processing time, signed URL with expiry, status.
+**`sessions`** — One per user interaction. Holds session type, target language, uploaded file path, status, timestamps.
 
-**`audit_logs`**: Every action. User ID, session ID, request ID, action type, details JSON, timestamp. Required for court compliance.
+**`translation_requests`** — One per language per session. Holds target language, classification result, output path, confidence scores, PII count, Llama correction count, signed URL with expiry.
 
-**`form_catalog`**: Government forms library. Form name, source URL, SHA-256 content hash, version number, active/archived status, GCS paths for original + each translated language, human review flag, scrape timestamps.
+**`audit_logs`** — Every action logged. Required for court compliance.
 
-Key relationship: One session → one uploaded file → multiple translation requests (one per language).
+**`form_catalog`** (PostgreSQL managed by Alembic migration `001_initial_schema`) — Government forms library mirroring `courtaccess/data/form_catalog.json`.
 
----
-
-## MLOps: Monitoring, Drift Detection, and Versioning
-
-### Monitoring
-
-- **GCP Cloud Logging** captures all API requests, processing steps, errors, and model inference logs.
-- **GCP Cloud Monitoring** tracks pod health, CPU/GPU utilization, API latency (p50/p95/p99), error rates, and storage usage. Alerts on pod crashes, latency spikes, high GPU utilization, and disk space.
-
-### Drift Detection
-
-- **Evidently AI** monitors model output quality over time. Tracks ASR confidence trends, translation confidence per language pair, Llama correction rate, and OCR confidence. If scores drift beyond baseline thresholds, alerts are triggered.
-
-### Anomaly Detection
-
-- **TFDV** validates incoming data against expected schemas. Catches corrupted files, empty OCR outputs, suspiciously short translations, malformed API requests, and error rate spikes.
-
-### Model Versioning
-
-- **DVC** tracks pre-trained model weight files in GCS. Each model has a `.dvc` pointer file committed to Git. Rollback: `git checkout <commit>` then `dvc pull`.
-- **MLflow** serves as the deployment registry. Logs which model versions are in production, when they were deployed, and their observed performance metrics.
-
-### Update Cycle
-
-When drift is detected: admin investigates → downloads newer model version if needed → tracked in DVC → registered in MLflow → tested via pytest in GitHub Actions → deployed to GKE via Terraform → monitoring continues.
+Key relationship: one session → one uploaded file → multiple translation requests (one per language).
 
 ---
 
-## CI/CD
+## MLOps: Monitoring, Drift, and Versioning
 
-Every code change goes through GitHub Actions:
+- **TFDV** — validates incoming data, tracks distribution drift vs. the baseline in `models/tfdv-baseline-stats.dvc`
+- **Evidently AI** — monitors model output quality over time (ASR confidence, translation confidence, Llama correction rate)
+- **DVC** — versions model weights + form catalog. Rollback: `git checkout <commit>` then `dvc pull`
+- **MLflow** — deployment registry. Logs which model versions are in production and their observed metrics
+- **GCP Cloud Logging / Monitoring** — all API requests, model inference logs, pod health, latency (p50/p95/p99), alerts
 
-1. **PR opened** → `test.yml` runs pytest (audio pipeline, document pipeline, classification, API, validation tests)
-2. **PR merged** → `build.yml` builds Docker images, tags with Git commit hash, pushes to GCP Artifact Registry
-3. **Release** → `deploy.yml` applies Terraform infrastructure changes, runs `kubectl rollout` to GKE with zero-downtime rolling updates. Failed deployments auto-rollback.
+---
+
+## Key Design Decisions
+
+**Pre-trained models only.** No fine-tuning. The MLOps pipeline manages versioning, deployment, and monitoring — not training. This keeps the system simpler and focused on pipeline reliability.
+
+**Llama as a validation layer, not a translator.** NLLB-200 handles translation (fast, deterministic, purpose-built). Llama 4 Scout reviews translations for legal accuracy. In real-time mode, Llama runs async so users aren't blocked. In document mode, it runs sync because accuracy matters more than speed.
+
+**Monorepo structure.** The old `data_pipeline/` sub-repo was merged into the root monorepo as `courtaccess/`, `dags/`, `api/`, `db/`, `frontend/`. One repo, one CI pipeline, one `pyproject.toml`.
+
+**PDF-only uploads.** Restricting to PDF simplifies the pipeline — no image-to-PDF conversion needed, consistent input for OCR and reconstruction.
+
+**3 Airflow DAGs, not 4.** Real-time speech translation runs as a WebSocket stream inside FastAPI, not as an Airflow DAG. Live audio streaming requires persistent low-latency connections, not batch orchestration.
+
+**Pre-translated government forms.** Court forms have official legal language. Pre-translating and human-verifying once is safer than translating on-the-fly every time.
+
+**Signed URLs for file delivery.** Translated documents served via GCS Signed URLs (1-hour expiry) — downloaded directly from cloud storage without passing through the API server.
 
 ---
 
@@ -206,16 +344,16 @@ Every code change goes through GitHub Actions:
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | React |
+| Frontend | React + Vite |
 | Backend API | FastAPI (REST + WebSocket) |
 | Audio Capture | WebRTC |
-| Orchestration | Apache Airflow (3 DAGs) |
+| Orchestration | Apache Airflow 3.x (3 DAGs) |
 | Compute | Google Kubernetes Engine (GKE) with GPU node pools |
 | File Storage | Google Cloud Storage (GCS) with CMEK encryption |
-| Database | Cloud SQL (PostgreSQL) |
+| Database | Cloud SQL (PostgreSQL) via SQLAlchemy async + Alembic |
 | File Delivery | GCS Signed URLs (1-hour expiry) |
 | Infrastructure as Code | Terraform |
-| Containerization | Docker |
+| Containerization | Docker (multi-stage: api, airflow, gpu targets) |
 | CI/CD | GitHub Actions |
 | Model Versioning | DVC + MLflow |
 | Data Validation | TensorFlow Data Validation (TFDV) |
@@ -223,105 +361,8 @@ Every code change goes through GitHub Actions:
 | PII Detection | Microsoft Presidio |
 | Logging | Python logging → GCP Cloud Logging |
 | Monitoring | GCP Cloud Monitoring |
-| Testing | pytest |
-| Form Scraping | Python requests + BeautifulSoup |
-
----
-
-## Project Structure
-
-```
-/CourtAccess-AI
-├── app/
-│   ├── main.py                    # FastAPI + WebSocket endpoints
-│   ├── auth.py                    # Authentication (OAuth2/JWT)
-│   ├── models.py                  # SQLAlchemy models
-│   ├── routes/
-│   │   ├── realtime.py            # WebSocket real-time translation
-│   │   ├── documents.py           # Document upload + translation
-│   │   └── forms.py               # Government form browsing
-│   └── frontend/                  # React app
-├── data_pipeline/                 # Dedicated Airflow scraper pipeline workspace
-│   ├── dags/
-│   │   ├── form_scraper_dag.py        # Weekly scrape mass.gov
-│   │   ├── form_pretranslation_dag.py # Translate new/updated court forms (11 tasks)
-│   │   └── src/
-│   │       ├── scrape_forms.py        # Core scraper script
-│   │       ├── preprocess_forms.py    # Form validation and sanitation
-│   │       ├── bias_detection.py      # Language and division coverage checks
-│   │       ├── ocr_printed.py         # OCR extraction (stub → PaddleOCR v3)
-│   │       ├── translate_text.py      # Translation (stub → NLLB-200)
-│   │       ├── legal_review.py        # Legal term review (stub → Groq/Llama)
-│   │       └── reconstruct_pdf.py     # PDF reconstruction (PyMuPDF)
-│   ├── scripts/
-│   │   └── validate_catalog.py        # Catalog schema validation script
-│   ├── tests/                         # 66 pipeline unit tests
-│   ├── forms/                         # Downloaded PDFs (DVC tracked)
-│   ├── Dockerfile
-│   ├── docker-compose.yml             # 5 Airflow services + Postgres
-│   ├── dvc.yaml                       # Data versioning config
-│   ├── requirements.txt
-│   └── README.md                      # Detailed pipeline docs
-├── dags/
-│   └── document_pipeline_dag.py   # DAG 1: User document translation
-├── scripts/
-│   ├── capture_audio.py           # WebRTC audio handling
-│   ├── voice_activity.py          # Silero VAD
-│   ├── transcribe.py              # Faster-Whisper ASR
-│   ├── translate_text.py          # NLLB-200 translation
-│   ├── legal_review.py            # Llama 3.1 via Groq API
-│   ├── classify_document.py       # Llama 3.1 document classifier
-│   ├── speak_output.py            # Piper TTS
-│   ├── ingest_document.py         # PyMuPDF page extraction
-│   ├── ocr_printed.py             # PaddleOCR v3
-│   ├── ocr_handwritten.py         # Qwen2.5-VL
-│   ├── reconstruct_pdf.py         # PyMuPDF layout reconstruction
-│   ├── validate_input.py          # TFDV validation
-│   ├── pii_scrub.py               # Microsoft Presidio
-│   └── log_metadata.py            # Logging utility
-├── monitoring/
-│   ├── drift_detect.py            # Evidently AI
-│   └── anomaly_detect.py          # TFDV anomaly checks
-├── tests/
-│   ├── test_audio_pipeline.py
-│   ├── test_document_pipeline.py
-│   ├── test_classification.py
-│   ├── test_api.py
-│   └── test_validation.py
-├── infra/
-│   ├── terraform/                 # GKE, GCS, Cloud SQL, KMS, IAM
-│   └── k8s/manifests/             # Deployments, services, GPU configs
-├── models/                        # DVC-tracked model weight pointers
-│   ├── whisper-large-v3.dvc
-│   ├── nllb-200-distilled-1.3b.dvc
-│   ├── paddleocr-v3.dvc
-│   ├── qwen2.5-vl.dvc
-│   ├── silero-vad-v4.dvc
-│   ├── piper-tts-es.dvc
-│   └── piper-tts-pt.dvc
-├── .github/workflows/
-│   ├── test.yml                   # PR → pytest
-│   ├── build.yml                  # Merge → Docker build → push
-│   └── deploy.yml                 # Release → Terraform → GKE
-└── README.md
-```
-
----
-
-## Key Design Decisions
-
-**Pre-trained models only, no fine-tuning.** All AI models are used off-the-shelf. The MLOps pipeline manages versioning, deployment, and monitoring, not training. This keeps the system simpler and the focus on pipeline reliability.
-
-**Llama as a validation layer, not a translator.** NLLB-200 handles translation (fast, deterministic, purpose-built). Llama 3.1 reviews translations for legal accuracy after the fact. In real-time mode, Llama runs async so users aren't blocked. In document mode, it runs sync because accuracy matters more than speed.
-
-**PDF-only uploads.** Restricting to PDF simplifies the pipeline with no image-to-PDF conversion needed, providing consistent input for OCR and reconstruction.
-
-**3 Airflow DAGs, not 4.** Real-time speech translation runs as a WebSocket stream inside FastAPI, not as an Airflow DAG. Airflow is for batch workflows with defined start/end, and live audio streaming doesn't fit that model.
-
-**Re-run OCR for second language, don't cache.** When a user requests a second language translation, the pipeline re-runs from ingestion rather than caching OCR output. One code path is simpler than two, and the ~10-15 seconds of extra processing is negligible compared to the complexity of managing intermediate cached files.
-
-**Pre-translated government forms.** Court forms have official legal language that should be translated consistently. Pre-translating and human-verifying once is safer than translating on-the-fly every time, which could produce slightly different results.
-
-**Signed URLs for file delivery.** Translated documents are served via GCS Signed URLs (1-hour expiry) so files are downloaded directly from cloud storage without passing through the API server. Secure, efficient, and stateless.
-
----
+| Testing | pytest (204 tests) |
+| Linting | Ruff (check + format) |
+| Security | Bandit, Gitleaks, Trivy |
+| Package Manager | uv |
+| Form Scraping | Python requests + BeautifulSoup + Playwright |
