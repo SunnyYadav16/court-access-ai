@@ -1,7 +1,7 @@
-target-version = "py311"
+target-version = "py312"
 line-length = 120
 
-src = ["app", "scripts", "dags", "monitoring", "tests"]
+src = ["courtaccess", "api", "dags", "db"]
 
 [lint]
 select = [
@@ -28,11 +28,11 @@ unfixable = []
 
 [lint.per-file-ignores]
 "**/tests/**" = ["S101", "S106"]  # allow assert and hardcoded passwords in tests
-"dags/**" = ["T201"]           # allow print in DAGs for Airflow logging
-"scripts/**" = ["T201"]        # allow print in scripts
+"dags/**" = ["T201"]              # allow print in DAGs for Airflow logging
+"scripts/**" = ["T201"]          # allow print in scripts
 
 [lint.isort]
-known-first-party = ["app", "scripts"]
+known-first-party = ["courtaccess", "api", "db"]
 
 [format]
 quote-style = "double"
