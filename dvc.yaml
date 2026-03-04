@@ -1,0 +1,65 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# dvc.yaml — CourtAccess AI root DVC pipeline
+#
+# NOTE: These stages document data lineage for tracking purposes.
+# The actual execution happens inside Airflow DAGs, not via 'dvc repro'.
+# DAGs call 'dvc add' + 'dvc push' in their final tasks.
+#
+# Usage:
+#   dvc pull               — pull model weights + catalog from remote
+#   dvc push               — push after a DAG run updates tracked outputs
+#   dvc status             — check what's changed vs. remote
+# ══════════════════════════════════════════════════════════════════════════════
+
+stages:
+
+  # ── Form Scraper Pipeline ────────────────────────────────────────────────────
+  # Executed by: dags/form_scraper_dag.py (weekly, every Monday)
+  # Airflow task: task_scrape_and_classify → task_preprocess_data →
+  #               task_validate_catalog → task_detect_anomalies →
+  #               task_detect_bias → task_trigger_pretranslation →
+  #               task_log_summary → task_dvc_version_data
+
+  scrape_forms:
+    cmd: python3 -c "from courtaccess.forms.scraper import run_scrape; run_scrape()"
+    deps:
+      - courtaccess/forms/scraper.py
+      - courtaccess/forms/catalog.py
+      - courtaccess/core/validation.py
+    outs:
+      - courtaccess/data/form_catalog.json:
+          cache: true
+      - forms/:
+          cache: true
+          persist: true
+
+  validate_catalog:
+    cmd: python3 -m courtaccess.forms.catalog validate
+    deps:
+      - courtaccess/data/form_catalog.json
+      - courtaccess/forms/catalog.py
+    metrics:
+      - data/catalog_metrics.json:
+          cache: false
+
+  # ── Pre-Translation Pipeline ─────────────────────────────────────────────────
+  # Executed by: dags/form_pretranslation_dag.py (triggered by scraper)
+
+  pretranslate_forms:
+    cmd: python3 -c "from courtaccess.core.translation import run_pretranslation; run_pretranslation()"
+    deps:
+      - courtaccess/core/translation.py
+      - courtaccess/core/legal_review.py
+      - courtaccess/core/ocr_printed.py
+      - courtaccess/core/reconstruct_pdf.py
+      - courtaccess/data/form_catalog.json
+    outs:
+      - data/pretranslation_report.json:
+          cache: false
+
+  # ── Model Weights (DVC-tracked, pulled from GCS) ─────────────────────────────
+  # These stages do not have cmd — they are pure data artifacts tracked by DVC.
+  # Run 'dvc pull' to download model weights from gs://courtaccess-models/.
+  #
+  # Pointer files live in models/*.dvc
+  # To update a model: dvc add models/<new-weight-file> && dvc push

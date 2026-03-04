@@ -80,7 +80,6 @@ ipython_config.py
 .env
 .envrc
 !.env.example
-!data_pipeline/.env.example
 
 # ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store
@@ -125,36 +124,49 @@ __marimo__/
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# data_pipeline/
+# CourtAccess AI specific exclusions
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ── Airflow runtime directories (bind-mounted in Docker, never committed) ─────
-data_pipeline/logs/
-data_pipeline/plugins/
-data_pipeline/config/
-data_pipeline/airflow/
+logs/
+plugins/
+config/
+airflow.cfg
+airflow.db
+unittests.cfg
 
-# ── DVC — local remote storage (binary cache, NOT tracked by Git) ─────────────
-data_pipeline/dvc_storage/
+# ── PostgreSQL local database data ────────────────────────────────────────────
+.pgdata/
+db/pgdata/
 
-# ── DVC — internal directories (absorbed from data_pipeline/.dvc/.gitignore) ──
-data_pipeline/.dvc/tmp/
-data_pipeline/.dvc/cache/
-data_pipeline/.dvc/config.local
+# ── DVC — local remote storage & tracked data files ───────────────────────────
+.dvc/tmp/
+.dvc/cache/
+.dvc/config.local
+dvc_storage/
+data/form_catalog.json
+data/metrics/
+courtaccess/data/form_catalog.json
 
-# ── DVC — tracked data files ──────────────────────────────────────────────────
-# The raw data files are versioned in dvc_storage via `dvc push`.
-# Only the small .dvc pointer files are committed to Git.
-data_pipeline/dags/data/form_catalog.json
+# ── Downloaded court forms (DVC-tracked PDFs, NOT git) ───────────────────────
+forms/
 
-# ── Airflow-generated runtime reports (ephemeral, regenerated each run) ───────
-data_pipeline/dags/data/anomaly_report.json
-data_pipeline/dags/data/preprocess_report.json
-data_pipeline/dags/data/bias_report.json
-data_pipeline/dags/data/prev_catalog_metrics.json
+# ── AI Model weights (tracked by DVC, NOT Git) ───────────────────────────────
+models/*
+!models/*.dvc
+!models/.gitignore
+
+# ── React Frontend (Vite) ─────────────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/.eslintcache
+frontend/coverage/
 
 # ── Downloaded & translated PDFs (DVC-tracked, not Git) ──────────────────────
-data_pipeline/forms/
+downloads/
+temp/
+docs/_build/
 
 # ── Docker artifacts ──────────────────────────────────────────────────────────
 *.tar
