@@ -149,7 +149,7 @@ data/metrics/
 courtaccess/data/form_catalog.json
 
 # ── Downloaded court forms (DVC-tracked PDFs, NOT git) ───────────────────────
-forms/
+/forms/
 
 # ── AI Model weights (tracked by DVC, NOT Git) ───────────────────────────────
 models/*
