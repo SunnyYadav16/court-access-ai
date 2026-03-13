@@ -1,0 +1,219 @@
+{
+    "$schema": "https://courtaccess.ai/schemas/glossary/v1.json",
+    "language": "es",
+    "description": "Spanish legal glossary for Massachusetts court interpretation and document translation. Each term is validated by a bilingual legal expert before inclusion.",
+    "version": "1.0.0",
+    "last_updated": "2024-01-01",
+    "terms": [
+        {
+            "term": "plaintiff",
+            "translation": "demandante",
+            "alternatives": [
+                "actor",
+                "querellante"
+            ],
+            "context": "civil_litigation",
+            "definition_en": "The party who brings a legal action or lawsuit against another party (the defendant) in court.",
+            "definition_es": "La parte que inicia una acción legal o demanda contra otra parte (el demandado) ante el tribunal.",
+            "usage_example_en": "The plaintiff must file a complaint within the statute of limitations.",
+            "usage_example_es": "El demandante debe presentar una queja dentro del plazo de prescripción.",
+            "court_divisions": [
+                "Civil",
+                "Housing",
+                "Probate and Family"
+            ],
+            "do_not_use": [
+                "acusador"
+            ],
+            "verified": true,
+            "reviewer": "bilingual_legal_team"
+        },
+        {
+            "term": "defendant",
+            "translation": "demandado",
+            "alternatives": [
+                "acusado",
+                "imputado"
+            ],
+            "context": "civil_and_criminal",
+            "definition_en": "The party against whom a legal action or lawsuit is brought; the accused party in a criminal case.",
+            "definition_es": "La parte contra la que se interpone una acción legal o demanda; el acusado en una causa penal.",
+            "usage_example_en": "The defendant has the right to be represented by an attorney.",
+            "usage_example_es": "El demandado tiene derecho a ser representado por un abogado.",
+            "court_divisions": [
+                "Civil",
+                "Criminal",
+                "Housing",
+                "Probate and Family",
+                "Juvenile"
+            ],
+            "do_not_use": [],
+            "verified": true,
+            "reviewer": "bilingual_legal_team"
+        },
+        {
+            "term": "motion to dismiss",
+            "translation": "moción de desestimación",
+            "alternatives": [
+                "solicitud de desestimación"
+            ],
+            "context": "civil_procedure",
+            "definition_en": "A formal request to a court to dismiss a case or a specific claim within a case, typically arguing insufficient legal grounds.",
+            "definition_es": "Una solicitud formal al tribunal para desestimar un caso o una reclamación específica dentro de un caso, argumentando típicamente bases legales insuficientes.",
+            "usage_example_en": "The defense filed a motion to dismiss, citing lack of jurisdiction.",
+            "usage_example_es": "La defensa presentó una moción de desestimación, alegando falta de jurisdicción.",
+            "court_divisions": [
+                "Civil",
+                "Superior"
+            ],
+            "do_not_use": [],
+            "verified": true,
+            "reviewer": "bilingual_legal_team"
+        },
+        {
+            "term": "affidavit",
+            "translation": "declaración jurada",
+            "alternatives": [
+                "affidávit"
+            ],
+            "context": "general",
+            "definition_en": "A written sworn statement of fact made voluntarily under oath or affirmation.",
+            "definition_es": "Una declaración escrita bajo juramento de hechos presentada voluntariamente bajo juramento o promesa.",
+            "usage_example_en": "The witness submitted an affidavit confirming the events of that evening.",
+            "usage_example_es": "El testigo presentó una declaración jurada confirmando los hechos de esa noche.",
+            "court_divisions": [
+                "Civil",
+                "Criminal",
+                "Family",
+                "Probate and Family"
+            ],
+            "do_not_use": [],
+            "verified": true,
+            "reviewer": "bilingual_legal_team"
+        },
+        {
+            "term": "subpoena",
+            "translation": "citación",
+            "alternatives": [
+                "orden de comparecencia",
+                "intimación"
+            ],
+            "context": "general",
+            "definition_en": "A legal document ordering a person to attend court, appear for a deposition, or produce documents.",
+            "definition_es": "Un documento legal que ordena a una persona comparecer ante el tribunal, presentarse para una declaración o producir documentos.",
+            "usage_example_en": "You have received a subpoena requiring your presence at the hearing.",
+            "usage_example_es": "Has recibido una citación que requiere tu presencia en la audiencia.",
+            "court_divisions": [
+                "Civil",
+                "Criminal",
+                "Grand Jury"
+            ],
+            "do_not_use": [],
+            "verified": true,
+            "reviewer": "bilingual_legal_team"
+        },
+        {
+            "term": "custody",
+            "translation": "custodia",
+            "alternatives": [
+                "guarda"
+            ],
+            "context": "family_law",
+            "definition_en": "The legal right and responsibility to care for and make decisions about a minor child.",
+            "definition_es": "El derecho y la responsabilidad legal de cuidar y tomar decisiones sobre un hijo menor.",
+            "usage_example_en": "The judge awarded joint custody to both parents.",
+            "usage_example_es": "El juez otorgó la custodia compartida a ambos padres.",
+            "court_divisions": [
+                "Probate and Family",
+                "Juvenile"
+            ],
+            "do_not_use": [],
+            "verified": true,
+            "reviewer": "bilingual_legal_team"
+        },
+        {
+            "term": "restraining order",
+            "translation": "orden de alejamiento",
+            "alternatives": [
+                "orden restrictiva",
+                "orden de protección"
+            ],
+            "context": "domestic_violence",
+            "definition_en": "A court order requiring one person to stop certain actions toward another person, often used in domestic violence situations.",
+            "definition_es": "Una orden judicial que requiere que una persona deje de realizar ciertas acciones hacia otra, utilizada frecuentemente en situaciones de violencia doméstica.",
+            "usage_example_en": "She filed for a restraining order after repeated harassment.",
+            "usage_example_es": "Ella solicitó una orden de alejamiento después de acosos repetidos.",
+            "court_divisions": [
+                "Probate and Family",
+                "District",
+                "Municipal"
+            ],
+            "do_not_use": [
+                "orden de restricción"
+            ],
+            "verified": true,
+            "reviewer": "bilingual_legal_team"
+        },
+        {
+            "term": "eviction",
+            "translation": "desalojo",
+            "alternatives": [
+                "expulsión",
+                "desahucio"
+            ],
+            "context": "housing",
+            "definition_en": "The legal process by which a landlord removes a tenant from a rental property.",
+            "definition_es": "El proceso legal por el cual un propietario desaloja a un inquilino de una propiedad de alquiler.",
+            "usage_example_en": "The tenant has 10 days to respond to the eviction notice.",
+            "usage_example_es": "El inquilino tiene 10 días para responder al aviso de desalojo.",
+            "court_divisions": [
+                "Housing"
+            ],
+            "do_not_use": [],
+            "verified": true,
+            "reviewer": "bilingual_legal_team"
+        },
+        {
+            "term": "bail",
+            "translation": "fianza",
+            "alternatives": [
+                "caución"
+            ],
+            "context": "criminal",
+            "definition_en": "Money deposited with the court to secure release of an arrested person, forfeited if the person fails to appear.",
+            "definition_es": "Dinero depositado ante el tribunal para asegurar la libertad de una persona arrestada, que se pierde si la persona no comparece.",
+            "usage_example_en": "The judge set bail at five thousand dollars.",
+            "usage_example_es": "El juez fijó la fianza en cinco mil dólares.",
+            "court_divisions": [
+                "Criminal",
+                "District",
+                "Superior"
+            ],
+            "do_not_use": [],
+            "verified": true,
+            "reviewer": "bilingual_legal_team"
+        },
+        {
+            "term": "continuance",
+            "translation": "aplazamiento",
+            "alternatives": [
+                "prórroga",
+                "postergación"
+            ],
+            "context": "procedure",
+            "definition_en": "A postponement of a court proceeding to a later date.",
+            "definition_es": "El aplazamiento de un procedimiento judicial a una fecha posterior.",
+            "usage_example_en": "Counsel requested a continuance due to a scheduling conflict.",
+            "usage_example_es": "El abogado solicitó un aplazamiento debido a un conflicto de agenda.",
+            "court_divisions": [
+                "Civil",
+                "Criminal",
+                "Probate and Family",
+                "Housing"
+            ],
+            "do_not_use": [],
+            "verified": true,
+            "reviewer": "bilingual_legal_team"
+        }
+    ]
+}

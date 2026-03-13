@@ -1,0 +1,235 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# docker-compose.yml — CourtAccess AI (local development)
+#
+# Services:
+#   postgres          — shared DB for Airflow metadata + app data (dev only)
+#   api               — FastAPI application server
+#   airflow-apiserver — Airflow UI + REST API (port 8080)
+#   airflow-scheduler — DAG scheduler
+#   airflow-dag-processor — DAG file processor
+#   airflow-triggerer — Deferred task triggerer
+#   airflow-init      — One-shot: DB migrate + create admin user
+#
+# NOTE: GPU inference services (Whisper, NLLB, PaddleOCR) are defined here
+# as stubs. They are disabled by default (profiles: [gpu]) and require a
+# machine with NVIDIA drivers + nvidia-container-toolkit installed.
+# ══════════════════════════════════════════════════════════════════════════════
+
+x-airflow-common:
+  &airflow-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+    target: airflow
+  environment:
+    &airflow-common-env
+    # ── Core ──
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-apiserver:8080/execution/'
+    AIRFLOW__CORE__INTERNAL_API_SECRET_KEY: ${AIRFLOW_SECRET_KEY}
+
+    # ── Auth ──
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__API__AUTH_BACKENDS: 'airflow.providers.fab.auth_manager.api.auth.backend.basic_auth'
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_SECRET_KEY}
+
+    # ── Database ──
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres/${POSTGRES_DB:-airflow}
+
+    # ── Scheduler ──
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+
+    # ── courtaccess package path ──
+    # Required: makes `from courtaccess.X import Y` work inside all DAGs.
+    # The package is installed via `pip install -e /opt/airflow/` in the
+    # Dockerfile airflow target, but PYTHONPATH is set as a safety net for
+    # local volume mounts where the install may not have run yet.
+    PYTHONPATH: /opt/airflow
+
+    # ── Additional pip packages (dev only — prefer Dockerfile for production) ──
+    _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-}
+
+  volumes:
+    &airflow-common-volumes
+    - ./dags:/opt/airflow/dags
+    - ./courtaccess:/opt/airflow/courtaccess    # live code changes in dev
+    - ./logs:/opt/airflow/logs
+    - ./data:/opt/airflow/data
+    - ./forms:/opt/airflow/forms
+    - ./models:/opt/airflow/models
+    # DVC needs access to .git (at monorepo root) and its own config + local remote
+    - ./.git:/opt/airflow/.git
+    - ./.dvc:/opt/airflow/.dvc
+    - ./dvc_storage:/opt/airflow/dvc_storage
+
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    &airflow-common-depends-on
+    postgres:
+      condition: service_healthy
+
+services:
+
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-airflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
+      POSTGRES_DB: ${POSTGRES_DB:-airflow}
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER:-airflow}"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: always
+
+  # ── FastAPI ────────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres/${POSTGRES_DB:-airflow}
+      GCS_BUCKET_UPLOADS: ${GCS_BUCKET_UPLOADS:-courtaccess-uploads}
+      GCS_BUCKET_TRANSLATED: ${GCS_BUCKET_TRANSLATED:-courtaccess-translated}
+      GCS_BUCKET_FORMS: ${GCS_BUCKET_FORMS:-courtaccess-forms}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      SECRET_KEY: ${SECRET_KEY}
+      APP_ENV: ${APP_ENV:-development}
+      DEBUG: ${DEBUG:-true}
+    volumes:
+      - ./courtaccess:/app/courtaccess   # live code reloading in dev
+      - ./api:/app/api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Airflow: API Server (UI + REST API) ────────────────────────────────────
+  airflow-apiserver:
+    <<: *airflow-common
+    command: api-server
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  # ── Airflow: Scheduler ─────────────────────────────────────────────────────
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  # ── Airflow: DAG Processor ─────────────────────────────────────────────────
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  # ── Airflow: Triggerer ─────────────────────────────────────────────────────
+  airflow-triggerer:
+    <<: *airflow-common
+    command: triggerer
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  # ── Airflow: Init (one-shot) ───────────────────────────────────────────────
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        mkdir -p /opt/airflow/data/forms /opt/airflow/forms /opt/airflow/models /opt/airflow/dvc_storage
+        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/data /opt/airflow/forms /opt/airflow/models /opt/airflow/dvc_storage
+
+        # Initialize DVC with local remote (mirrors data_pipeline DVC setup)
+        cd /opt/airflow
+        if [ ! -d ".dvc" ]; then
+          dvc init
+          dvc remote add -d local_storage /opt/airflow/dvc_storage
+          chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/.dvc
+          echo "DVC initialized with local remote at /opt/airflow/dvc_storage"
+        else
+          echo "DVC already initialized (skipping)"
+        fi
+
+        exec /entrypoint airflow version
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
+    user: "0:0"
+    volumes: *airflow-common-volumes
+
+  # ── GPU: Whisper ASR  (disabled by default, requires nvidia-container-toolkit)
+  whisper:
+    build:
+      context: .
+      dockerfile: gpu.Dockerfile
+    profiles: [gpu]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - ./models:/app/models
+      - ./courtaccess:/app/courtaccess
+    environment:
+      MODEL_NAME: whisper-large-v3
+    restart: unless-stopped
+
+volumes:
+  postgres-db-volume:

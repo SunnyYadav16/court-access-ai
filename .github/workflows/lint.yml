@@ -1,0 +1,27 @@
+name: Lint & Format
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+permissions:
+  contents: read
+
+jobs:
+  ruff:
+    name: Ruff (Lint + Format)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ruff lint check
+        uses: astral-sh/ruff-action@v3
+        with:
+          args: "check --output-format github"
+
+      - name: Ruff format check
+        uses: astral-sh/ruff-action@v3
+        with:
+          args: "format --check"

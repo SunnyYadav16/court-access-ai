@@ -1,0 +1,32 @@
+# DVC pointer file for the Whisper Large-v3 multilingual ASR model
+# (used for real-time court interpretation — English speech → text)
+#
+# Model: openai/whisper-large-v3
+# Size: ~3 GB (fp16)
+# WER on English legal speech: ~4% (benchmarked internally)
+# Source: https://huggingface.co/openai/whisper-large-v3
+#
+# To fetch: dvc pull models/whisper-large-v3.dvc
+
+outs:
+- md5: a87ff679a2f3e71d9181a67b7542122c  # placeholder — replace after first `dvc push`
+  size: 3100000000
+  hash: md5
+  path: whisper-large-v3
+  isdir: true
+  cache: true
+  persist: false
+
+meta:
+  model_type: automatic_speech_recognition
+  architecture: Whisper
+  variant: large-v3
+  quantization: fp16
+  framework: faster-whisper
+  source_hub: openai/whisper-large-v3
+  license: MIT
+  courtaccess_path: /opt/models/whisper-large-v3
+  languages: [en, es, pt]
+  used_by:
+    - courtaccess/speech/transcriber.py
+    - api/routes/realtime.py

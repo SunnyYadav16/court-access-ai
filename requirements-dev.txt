@@ -1,0 +1,25 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# requirements-dev.txt — CourtAccess AI LOCAL DEVELOPMENT ONLY
+#
+# Install everything needed for local dev, linting, testing, and pre-commit.
+# Usage:
+#   uv pip install -r requirements-dev.txt
+#   uv pip install -e .            # also install the app package itself
+#
+# Do NOT add production runtime packages here — they belong in pyproject.toml.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── Linting & formatting ─────────────────────────────────────────────────────
+ruff>=0.14.0
+
+# ── Security scanning (local) ────────────────────────────────────────────────
+bandit[sarif,toml]>=1.8.0
+
+# ── Testing ──────────────────────────────────────────────────────────────────
+pytest>=9.0.2
+pytest-cov>=6.0.0
+pytest-asyncio>=0.25.0
+httpx>=0.27.0              # FastAPI TestClient async transport
+
+# ── Pre-commit hooks ─────────────────────────────────────────────────────────
+pre-commit>=4.0.0

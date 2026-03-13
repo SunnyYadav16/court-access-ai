@@ -1,0 +1,24 @@
+title = "CourtAccess AI Gitleaks Config"
+
+[extend]
+useDefault = true
+
+# Global allowlist — ignore paths that trigger false positives in ML projects
+[[allowlists]]
+description = "ML project false positives"
+paths = [
+    '''models/.*\.dvc''',
+    '''\.dvc/.*''',
+    '''tests/fixtures/.*''',
+    '''tests/test_data/.*''',
+    '''dvc\.lock''',
+]
+
+# Ignore DVC hashes and model weight checksums
+[[allowlists]]
+description = "DVC and model checksums"
+regexTarget = "match"
+regexes = [
+    '''md5: [a-f0-9]{32}''',
+]
+stopwords = ["example", "test", "dummy", "sample", "placeholder"]
