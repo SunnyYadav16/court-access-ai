@@ -1,16 +1,103 @@
-# React + Vite
+# CourtAccess AI — Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+UI prototype for the CourtAccess AI MLOps project. Built with Vite, React, TypeScript, Tailwind CSS v4, and shadcn/ui.
 
-Currently, two official plugins are available:
+## Tech Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- Vite 7 + React 19 + TypeScript
+- Tailwind CSS v4
+- shadcn/ui
+- pnpm
 
-## React Compiler
+## Getting Started
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```bash
+pnpm install
+pnpm run dev
+```
 
-## Expanding the ESLint configuration
+Open http://localhost:5173
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Build for Production
+
+```bash
+pnpm run build
+```
+
+## Environment Variables
+
+Copy `.env.example` to `.env` and fill in values before backend integration:
+
+```bash
+cp .env.example .env
+```
+
+## Project Structure
+
+```
+src/
+├── components/
+│   ├── shared/
+│   │   ├── ScreenLabel.tsx       Fixed label showing current screen name
+│   │   ├── ScreenNavigator.tsx   Dev sidebar for navigating all 22 screens
+│   │   └── TopBar.tsx            Authenticated top navigation bar
+│   └── ui/                       shadcn/ui components
+│       ├── badge.tsx
+│       ├── button.tsx
+│       ├── card.tsx
+│       ├── input.tsx
+│       ├── select.tsx
+│       └── separator.tsx
+├── screens/
+│   ├── LandingScreen.tsx         Public landing page (default, no auth required)
+│   ├── auth/
+│   │   ├── LoginScreen.tsx
+│   │   ├── SignupScreen.tsx
+│   │   ├── ForgotScreen.tsx
+│   │   ├── ResetScreen.tsx
+│   │   ├── VerifyEmailScreen.tsx
+│   │   └── MFAScreen.tsx
+│   ├── home/
+│   │   ├── HomePublic.tsx        Home for public users
+│   │   ├── HomeOfficial.tsx      Home for court officials
+│   │   ├── HomeInterpreter.tsx   Home for interpreters
+│   │   └── HomeAdmin.tsx         Home for admins
+│   ├── realtime/
+│   │   ├── RealtimeSetup.tsx     Session configuration
+│   │   └── RealtimeSession.tsx   Live interpretation session
+│   ├── documents/
+│   │   ├── DocUpload.tsx         PDF upload screen
+│   │   ├── DocProcessing.tsx     Pipeline processing status
+│   │   └── DocResults.tsx        Translation download
+│   ├── forms/
+│   │   ├── FormsLibrary.tsx      Browse pre-translated court forms
+│   │   └── FormDetail.tsx        Individual form download
+│   └── admin/
+│       ├── AdminDashboard.tsx    System monitoring and model health
+│       ├── AdminUsers.tsx        User management
+│       ├── AdminForms.tsx        Form scraper management
+│       └── InterpreterReview.tsx Translation review queue
+├── lib/
+│   ├── constants.ts              Design tokens and screen IDs
+│   └── utils.ts                  shadcn utility (cn function)
+└── App.tsx                       Root component and screen router
+```
+
+## User Flow
+
+```
+Landing Page (public)
+    └── Sign In to Use Services
+            └── Login → MFA
+                    ├── Public User       → HomePublic
+                    ├── Court Official    → HomeOfficial
+                    ├── Interpreter       → HomeInterpreter
+                    └── Admin             → HomeAdmin
+```
+
+## Notes
+
+- All data is currently mocked — backend integration pending
+- Role-based routing is simulated — will be driven by auth token claims post-integration
+- The left sidebar (ScreenNavigator) is a development tool for reviewing all screens and will be removed before production
+- `.env` variables are not required to run the prototype — all auth and data is mocked. They will be needed once the backend and real OAuth providers are integrated

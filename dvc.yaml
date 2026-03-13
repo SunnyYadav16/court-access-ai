@@ -39,7 +39,7 @@ stages:
       - courtaccess/data/form_catalog.json
       - courtaccess/forms/catalog.py
     metrics:
-      - data/catalog_metrics.json:
+      - courtaccess/data/catalog_metrics.json:
           cache: false
 
   # ── Pre-Translation Pipeline ─────────────────────────────────────────────────
@@ -54,7 +54,7 @@ stages:
       - courtaccess/core/reconstruct_pdf.py
       - courtaccess/data/form_catalog.json
     outs:
-      - data/pretranslation_report.json:
+      - courtaccess/data/pretranslation_report.json:
           cache: false
 
   # ── Model Weights (DVC-tracked, pulled from GCS) ─────────────────────────────

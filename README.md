@@ -188,7 +188,7 @@ court-access-ai/
 
 ### Prerequisites
 
-- Python 3.12
+- Python 3.11
 - [uv](https://docs.astral.sh/uv/) — fast Python package manager
 - Docker + Docker Compose
 - DVC (`pip install dvc`)
@@ -251,33 +251,186 @@ pytest   # runs all 204 tests across api/, courtaccess/, db/
 
 ## Data Pipeline
 
-### Form Scraping (`form_scraper_dag`, weekly Mon 06:00 UTC)
+### Pipeline Tasks
 
-Scrapes mass.gov court form pages, downloads each form PDF, hashes it, and compares against the existing catalog at `courtaccess/data/form_catalog.json`.
+#### `form_scraper_dag` — 8 Stages (Scheduled: Monday 06:00 UTC)
 
-Five scenarios handled:
-- **New form** → download, catalog entry, trigger pre-translation
-- **Updated form** (hash changed) → archive old version, re-translate
-- **Deleted form** (confirmed 404 only) → mark archived, retain in system
-- **Renamed form** (same hash) → update name, no re-translation
-- **No change** → update last-checked timestamp
+Scrapes 11 mass.gov court department pages, downloads PDFs (including existing Spanish/Portuguese translations from mass.gov), and runs preprocessing, validation, anomaly and bias detection.
 
-### Pre-Translation (`form_pretranslation_dag`, triggered by scraper)
+| # | Task | What It Does |
+|---|------|-------------|
+| 1 | `scrape_and_classify` | Scrapes mass.gov with Playwright, downloads PDFs, classifies each form into one of 5 scenarios (new/updated/deleted/renamed/no-change), updates `form_catalog.json` |
+| 2 | `preprocess_data` | Normalizes names/slugs, detects mislabeled files (HTML/DOCX saved as .pdf), checks PDF integrity, flags empty/tiny files and duplicates |
+| 3 | `validate_catalog` | Validates JSON schema, checks for duplicate `form_id`/`source_url`, verifies PDFs exist on disk, generates `catalog_metrics.json` |
+| 4 | `detect_anomalies` | Compares against previous run metrics, checks thresholds (form count drop, download failures, schema violations), generates `anomaly_report.json` |
+| 5 | `detect_bias` | Slices data by division/language/section, flags underserved divisions and low translation coverage, generates `bias_report.json` |
+| 6 | `trigger_pretranslation` | Triggers `form_pretranslation_dag` for any new or updated forms (Scenarios A & B) |
+| 7 | `log_summary` | Prints consolidated report (scrape + preprocess + validation + anomaly + bias) to Airflow logs |
+| 8 | `dvc_version_data` | Runs `dvc add` + `dvc push` to version the catalog and `forms/` directory |
 
-Processes one form per DAG run through: Load catalog → OCR → Translate (ES + PT in parallel) → Legal review → Reconstruct PDF → Update catalog → DVC version.
+**5-Scenario Classification:**
 
-All machine-translated forms are flagged `needs_human_review = True` until a court translator approves them.
+| Scenario | Detection | Action |
+|----------|-----------|--------|
+| **A — New** | URL not in catalog | Create entry, save PDF, queue for translation |
+| **B — Updated** | URL exists, hash changed | Save new version, preserve old |
+| **C — Deleted** | URL returns 404 (not 5xx) | Mark archived, keep files |
+| **D — Renamed** | Same hash, different URL/name | Update name/slug/URL, no re-translation |
+| **E — No change** | Hash matches | Update `last_scraped_at` only |
+
+**Court Departments Scraped:** Appeals Court · Boston Municipal Court · District Court · Housing Court · Juvenile Court · Land Court · Superior Court · Attorney Forms · Criminal Matter Forms · Criminal Records Forms · Trial Court eFiling Forms.
+
+> **Dev note:** In `courtaccess/forms/scraper.py`, all departments except Appeals Court are commented out by default to speed up local testing. Uncomment all entries in `COURT_FORM_PAGES` before running in production.
+
+#### `form_pretranslation_dag` — 11 Stages (Triggered by scraper)
+
+Processes **one form per DAG run**: OCR → translate ES + PT in parallel → legal review → reconstruct PDF → update catalog → DVC version.
+
+| # | Task | What It Does |
+|---|------|-------------|
+| 1 | `load_form_entry` | Loads catalog entry, validates original PDF exists, detects partial translations |
+| 2 | `ocr_extract_text` | Extracts text regions with bounding-box coordinates from the PDF |
+| 3–4 | `translate_spanish` / `translate_portuguese` | Translates OCR regions per language (skips if translation already exists from mass.gov) |
+| 5–6 | `legal_review_spanish` / `legal_review_portuguese` | Validates legal terms via Groq/Llama with 3× exponential-backoff retry (1s, 3s, 9s) |
+| 7–8 | `reconstruct_pdf_spanish` / `reconstruct_pdf_portuguese` | Rebuilds PDF with translated text using PyMuPDF |
+| 9 | `store_and_update_catalog` | Writes translated PDF paths into catalog, sets `needs_human_review = True` |
+| 10 | `dvc_version_data` | Tracks updated catalog + translated PDFs with DVC |
+| 11 | `log_summary` | Prints audit-style summary with per-language status |
+
+**Partial Translation Handling** — the scraper may download pre-existing translations from mass.gov:
+
+| Existing Translations | Behaviour |
+|-----------------------|-----------|
+| Both ES + PT | Entire DAG skips — nothing to translate |
+| ES only | Skips Spanish tasks, runs Portuguese pipeline |
+| PT only | Skips Portuguese tasks, runs Spanish pipeline |
+| Neither | Full parallel translation for both languages |
+
+If legal review fails all retries, the pipeline continues but appends an audit note and leaves `needs_human_review = True` for mandatory human review.
+
+**Stub modules** (swapped for production models later):
+
+| Module | Stub | Production |
+|--------|------|------------|
+| `courtaccess/core/ocr_printed.py` | PyMuPDF native text extraction | PaddleOCR v3 + Qwen2.5-VL |
+| `courtaccess/core/translation.py` | Prefixes text with language tag | NLLB-200 via CTranslate2 |
+| `courtaccess/core/legal_review.py` | Always returns OK | Groq API (Llama 4 Scout) |
+| `courtaccess/core/reconstruct_pdf.py` | PyMuPDF layout reconstruction | Same (already production-ready) |
+
+### Running the Pipeline
+
+#### Trigger Scraper Manually
+
+```bash
+docker compose exec airflow-scheduler airflow dags unpause form_scraper_dag
+docker compose exec airflow-scheduler airflow dags trigger form_scraper_dag
+```
+
+Or use the Airflow UI (http://localhost:8080): toggle the DAG on → click the play button.
+
+#### Trigger Pre-Translation Manually
+
+```bash
+docker compose exec airflow-scheduler airflow dags unpause form_pretranslation_dag
+docker compose exec airflow-scheduler airflow dags trigger form_pretranslation_dag \
+  --conf '{"form_id": "<uuid-from-catalog>"}'
+```
+
+The `form_id` must exist in `courtaccess/data/form_catalog.json` with a valid `file_path_original`.
+
+#### View Pipeline Outputs
+
+```bash
+cat courtaccess/data/form_catalog.json | python -m json.tool | head -50
+cat courtaccess/data/catalog_metrics.json
+cat courtaccess/data/anomaly_report.json
+cat courtaccess/data/bias_report.json
+ls forms/
+```
+
+**Expected runtimes:**
+- `scrape_and_classify`: 20–40 min (network I/O + rate-limit sleeps — dominates total runtime)
+- All other tasks: 1–15 seconds each
+
+### Form Catalog JSON Schema
+
+```json
+{
+  "form_id": "a1b2c3d4-...",
+  "form_name": "Affidavit of Indigency",
+  "form_slug": "affidavit-of-indigency",
+  "source_url": "https://www.mass.gov/doc/affidavit-of-indigency/download",
+  "status": "active",
+  "content_hash": "9f86d081884c7d...",
+  "current_version": 1,
+  "needs_human_review": true,
+  "created_at": "2026-02-21T19:23:45Z",
+  "last_scraped_at": "2026-02-21T19:23:45Z",
+  "appearances": [
+    {"division": "District Court", "section_heading": "Indigency"},
+    {"division": "Housing Court", "section_heading": "General Forms"}
+  ],
+  "versions": [
+    {
+      "version": 1,
+      "content_hash": "9f86d081884c7d...",
+      "file_path_original": "forms/a1b2c3d4-.../v1/affidavit-of-indigency.pdf",
+      "file_path_es": "forms/a1b2c3d4-.../v1/affidavit-of-indigency_es.pdf",
+      "file_path_pt": null,
+      "created_at": "2026-02-21T19:23:45Z"
+    }
+  ]
+}
+```
+
+This structure maps directly to future SQL tables: top-level fields → `form_catalog`, `appearances[]` → `form_appearances` (many-to-many), `versions[]` → `form_versions` (append-only).
+
+### Anomaly Detection Thresholds
+
+Configurable at the top of `dags/form_scraper_dag.py`:
+
+```python
+THRESHOLD_FORM_DROP_PCT      = 20    # % drop in form count → CRITICAL
+THRESHOLD_MASS_NEW_FORMS     = 50    # forms added in one run → WARNING
+THRESHOLD_DOWNLOAD_FAIL_PCT  = 10    # % missing vs last run → WARNING
+THRESHOLD_MIN_PDF_SIZE_BYTES = 1024  # files below 1 KB → WARNING
+THRESHOLD_MAX_PDF_SIZE_BYTES = 50 * 1024 * 1024  # files above 50 MB → WARNING
+THRESHOLD_SCHEMA_ERRORS      = 0     # any schema errors → CRITICAL
+```
+
+Run-over-run comparison: after each run, current metrics are saved as `prev_catalog_metrics.json`. The next run loads this to compute deltas. First run skips comparison checks.
+
+### Bias Detection
+
+`courtaccess/monitoring/drift.py` analyzes the catalog for coverage equity across court divisions and language groups.
+
+| Slice | Bias Flag | Condition |
+|-------|-----------|-----------|
+| By Division | `underserved_division` | Below 50% of mean form count |
+| By Division | `low_translation_coverage` | ES or PT below 20% per division |
+| By Language | `language_coverage_gap` | ES vs PT gap exceeds 30% |
+
+Output: `courtaccess/data/bias_report.json`.
 
 ### DVC Data Versioning
 
-```
-dvc.yaml stages:
-  scrape_forms        → writes courtaccess/data/form_catalog.json
-  validate_catalog    → writes data/catalog_metrics.json
-  pretranslate_forms  → reads courtaccess/data/form_catalog.json
+DVC is initialized automatically by `airflow-init` on first `docker compose up`.
+
+**Tracked files:** `courtaccess/data/form_catalog.json`, `forms/` directory.
+**Metrics file:** `courtaccess/data/catalog_metrics.json` (tracked by DVC metrics, committed to Git).
+
+```bash
+dvc metrics show          # View current metrics
+dvc metrics diff          # Compare metrics between runs
+dvc pull                  # Restore data on a new machine
+dvc status                # View what DVC is tracking
 ```
 
-Both DAGs call `dvc add` + `dvc push` after updating the catalog.
+The `dvc_storage/` directory is bind-mounted into all Airflow containers at `/opt/airflow/dvc_storage` — persists across `docker compose down/up` cycles. For production, swap to GCS:
+
+```bash
+dvc remote add -d gcs_storage gs://courtaccess-forms
+```
 
 ---
 
