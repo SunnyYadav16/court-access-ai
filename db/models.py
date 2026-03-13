@@ -78,6 +78,7 @@ class User(Base):
 
     username and email are unique and indexed.
     hashed_password stores a bcrypt hash (never plain text).
+    Firebase auth fields are populated on first OAuth/Firebase login.
     """
 
     __tablename__ = "users"
@@ -100,11 +101,27 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # ── Firebase auth fields ──────────────────────────────────────────────────
+    firebase_uid: Mapped[str | None] = mapped_column(String(128), unique=True, nullable=True)
+    auth_provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    mfa_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    role_approved_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    role_approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # ── Relationships ─────────────────────────────────────────────────────────
     sessions: Mapped[list[Session]] = relationship("Session", back_populates="creator", cascade="all, delete-orphan")
+    # translation_requests: Mapped[list[TranslationRequest]] = relationship(
+    #     "TranslationRequest", back_populates="user", cascade="all, delete-orphan"
+    # )
+
     translation_requests: Mapped[list[TranslationRequest]] = relationship(
-        "TranslationRequest", back_populates="user", cascade="all, delete-orphan"
+    "TranslationRequest",
+    back_populates="user",
+    cascade="all, delete-orphan",
+    foreign_keys="[TranslationRequest.user_id]",    
     )
+    
     audit_logs: Mapped[list[AuditLog]] = relationship("AuditLog", back_populates="actor", cascade="all, delete-orphan")
 
     # ── Indexes ───────────────────────────────────────────────────────────────
@@ -112,6 +129,7 @@ class User(Base):
         Index("ix_users_email", "email"),
         Index("ix_users_username", "username"),
         Index("ix_users_role", "role"),
+        Index("ix_users_firebase_uid", "firebase_uid"),
     )
 
     def __repr__(self) -> str:

@@ -1,10 +1,22 @@
+import { useState } from "react"
 import { ScreenId, SCREENS } from "@/lib/constants"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
 import ScreenLabel from "@/components/shared/ScreenLabel"
+import { AuthHook } from "@/hooks/useAuth"
+import api from "@/services/api"
 
-interface Props { onNav: (s: ScreenId) => void }
+interface Props {
+  onNav: (s: ScreenId) => void
+  auth: AuthHook
+}
+
+const ROLES = [
+  { id: "public", label: "Public User", desc: "Access translated documents" },
+  { id: "court_official", label: "Court Official", desc: "Upload & manage court documents" },
+  { id: "interpreter", label: "Interpreter", desc: "Assist with translation" },
+]
 
 const GoogleIcon = () => (
   <svg width="18" height="18" viewBox="0 0 18 18">
@@ -24,19 +36,112 @@ const MicrosoftIcon = () => (
   </svg>
 )
 
-const AppleIcon = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-    <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
-  </svg>
-)
+export default function SignupScreen({ onNav, auth }: Props) {
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
+  const [confirmPassword, setConfirmPassword] = useState("")
+  const [selectedRole, setSelectedRole] = useState<string | null>(null)
+  const [roleError, setRoleError] = useState<string | null>(null)
+  const [showRoleSelect, setShowRoleSelect] = useState(false)
 
-export default function SignupScreen({ onNav }: Props) {
+  // Password strength
+  const strength = [
+    password.length >= 8,
+    /[A-Z]/.test(password),
+    /[0-9]/.test(password),
+    /[^A-Za-z0-9]/.test(password),
+  ]
+  const strengthColors = strength.map(s => s ? "#16a34a" : "#E2E6EC")
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (password !== confirmPassword) {
+      auth.setError("Passwords do not match.")
+      return
+    }
+    await auth.createAccount(email, password)
+    // After account creation, authState → needs_email_verification
+    // App.tsx will render VerifyEmailScreen automatically
+  }
+
+  const handleRoleConfirm = async () => {
+    if (!selectedRole) {
+      setRoleError("Please select a role to continue.")
+      return
+    }
+    setRoleError(null)
+    try {
+      await api.post("/auth/select-role", { selected_role: selectedRole })
+      window.location.reload()
+    } catch {
+      setRoleError("Failed to save role. Please try again.")
+    }
+  }
+
+  // Role selection screen shown when authState === "needs_role_selection"
+  if (auth.authState === "needs_role_selection" || showRoleSelect) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4"
+        style={{ background: "linear-gradient(160deg, #06101F 0%, #162d52 40%, #1a3660 100%)" }}>
+        <div className="w-full max-w-sm">
+          <div className="text-center mb-6">
+            <div className="text-3xl mb-1">⚖</div>
+            <h1 className="text-xl font-bold text-white" style={{ fontFamily: "Palatino, Georgia, serif" }}>CourtAccess AI</h1>
+          </div>
+          <Card className="border-0 shadow-xl">
+            <CardContent className="p-7">
+              <h2 className="text-xl font-bold mb-1"
+                style={{ fontFamily: "Palatino, Georgia, serif", color: "#1A2332" }}>
+                Select your role
+              </h2>
+              <p className="text-xs mb-5" style={{ color: "#8494A7" }}>
+                How will you use CourtAccess AI?
+              </p>
+
+              {roleError && (
+                <div className="mb-4 rounded-md px-3 py-2 text-xs"
+                  style={{ background: "#FEE2E2", border: "1px solid #FECACA", color: "#991B1B" }}>
+                  {roleError}
+                </div>
+              )}
+
+              <div className="flex flex-col gap-3 mb-5">
+                {ROLES.map(r => (
+                  <button key={r.id}
+                    onClick={() => setSelectedRole(r.id)}
+                    className="w-full text-left px-4 py-3 rounded-md border transition-colors cursor-pointer"
+                    style={{
+                      borderColor: selectedRole === r.id ? "#0B1D3A" : "#E2E6EC",
+                      background: selectedRole === r.id ? "#EFF6FF" : "#fff",
+                    }}>
+                    <div className="text-sm font-semibold" style={{ color: "#1A2332" }}>{r.label}</div>
+                    <div className="text-xs mt-0.5" style={{ color: "#8494A7" }}>{r.desc}</div>
+                  </button>
+                ))}
+              </div>
+
+              {(selectedRole === "court_official" || selectedRole === "interpreter") && (
+                <div className="mb-4 rounded-md px-3 py-2 text-xs"
+                  style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", color: "#1e40af" }}>
+                  This role requires admin approval. You'll have public access until approved.
+                </div>
+              )}
+
+              <Button className="w-full" style={{ background: "#0B1D3A" }} onClick={handleRoleConfirm}>
+                Continue →
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-10"
       style={{ background: "linear-gradient(160deg, #06101F 0%, #162d52 40%, #1a3660 100%)" }}>
       <div className="w-full max-w-sm">
 
-        {/* Back to landing */}
         <button
           onClick={() => onNav(SCREENS.LANDING)}
           className="flex items-center gap-1 text-xs mb-6 cursor-pointer"
@@ -46,8 +151,7 @@ export default function SignupScreen({ onNav }: Props) {
 
         <div className="text-center mb-6">
           <div className="text-3xl mb-1">⚖</div>
-          <h1 className="text-xl font-bold text-white"
-            style={{ fontFamily: "Palatino, Georgia, serif" }}>
+          <h1 className="text-xl font-bold text-white" style={{ fontFamily: "Palatino, Georgia, serif" }}>
             CourtAccess AI
           </h1>
         </div>
@@ -62,101 +166,90 @@ export default function SignupScreen({ onNav }: Props) {
               Get access to court translation and interpretation services
             </p>
 
-            {/* OAuth Buttons */}
+            {auth.error && (
+              <div className="mb-4 rounded-md px-3 py-2 text-xs"
+                style={{ background: "#FEE2E2", border: "1px solid #FECACA", color: "#991B1B" }}>
+                {auth.error}
+              </div>
+            )}
+
             <button
-              onClick={() => onNav(SCREENS.HOME_PUBLIC)}
+              onClick={auth.signInWithGoogle}
               className="w-full flex items-center gap-3 px-4 py-2.5 rounded-md border text-sm font-medium mb-2 cursor-pointer hover:bg-slate-50 transition-colors"
               style={{ borderColor: "#E2E6EC", color: "#1A2332" }}>
               <GoogleIcon /> Sign up with Google
             </button>
             <button
-              onClick={() => onNav(SCREENS.HOME_PUBLIC)}
-              className="w-full flex items-center gap-3 px-4 py-2.5 rounded-md border text-sm font-medium mb-2 cursor-pointer hover:bg-slate-50 transition-colors"
+              onClick={auth.signInWithMicrosoft}
+              className="w-full flex items-center gap-3 px-4 py-2.5 rounded-md border text-sm font-medium mb-3 cursor-pointer hover:bg-slate-50 transition-colors"
               style={{ borderColor: "#E2E6EC", color: "#1A2332" }}>
               <MicrosoftIcon /> Sign up with Microsoft
             </button>
-            <button
-              onClick={() => onNav(SCREENS.HOME_PUBLIC)}
-              className="w-full flex items-center gap-3 px-4 py-2.5 rounded-md border text-sm font-medium mb-3 cursor-pointer hover:opacity-90 transition-opacity"
-              style={{ background: "#000", color: "#fff", borderColor: "#000" }}>
-              <AppleIcon /> Sign up with Apple
-            </button>
 
-            {/* Divider */}
             <div className="flex items-center gap-3 my-4">
               <div className="flex-1 h-px" style={{ background: "#E2E6EC" }} />
               <span className="text-[11px]" style={{ color: "#8494A7" }}>or create account with email</span>
               <div className="flex-1 h-px" style={{ background: "#E2E6EC" }} />
             </div>
 
-            <div className="flex gap-3 mb-3">
-              <div className="flex-1">
+            <form onSubmit={handleCreate}>
+              <div className="mb-3">
                 <label className="text-xs font-semibold block mb-1" style={{ color: "#4A5568" }}>
-                  First name
+                  Email address
                 </label>
-                <Input placeholder="Maria" />
+                <Input
+                  placeholder="name@example.com"
+                  type="email"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  required
+                />
               </div>
-              <div className="flex-1">
+
+              <div className="mb-1">
                 <label className="text-xs font-semibold block mb-1" style={{ color: "#4A5568" }}>
-                  Last name
+                  Password
                 </label>
-                <Input placeholder="Santos" />
+                <Input
+                  placeholder="Create a strong password"
+                  type="password"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  required
+                />
               </div>
-            </div>
 
-            <div className="mb-3">
-              <label className="text-xs font-semibold block mb-1" style={{ color: "#4A5568" }}>
-                Email address
-              </label>
-              <Input placeholder="name@example.com" type="email" />
-            </div>
-
-            <div className="mb-1">
-              <label className="text-xs font-semibold block mb-1" style={{ color: "#4A5568" }}>
-                Password
-              </label>
-              <Input placeholder="Create a strong password" type="password" />
-            </div>
-
-            {/* Password strength */}
-            <div className="mb-3">
-              <div className="flex gap-1 mb-1">
-                {["#16a34a", "#16a34a", "#16a34a", "#E2E6EC"].map((c, i) => (
-                  <div key={i} className="flex-1 h-1 rounded-full" style={{ background: c }} />
-                ))}
+              <div className="mb-3">
+                <div className="flex gap-1 mb-1">
+                  {strengthColors.map((c, i) => (
+                    <div key={i} className="flex-1 h-1 rounded-full" style={{ background: c }} />
+                  ))}
+                </div>
+                <div className="flex gap-3 text-[10px]">
+                  <span style={{ color: strength[0] ? "#16a34a" : "#8494A7" }}>✓ 8+ chars</span>
+                  <span style={{ color: strength[1] ? "#16a34a" : "#8494A7" }}>✓ Uppercase</span>
+                  <span style={{ color: strength[2] ? "#16a34a" : "#8494A7" }}>✓ Number</span>
+                  <span style={{ color: strength[3] ? "#16a34a" : "#8494A7" }}>○ Special char</span>
+                </div>
               </div>
-              <div className="flex gap-3 text-[10px]">
-                <span style={{ color: "#16a34a" }}>✓ 8+ chars</span>
-                <span style={{ color: "#16a34a" }}>✓ Uppercase</span>
-                <span style={{ color: "#16a34a" }}>✓ Number</span>
-                <span style={{ color: "#8494A7" }}>○ Special char</span>
+
+              <div className="mb-5">
+                <label className="text-xs font-semibold block mb-1" style={{ color: "#4A5568" }}>
+                  Confirm password
+                </label>
+                <Input
+                  placeholder="Confirm your password"
+                  type="password"
+                  value={confirmPassword}
+                  onChange={e => setConfirmPassword(e.target.value)}
+                  required
+                />
               </div>
-            </div>
 
-            <div className="mb-4">
-              <label className="text-xs font-semibold block mb-1" style={{ color: "#4A5568" }}>
-                Confirm password
-              </label>
-              <Input placeholder="Confirm your password" type="password" />
-            </div>
-
-            <div className="flex items-start gap-2 mb-5">
-              <input type="checkbox" className="mt-0.5 accent-slate-800" />
-              <span className="text-[11px] leading-relaxed" style={{ color: "#4A5568" }}>
-                I agree to the{" "}
-                <span className="cursor-pointer" style={{ color: "#2563eb" }}>Terms of Service</span>
-                {" "}and{" "}
-                <span className="cursor-pointer" style={{ color: "#2563eb" }}>Privacy Policy</span>.
-                I understand all translations are machine-generated and not official court records.
-              </span>
-            </div>
-
-            <Button
-              className="w-full cursor-pointer"
-              style={{ background: "#0B1D3A" }}
-              onClick={() => onNav(SCREENS.VERIFY_EMAIL)}>
-              Create Account
-            </Button>
+              <Button type="submit" className="w-full cursor-pointer" style={{ background: "#0B1D3A" }}>
+                Create Account
+              </Button>
+            </form>
 
             <p className="text-center text-xs mt-4" style={{ color: "#8494A7" }}>
               Already have an account?{" "}

@@ -1,10 +1,15 @@
+import { useState } from "react"
 import { ScreenId, SCREENS } from "@/lib/constants"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
 import ScreenLabel from "@/components/shared/ScreenLabel"
+import { AuthHook } from "@/hooks/useAuth"
 
-interface Props { onNav: (s: ScreenId) => void }
+interface Props {
+  onNav: (s: ScreenId) => void
+  auth: AuthHook
+}
 
 const GoogleIcon = () => (
   <svg width="18" height="18" viewBox="0 0 18 18">
@@ -24,19 +29,20 @@ const MicrosoftIcon = () => (
   </svg>
 )
 
-const AppleIcon = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-    <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
-  </svg>
-)
+export default function LoginScreen({ onNav, auth }: Props) {
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
 
-export default function LoginScreen({ onNav }: Props) {
+  const handleEmailSignIn = async (e: React.FormEvent) => {
+    e.preventDefault()
+    await auth.signInWithEmail(email, password)
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-10"
       style={{ background: "linear-gradient(160deg, #06101F 0%, #162d52 40%, #1a3660 100%)" }}>
       <div className="w-full max-w-sm">
 
-        {/* Back to landing */}
         <button
           onClick={() => onNav(SCREENS.LANDING)}
           className="flex items-center gap-1 text-xs mb-6 cursor-pointer"
@@ -44,7 +50,6 @@ export default function LoginScreen({ onNav }: Props) {
           ← Back to home
         </button>
 
-        {/* Logo */}
         <div className="text-center mb-8">
           <div className="text-4xl mb-2">⚖</div>
           <h1 className="text-2xl font-bold tracking-wide text-white"
@@ -66,65 +71,78 @@ export default function LoginScreen({ onNav }: Props) {
               Sign in to access court translation services
             </p>
 
+            {/* Error message */}
+            {auth.error && (
+              <div className="mb-4 rounded-md px-3 py-2 text-xs"
+                style={{ background: "#FEE2E2", border: "1px solid #FECACA", color: "#991B1B" }}>
+                {auth.error}
+              </div>
+            )}
+
             {/* OAuth Buttons */}
             <button
-              onClick={() => onNav(SCREENS.HOME_OFFICIAL)}
+              onClick={auth.signInWithGoogle}
               className="w-full flex items-center gap-3 px-4 py-2.5 rounded-md border text-sm font-medium mb-2 cursor-pointer hover:bg-slate-50 transition-colors"
               style={{ borderColor: "#E2E6EC", color: "#1A2332" }}>
               <GoogleIcon /> Continue with Google
             </button>
             <button
-              onClick={() => onNav(SCREENS.HOME_OFFICIAL)}
-              className="w-full flex items-center gap-3 px-4 py-2.5 rounded-md border text-sm font-medium mb-2 cursor-pointer hover:bg-slate-50 transition-colors"
+              onClick={auth.signInWithMicrosoft}
+              className="w-full flex items-center gap-3 px-4 py-2.5 rounded-md border text-sm font-medium mb-3 cursor-pointer hover:bg-slate-50 transition-colors"
               style={{ borderColor: "#E2E6EC", color: "#1A2332" }}>
               <MicrosoftIcon /> Continue with Microsoft
             </button>
-            <button
-              onClick={() => onNav(SCREENS.HOME_OFFICIAL)}
-              className="w-full flex items-center gap-3 px-4 py-2.5 rounded-md border text-sm font-medium mb-3 cursor-pointer hover:opacity-90 transition-opacity"
-              style={{ background: "#000", color: "#fff", borderColor: "#000" }}>
-              <AppleIcon /> Continue with Apple
-            </button>
 
-            {/* Divider */}
             <div className="flex items-center gap-3 my-4">
               <div className="flex-1 h-px" style={{ background: "#E2E6EC" }} />
               <span className="text-[11px]" style={{ color: "#8494A7" }}>or sign in with email</span>
               <div className="flex-1 h-px" style={{ background: "#E2E6EC" }} />
             </div>
 
-            <div className="mb-3">
-              <label className="text-xs font-semibold block mb-1" style={{ color: "#4A5568" }}>
-                Email address
-              </label>
-              <Input placeholder="name@example.com" type="email" />
-            </div>
-            <div className="mb-4">
-              <label className="text-xs font-semibold block mb-1" style={{ color: "#4A5568" }}>
-                Password
-              </label>
-              <Input placeholder="••••••••" type="password" />
-            </div>
+            <form onSubmit={handleEmailSignIn}>
+              <div className="mb-3">
+                <label className="text-xs font-semibold block mb-1" style={{ color: "#4A5568" }}>
+                  Email address
+                </label>
+                <Input
+                  placeholder="name@example.com"
+                  type="email"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="mb-4">
+                <label className="text-xs font-semibold block mb-1" style={{ color: "#4A5568" }}>
+                  Password
+                </label>
+                <Input
+                  placeholder="••••••••"
+                  type="password"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  required
+                />
+              </div>
 
-            <div className="flex justify-between items-center mb-5">
-              <label className="flex items-center gap-2 text-xs cursor-pointer"
-                style={{ color: "#4A5568" }}>
-                <input type="checkbox" className="accent-slate-800" /> Remember me
-              </label>
-              <button
-                onClick={() => onNav(SCREENS.FORGOT)}
-                className="text-xs font-medium cursor-pointer"
-                style={{ color: "#2563eb", background: "none", border: "none" }}>
-                Forgot password?
-              </button>
-            </div>
+              <div className="flex justify-between items-center mb-5">
+                <label className="flex items-center gap-2 text-xs cursor-pointer"
+                  style={{ color: "#4A5568" }}>
+                  <input type="checkbox" className="accent-slate-800" /> Remember me
+                </label>
+                <button
+                  type="button"
+                  onClick={() => onNav(SCREENS.FORGOT)}
+                  className="text-xs font-medium cursor-pointer"
+                  style={{ color: "#2563eb", background: "none", border: "none" }}>
+                  Forgot password?
+                </button>
+              </div>
 
-            <Button
-              className="w-full cursor-pointer"
-              style={{ background: "#0B1D3A" }}
-              onClick={() => onNav(SCREENS.MFA)}>
-              Sign In
-            </Button>
+              <Button type="submit" className="w-full cursor-pointer" style={{ background: "#0B1D3A" }}>
+                Sign In
+              </Button>
+            </form>
 
             <p className="text-center text-xs mt-4" style={{ color: "#8494A7" }}>
               Don't have an account?{" "}

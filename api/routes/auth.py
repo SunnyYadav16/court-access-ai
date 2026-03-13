@@ -1,213 +1,40 @@
 """
 api/routes/auth.py
 
-Authentication endpoints for the CourtAccess AI API.
+Firebase-based authentication endpoints for CourtAccess AI.
 
 Endpoints:
-  POST /auth/register  — Create a new user account
-  POST /auth/login     — Exchange credentials for a JWT token pair
-  POST /auth/refresh   — Rotate a refresh token into a new access token
-  GET  /auth/me        — Return the authenticated user's profile
-  POST /auth/logout    — Invalidate refresh token (client-side + token deny-list)
+  GET  /auth/me             — Return authenticated user profile
+  GET  /auth/check-email    — Check if email exists (for password reset UX)
+  POST /auth/select-role    — User selects their role on first login
+  POST /auth/approve-role   — Admin approves a role upgrade
+  POST /auth/revoke         — Admin revokes all sessions for a user
 """
 
 from __future__ import annotations
 
-import contextlib
 import logging
-import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, status
-from jose import JWTError
+from fastapi import APIRouter, Depends, HTTPException, status
+from firebase_admin import auth as firebase_auth
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.auth import (
-    ACCESS_TOKEN_EXPIRE_MINUTES,
-    create_token_pair,
-    decode_refresh_token,
-    hash_password,
-    verify_password,
-)
-from api.dependencies import CurrentUser, DBSession
+from api.dependencies import CurrentUser, DBSession, get_current_user, require_role
 from api.schemas.schemas import (
-    LoginRequest,
-    RegisterRequest,
-    TokenRefreshRequest,
-    TokenResponse,
+    AuthStatusResponse,
+    RoleApprovalRequest,
+    RoleUpdateRequest,
     UserResponse,
 )
+from db.models import User
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# ── In-memory user store (replace with DB in production) ─────────────────────
-# Schema: { user_id_str: { "user_id", "username", "email", "hashed_password", "role", "preferred_language", "created_at" } }
-_users_by_id: dict[str, dict] = {}
-_users_by_username: dict[str, str] = {}  # username → user_id
-_users_by_email: dict[str, str] = {}  # email    → user_id
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# POST /auth/register
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-@router.post(
-    "/register",
-    response_model=UserResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Register a new user account",
-)
-async def register(body: RegisterRequest, db: DBSession) -> UserResponse:
-    """
-    Create a new user account.
-
-    Business rules:
-      - Username and email must be unique
-      - Password is bcrypt hashed before storage
-      - Default role is 'public'
-
-    TODO (production):
-      - Persist to db via db/models.py User model
-      - Send email verification link
-      - Rate-limit registration by IP
-    """
-    if body.username.lower() in _users_by_username:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Username already taken",
-        )
-    if body.email.lower() in _users_by_email:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="An account with this email already exists",
-        )
-
-    user_id = str(uuid.uuid4())
-    now = datetime.now(tz=UTC)
-    user = {
-        "user_id": uuid.UUID(user_id),
-        "username": body.username,
-        "email": body.email.lower(),
-        "hashed_password": hash_password(body.password),
-        "role": body.role.value,
-        "preferred_language": body.preferred_language.value,
-        "created_at": now,
-    }
-
-    _users_by_id[user_id] = user
-    _users_by_username[body.username.lower()] = user_id
-    _users_by_email[body.email.lower()] = user_id
-
-    logger.info("New user registered: user_id=%s username=%s role=%s", user_id, body.username, body.role)
-
-    return UserResponse(
-        user_id=user["user_id"],
-        username=user["username"],
-        email=user["email"],
-        role=user["role"],
-        preferred_language=user["preferred_language"],
-        created_at=user["created_at"],
-    )
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# POST /auth/login
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-@router.post(
-    "/login",
-    response_model=TokenResponse,
-    summary="Login with username and password",
-)
-async def login(body: LoginRequest, db: DBSession) -> TokenResponse:
-    """
-    Validate credentials and return a JWT access + refresh token pair.
-
-    TODO (production):
-      - Query User from DB by username
-      - Add brute-force protection (lockout after N failures)
-    """
-    uid = _users_by_username.get(body.username.lower())
-    if not uid:
-        # Deliberately vague — don't reveal whether username exists
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    user = _users_by_id[uid]
-    if not verify_password(body.password, user["hashed_password"]):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    access_token, refresh_token = create_token_pair(subject=uid, role=user["role"])
-    logger.info("Login successful: user_id=%s role=%s", uid, user["role"])
-
-    from api.auth import ACCESS_TOKEN_EXPIRE_MINUTES
-
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        token_type="bearer",  # noqa: S106
-        expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-    )
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# POST /auth/refresh
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-@router.post(
-    "/refresh",
-    response_model=TokenResponse,
-    summary="Refresh an access token",
-    description=(
-        "Exchange a valid refresh token for a new access + refresh token pair. The old refresh token is invalidated."
-    ),
-)
-async def refresh_token(body: TokenRefreshRequest, db: DBSession) -> TokenResponse:
-    """
-    Rotate the refresh token and issue a new access token.
-
-    Design note: refresh token rotation — the old refresh token is invalidated
-    on every use. This limits the damage window if a refresh token is leaked.
-
-    TODO (production):
-      - Check refresh token against deny-list (Redis SET with TTL)
-      - Add old refresh token to deny-list after successful rotation
-    """
-    try:
-        payload = decode_refresh_token(body.refresh_token)
-    except JWTError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Refresh token is invalid or expired",
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from exc
-
-    user = _users_by_id.get(payload.sub)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User account not found",
-        )
-
-    access_token, new_refresh = create_token_pair(subject=payload.sub, role=payload.role)
-
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=new_refresh,
-        token_type="bearer",  # noqa: S106
-        expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-    )
+VALID_ROLES = {"public", "court_official", "interpreter", "admin"}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -215,53 +42,117 @@ async def refresh_token(body: TokenRefreshRequest, db: DBSession) -> TokenRespon
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-@router.get(
-    "/me",
-    response_model=UserResponse,
-    summary="Get current user profile",
-)
-async def get_me(user: CurrentUser, db: DBSession) -> UserResponse:
-    """
-    Return the profile of the currently authenticated user.
-
-    TODO (production): Query user from DB by user["user_id"].
-    """
-    uid = user["user_id"]
-    db_user = _users_by_id.get(uid)
-    if not db_user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-
-    return UserResponse(
-        user_id=db_user["user_id"],
-        username=db_user["username"],
-        email=db_user["email"],
-        role=db_user["role"],
-        preferred_language=db_user["preferred_language"],
-        created_at=db_user["created_at"],
+@router.get("/me", response_model=AuthStatusResponse, summary="Get current user profile")
+async def get_me(user: CurrentUser) -> AuthStatusResponse:
+    """Return current user info. Frontend calls this on app load."""
+    return AuthStatusResponse(
+        is_authenticated=True,
+        user=UserResponse.model_validate(user),
+        requires_email_verification=not user.email_verified,
+        requires_role_selection=user.role == "public",
     )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# POST /auth/logout
+# GET /auth/check-email
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-@router.post(
-    "/logout",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Logout (invalidate refresh token)",
-)
-async def logout(body: TokenRefreshRequest, db: DBSession) -> None:
+@router.get("/check-email", summary="Check if email exists")
+async def check_email(email: str, db: DBSession) -> dict:
     """
-    Invalidate the provided refresh token server-side.
-
-    Client should also delete the access token from local storage.
-
-    TODO (production):
-      - Add refresh token JTI to Redis deny-list with TTL = token expiry
-      - Return 204 even if token is already expired (idempotent logout)
+    Public endpoint — check if an email exists in the database.
+    Used by the frontend before sending a password reset link.
+    Firebase silently succeeds for unknown emails, so we check here instead.
     """
-    with contextlib.suppress(JWTError):
-        decode_refresh_token(body.refresh_token)
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+    return {"exists": user is not None}
 
-    logger.info("Logout recorded (STUB: token deny-list not yet implemented)")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# POST /auth/select-role
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@router.post("/select-role", response_model=UserResponse, summary="Select user role")
+async def select_role(
+    body: RoleUpdateRequest,
+    user: CurrentUser,
+    db: DBSession,
+) -> UserResponse:
+    """
+    User selects their role after first login.
+    - 'public': applied immediately
+    - 'court_official' / 'interpreter': stored as pending until admin approves
+    - Exception: saml.massgov users get 'court_official' immediately
+    """
+    if body.selected_role not in VALID_ROLES:
+        raise HTTPException(status_code=400, detail="Invalid role")
+
+    auto_approve = (
+        body.selected_role == "court_official"
+        and user.auth_provider == "saml.massgov"
+    )
+
+    if body.selected_role == "public" or auto_approve:
+        user.role = body.selected_role
+        user.role_approved_at = datetime.now(timezone.utc)
+        user.role_approved_by = "auto" if auto_approve else "self"
+    else:
+        user.role = body.selected_role  # pending admin approval
+
+    await db.commit()
+    await db.refresh(user)
+    logger.info("Role selected: user_id=%s role=%s", user.user_id, user.role)
+    return UserResponse.model_validate(user)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# POST /auth/approve-role
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@router.post("/approve-role", response_model=UserResponse, summary="Approve role (admin only)")
+async def approve_role(
+    body: RoleApprovalRequest,
+    db: DBSession,
+    admin: User = Depends(require_role("admin")),
+) -> UserResponse:
+    """Admin approves a user's role and embeds it in their Firebase JWT."""
+    if body.approved_role not in VALID_ROLES:
+        raise HTTPException(status_code=400, detail="Invalid role")
+
+    result = await db.execute(select(User).where(User.firebase_uid == body.user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.role = body.approved_role
+    user.role_approved_by = str(admin.user_id)
+    user.role_approved_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(user)
+
+    # Embed role in Firebase JWT custom claims
+    # Frontend must call getIdToken(true) to pick up the new claim
+    firebase_auth.set_custom_user_claims(body.user_id, {"role": body.approved_role})
+    logger.info("Role approved: target=%s role=%s by admin=%s", body.user_id, body.approved_role, admin.user_id)
+
+    return UserResponse.model_validate(user)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# POST /auth/revoke
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@router.post("/revoke", summary="Revoke all sessions (admin only)")
+async def revoke_user(
+    body: RoleApprovalRequest,
+    admin: User = Depends(require_role("admin")),
+) -> dict:
+    """Admin immediately invalidates all sessions for a user."""
+    firebase_auth.revoke_refresh_tokens(body.user_id)
+    logger.info("Sessions revoked: target=%s by admin=%s", body.user_id, admin.user_id)
+    return {"revoked": True, "user_id": body.user_id}

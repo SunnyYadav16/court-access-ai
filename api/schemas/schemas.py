@@ -95,6 +95,22 @@ class RegisterRequest(BaseModel):
     role: UserRole = UserRole.PUBLIC
 
 
+# class UserResponse(BaseModel):
+#     """Public user representation (no password fields)."""
+
+#     model_config = ConfigDict(from_attributes=True)
+
+#     user_id: uuid.UUID
+#     username: str
+#     email: EmailStr
+#     role: UserRole
+#     preferred_language: Language
+#     created_at: datetime
+
+
+# ── CHANGE 1: Update UserResponse (around line 80) ───────────────────────────
+# Replace the existing UserResponse class with this:
+
 class UserResponse(BaseModel):
     """Public user representation (no password fields)."""
 
@@ -106,7 +122,40 @@ class UserResponse(BaseModel):
     role: UserRole
     preferred_language: Language
     created_at: datetime
+    # Firebase auth fields (nullable for backward compatibility)
+    firebase_uid: str | None = None
+    auth_provider: str | None = None
+    email_verified: bool = False
+    mfa_enabled: bool = False
+    last_login_at: datetime | None = None
 
+
+# ── CHANGE 2: Add these new schemas after UserResponse ───────────────────────
+
+class AuthStatusResponse(BaseModel):
+    """Response from GET /auth/me — full auth state for the frontend."""
+
+    is_authenticated: bool
+    user: UserResponse
+    requires_email_verification: bool
+    requires_role_selection: bool
+
+
+class RoleUpdateRequest(BaseModel):
+    """User selects their role after first login."""
+
+    selected_role: str = Field(
+        description="One of: public, court_official, interpreter, admin"
+    )
+
+
+class RoleApprovalRequest(BaseModel):
+    """Admin approves or revokes a user's role."""
+
+    user_id: str = Field(description="firebase_uid of the target user")
+    approved_role: str = Field(
+        description="Role to assign: public, court_official, interpreter, admin"
+    )
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Document upload schemas

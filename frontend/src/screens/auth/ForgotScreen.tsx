@@ -1,12 +1,26 @@
+import { useState } from "react"
 import { ScreenId, SCREENS } from "@/lib/constants"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
 import ScreenLabel from "@/components/shared/ScreenLabel"
+import { AuthHook } from "@/hooks/useAuth"
 
-interface Props { onNav: (s: ScreenId) => void }
+interface Props {
+  onNav: (s: ScreenId) => void
+  auth: AuthHook
+}
 
-export default function ForgotScreen({ onNav }: Props) {
+export default function ForgotScreen({ onNav, auth }: Props) {
+  const [email, setEmail] = useState("")
+  const [sent, setSent] = useState(false)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const ok = await auth.sendPasswordReset(email)
+    if (ok) setSent(true)
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center px-4"
       style={{ background: "linear-gradient(160deg, #06101F 0%, #162d52 40%, #1a3660 100%)" }}>
@@ -21,21 +35,48 @@ export default function ForgotScreen({ onNav }: Props) {
               style={{ background: "#EFF6FF", border: "1px solid #BFDBFE" }}>
               <span className="text-2xl">🔑</span>
             </div>
-            <h2 className="text-xl font-bold mb-2" style={{ fontFamily: "Palatino, Georgia, serif", color: "#1A2332" }}>
+            <h2 className="text-xl font-bold mb-2"
+              style={{ fontFamily: "Palatino, Georgia, serif", color: "#1A2332" }}>
               Forgot your password?
             </h2>
             <p className="text-xs mb-5 leading-relaxed" style={{ color: "#8494A7" }}>
               Enter your email and we'll send you a secure link to reset your password.
             </p>
-            <div className="text-left mb-4">
-              <label className="text-xs font-semibold block mb-1" style={{ color: "#4A5568" }}>Email address</label>
-              <Input placeholder="name@mass.gov" type="email" />
-            </div>
-            <Button className="w-full" style={{ background: "#0B1D3A" }}
-              onClick={() => onNav(SCREENS.RESET)}>
-              Send Reset Link
-            </Button>
-            <button onClick={() => onNav(SCREENS.LOGIN)}
+
+            {auth.error && (
+              <div className="mb-4 rounded-md px-3 py-2 text-xs text-left"
+                style={{ background: "#FEE2E2", border: "1px solid #FECACA", color: "#991B1B" }}>
+                {auth.error}
+              </div>
+            )}
+
+            {sent ? (
+              <div className="mb-4 rounded-md px-3 py-2 text-xs"
+                style={{ background: "#DCFCE7", border: "1px solid #86efac", color: "#166534" }}>
+                ✓ Reset link sent — check your inbox
+              </div>
+            ) : (
+              <form onSubmit={handleSubmit}>
+                <div className="text-left mb-4">
+                  <label className="text-xs font-semibold block mb-1" style={{ color: "#4A5568" }}>
+                    Email address
+                  </label>
+                  <Input
+                    placeholder="name@mass.gov"
+                    type="email"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    required
+                  />
+                </div>
+                <Button type="submit" className="w-full" style={{ background: "#0B1D3A" }}>
+                  Send Reset Link
+                </Button>
+              </form>
+            )}
+
+            <button
+              onClick={() => onNav(SCREENS.LOGIN)}
               className="mt-4 text-xs font-medium flex items-center gap-1 mx-auto cursor-pointer"
               style={{ color: "#2563eb", background: "none", border: "none" }}>
               ← Back to sign in
