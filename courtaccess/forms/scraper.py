@@ -27,14 +27,14 @@ JSON schema per form:
 """
 
 import hashlib
+import io
 import json
 import logging
 import time
 import uuid
+import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
-import io
-import zipfile
 
 import requests
 from playwright.sync_api import sync_playwright
@@ -164,17 +164,15 @@ def _is_docx(data: bytes) -> bool:
     if not data or len(data) < 4:
         return False
     # ZIP magic bytes: PK\x03\x04
-    if data[:4] != b'\x50\x4B\x03\x04':
+    if data[:4] != b"\x50\x4b\x03\x04":
         return False
     # Confirm it's a DOCX by looking for the word/ directory inside the ZIP
     try:
-        import zipfile
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
             names = zf.namelist()
             return any(n.startswith("word/") for n in names)
     except Exception:
         return False
-    
 
 
 def _convert_docx_to_pdf(docx_bytes: bytes) -> bytes:
@@ -196,10 +194,10 @@ def _convert_docx_to_pdf(docx_bytes: bytes) -> bytes:
         from reportlab.lib.styles import getSampleStyleSheet
         from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
-        # ── Parse DOCX ───────────────────────────────────────────────────────
+        # Parse DOCX
         doc = docx.Document(io.BytesIO(docx_bytes))
 
-        # ── Build PDF ────────────────────────────────────────────────────────
+        # Build PDF
         pdf_buffer = io.BytesIO()
         pdf_doc = SimpleDocTemplate(pdf_buffer, pagesize=letter)
         styles = getSampleStyleSheet()
@@ -211,16 +209,9 @@ def _convert_docx_to_pdf(docx_bytes: bytes) -> bytes:
                 story.append(Spacer(1, 6))
                 continue
             # Use Heading1 style for headings, Normal for body text
-            if para.style.name.startswith("Heading"):
-                style = styles["Heading1"]
-            else:
-                style = styles["Normal"]
+            style = styles["Heading1"] if para.style.name.startswith("Heading") else styles["Normal"]
             # Escape special XML characters that reportlab can't handle
-            text = (
-                text.replace("&", "&amp;")
-                    .replace("<", "&lt;")
-                    .replace(">", "&gt;")
-            )
+            text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             story.append(Paragraph(text, style))
             story.append(Spacer(1, 4))
 
@@ -236,6 +227,7 @@ def _convert_docx_to_pdf(docx_bytes: bytes) -> bytes:
     except Exception as exc:
         logger.warning("DOCX → PDF conversion failed: %s", exc)
         raise
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PDF downloading & hashing
@@ -352,7 +344,6 @@ def _save_translation(form_id: str, version: int, slug: str, lang: str, pdf_byte
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-
 def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
     """
     Scrape a mass.gov form listing page AND download all PDFs (including
@@ -425,6 +416,10 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
             }""")
 
             forms = []
+            # Track form names that already have a PDF URL so we can skip
+            # any DOCX with the same name — PDF takes priority over DOCX.
+            pdf_names: set[str] = set()
+
             for item in form_data:
                 href = item["href"]
                 if not href:
@@ -433,12 +428,29 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
                     href = "https://www.mass.gov" + href
                 if href in seen:
                     continue
-                seen.add(href)
 
                 name = item["name"]
                 if not name:
                     slug = href.rstrip("/").split("/")[-2]
                     name = slug.replace("-", " ").title()
+
+                # Detect file type from URL extension.
+                href_lower = href.lower()
+                is_docx_url = href_lower.endswith(".docx") or "/docx/" in href_lower
+
+                # If this is a DOCX and we already have a PDF for the same
+                # form name, skip it — PDF takes priority.
+                if is_docx_url and name in pdf_names:
+                    logger.info("Skipping DOCX for '%s' — PDF already available for same form", name)
+                    seen.add(href)
+                    continue
+
+                # If this is a PDF, record the name so any later DOCX with
+                # the same name gets skipped.
+                if not is_docx_url:
+                    pdf_names.add(name)
+
+                seen.add(href)
 
                 es_url = item.get("es_url")
                 pt_url = item.get("pt_url")
@@ -458,8 +470,7 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
                 )
 
             logger.info(
-                "Found %d forms on %s — sleeping %ds before downloading...",
-                len(forms), page_url, PRE_DOWNLOAD_SLEEP
+                "Found %d forms on %s — sleeping %ds before downloading...", len(forms), page_url, PRE_DOWNLOAD_SLEEP
             )
             time.sleep(PRE_DOWNLOAD_SLEEP)
 
@@ -486,16 +497,11 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
 
                         # ── Convert DOCX → PDF if needed ───────────────────
                         if _is_docx(raw_bytes):
-                            logger.info(
-                                "DOCX detected for '%s' — converting to PDF", form["name"]
-                            )
+                            logger.info("DOCX detected for '%s' — converting to PDF", form["name"])
                             try:
                                 pdf_bytes = _convert_docx_to_pdf(raw_bytes)
                             except Exception as exc:
-                                logger.warning(
-                                    "DOCX conversion failed for '%s': %s — skipping",
-                                    form["name"], exc
-                                )
+                                logger.warning("DOCX conversion failed for '%s': %s — skipping", form["name"], exc)
                                 continue
                         else:
                             pdf_bytes = raw_bytes
@@ -514,26 +520,17 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
                                     es_raw = es_resp.body()
                                     if _is_docx(es_raw):
                                         logger.info(
-                                            "DOCX detected for ES translation of '%s' — converting",
-                                            form["name"]
+                                            "DOCX detected for ES translation of '%s' — converting", form["name"]
                                         )
                                         try:
                                             es_bytes = _convert_docx_to_pdf(es_raw)
                                         except Exception as exc:
-                                            logger.warning(
-                                                "ES DOCX conversion failed for '%s': %s",
-                                                form["name"], exc
-                                            )
+                                            logger.warning("ES DOCX conversion failed for '%s': %s", form["name"], exc)
                                     else:
                                         es_bytes = es_raw
-                                    logger.debug(
-                                        "Downloaded ES: %s (%d bytes)", form["name"], len(es_bytes)
-                                    )
+                                    logger.debug("Downloaded ES: %s (%d bytes)", form["name"], len(es_bytes))
                                 else:
-                                    logger.debug(
-                                        "ES translation HTTP %d for %s",
-                                        es_resp.status, form["es_url"]
-                                    )
+                                    logger.debug("ES translation HTTP %d for %s", es_resp.status, form["es_url"])
                             except Exception as exc:
                                 logger.debug("Failed to download ES for %s: %s", form["name"], exc)
 
@@ -549,26 +546,17 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
                                     pt_raw = pt_resp.body()
                                     if _is_docx(pt_raw):
                                         logger.info(
-                                            "DOCX detected for PT translation of '%s' — converting",
-                                            form["name"]
+                                            "DOCX detected for PT translation of '%s' — converting", form["name"]
                                         )
                                         try:
                                             pt_bytes = _convert_docx_to_pdf(pt_raw)
                                         except Exception as exc:
-                                            logger.warning(
-                                                "PT DOCX conversion failed for '%s': %s",
-                                                form["name"], exc
-                                            )
+                                            logger.warning("PT DOCX conversion failed for '%s': %s", form["name"], exc)
                                     else:
                                         pt_bytes = pt_raw
-                                    logger.debug(
-                                        "Downloaded PT: %s (%d bytes)", form["name"], len(pt_bytes)
-                                    )
+                                    logger.debug("Downloaded PT: %s (%d bytes)", form["name"], len(pt_bytes))
                                 else:
-                                    logger.debug(
-                                        "PT translation HTTP %d for %s",
-                                        pt_resp.status, form["pt_url"]
-                                    )
+                                    logger.debug("PT translation HTTP %d for %s", pt_resp.status, form["pt_url"])
                             except Exception as exc:
                                 logger.debug("Failed to download PT for %s: %s", form["name"], exc)
 
@@ -589,10 +577,7 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
 
                 # Sleep between batches — skip sleep after the last batch.
                 if batch_num < len(batches):
-                    logger.info(
-                        "Batch %d complete. Sleeping %ds before next batch...",
-                        batch_num, BATCH_SLEEP_SEC
-                    )
+                    logger.info("Batch %d complete. Sleeping %ds before next batch...", batch_num, BATCH_SLEEP_SEC)
                     time.sleep(BATCH_SLEEP_SEC)
 
             browser.close()
