@@ -27,10 +27,12 @@ JSON schema per form:
 """
 
 import hashlib
+import io
 import json
 import logging
 import time
 import uuid
+import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -152,6 +154,81 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _is_docx(data: bytes) -> bool:
+    """
+    Detect if downloaded bytes are a DOCX file.
+    DOCX files are ZIP archives — they start with the PK magic bytes (50 4B 03 04).
+    We also check for the word/document.xml entry to confirm it's a DOCX
+    and not just any ZIP file.
+    """
+    if not data or len(data) < 4:
+        return False
+    # ZIP magic bytes: PK\x03\x04
+    if data[:4] != b"\x50\x4b\x03\x04":
+        return False
+    # Confirm it's a DOCX by looking for the word/ directory inside the ZIP
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            names = zf.namelist()
+            return any(n.startswith("word/") for n in names)
+    except Exception:
+        return False
+
+
+def _convert_docx_to_pdf(docx_bytes: bytes) -> bytes:
+    """
+    Convert DOCX bytes to PDF bytes using python-docx + reportlab.
+
+    Approach:
+      1. Parse the DOCX with python-docx to extract text paragraphs
+      2. Render the text into a PDF using reportlab
+      3. Return the PDF as bytes
+
+    Note: This is a text-faithful conversion — complex layouts, images,
+    and tables may not render perfectly. For the purposes of this pipeline
+    (feeding into OCR + translation), text fidelity is what matters.
+    """
+    try:
+        import docx
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+
+        # Parse DOCX
+        doc = docx.Document(io.BytesIO(docx_bytes))
+
+        # Build PDF
+        pdf_buffer = io.BytesIO()
+        pdf_doc = SimpleDocTemplate(pdf_buffer, pagesize=letter)
+        styles = getSampleStyleSheet()
+        story = []
+
+        for para in doc.paragraphs:
+            text = para.text.strip()
+            if not text:
+                story.append(Spacer(1, 6))
+                continue
+            # Use Heading1 style for headings, Normal for body text
+            style = styles["Heading1"] if para.style.name.startswith("Heading") else styles["Normal"]
+            # Escape special XML characters that reportlab can't handle
+            text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            story.append(Paragraph(text, style))
+            story.append(Spacer(1, 4))
+
+        # Handle empty documents
+        if not story:
+            story.append(Paragraph("(empty document)", styles["Normal"]))
+
+        pdf_doc.build(story)
+        pdf_bytes = pdf_buffer.getvalue()
+        logger.debug("DOCX → PDF conversion successful (%d bytes)", len(pdf_bytes))
+        return pdf_bytes
+
+    except Exception as exc:
+        logger.warning("DOCX → PDF conversion failed: %s", exc)
+        raise
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # PDF downloading & hashing
 # ══════════════════════════════════════════════════════════════════════════════
@@ -271,7 +348,7 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
     """
     Scrape a mass.gov form listing page AND download all PDFs (including
     existing Spanish/Portuguese translations) in a single Playwright
-    browser session.
+    browser session. DOCX files are automatically converted to PDF.
 
     Returns a list of:
         {"name": <str>, "url": <str>, "bytes": <bytes>,
@@ -295,12 +372,6 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 page.wait_for_timeout(1500)
 
-            # ── Extract form links WITH section headings AND translation URLs ─
-            # Walk all h2, h3, and download links in DOM order.
-            # Track the "current heading" — each link inherits the heading
-            # that most recently preceded it in the document.
-            # For each main link, also look inside the parent container for
-            # translation links (Español, Português).
             form_data = page.evaluate("""() => {
                 const results = [];
                 let currentHeading = "General";
@@ -315,7 +386,6 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
                         const nameSpan = el.querySelector('span:not(.ma__visually-hidden)');
                         const name = nameSpan ? nameSpan.textContent.trim() : '';
 
-                        // Find translation links in the parent container.
                         let esUrl = null;
                         let ptUrl = null;
                         const container = el.closest('.ma__download-link') || el.parentElement;
@@ -346,6 +416,10 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
             }""")
 
             forms = []
+            # Track form names that already have a PDF URL so we can skip
+            # any DOCX with the same name — PDF takes priority over DOCX.
+            pdf_names: set[str] = set()
+
             for item in form_data:
                 href = item["href"]
                 if not href:
@@ -354,14 +428,30 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
                     href = "https://www.mass.gov" + href
                 if href in seen:
                     continue
-                seen.add(href)
 
                 name = item["name"]
                 if not name:
                     slug = href.rstrip("/").split("/")[-2]
                     name = slug.replace("-", " ").title()
 
-                # Make translation URLs absolute (if present).
+                # Detect file type from URL extension.
+                href_lower = href.lower()
+                is_docx_url = href_lower.endswith(".docx") or "/docx/" in href_lower
+
+                # If this is a DOCX and we already have a PDF for the same
+                # form name, skip it — PDF takes priority.
+                if is_docx_url and name in pdf_names:
+                    logger.info("Skipping DOCX for '%s' — PDF already available for same form", name)
+                    seen.add(href)
+                    continue
+
+                # If this is a PDF, record the name so any later DOCX with
+                # the same name gets skipped.
+                if not is_docx_url:
+                    pdf_names.add(name)
+
+                seen.add(href)
+
                 es_url = item.get("es_url")
                 pt_url = item.get("pt_url")
                 if es_url and not es_url.startswith("http"):
@@ -384,8 +474,6 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
             )
             time.sleep(PRE_DOWNLOAD_SLEEP)
 
-            # Download PDFs in batches with a sleep between each batch.
-            # For each form: download English, then Spanish/Portuguese if available.
             total = len(forms)
             batches = [forms[i : i + BATCH_SIZE] for i in range(0, total, BATCH_SIZE)]
 
@@ -393,7 +481,7 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
                 logger.info("Downloading batch %d/%d (%d forms)...", batch_num, len(batches), len(batch))
                 for form in batch:
                     try:
-                        # ── Download English original ──
+                        # ── Download English original ──────────────────────
                         api_response = context.request.get(
                             form["url"],
                             timeout=30000,
@@ -405,10 +493,22 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
                                 logger.warning("HTTP %d for %s", api_response.status, form["url"])
                             continue
 
-                        pdf_bytes = api_response.body()
+                        raw_bytes = api_response.body()
+
+                        # ── Convert DOCX → PDF if needed ───────────────────
+                        if _is_docx(raw_bytes):
+                            logger.info("DOCX detected for '%s' — converting to PDF", form["name"])
+                            try:
+                                pdf_bytes = _convert_docx_to_pdf(raw_bytes)
+                            except Exception as exc:
+                                logger.warning("DOCX conversion failed for '%s': %s — skipping", form["name"], exc)
+                                continue
+                        else:
+                            pdf_bytes = raw_bytes
+
                         logger.debug("Downloaded: %s (%d bytes)", form["name"], len(pdf_bytes))
 
-                        # ── Download Spanish translation (if available) ──
+                        # ── Download Spanish translation (if available) ────
                         es_bytes = None
                         if form["es_url"]:
                             try:
@@ -417,7 +517,17 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
                                     timeout=30000,
                                 )
                                 if es_resp.status == 200:
-                                    es_bytes = es_resp.body()
+                                    es_raw = es_resp.body()
+                                    if _is_docx(es_raw):
+                                        logger.info(
+                                            "DOCX detected for ES translation of '%s' — converting", form["name"]
+                                        )
+                                        try:
+                                            es_bytes = _convert_docx_to_pdf(es_raw)
+                                        except Exception as exc:
+                                            logger.warning("ES DOCX conversion failed for '%s': %s", form["name"], exc)
+                                    else:
+                                        es_bytes = es_raw
                                     logger.debug("Downloaded ES: %s (%d bytes)", form["name"], len(es_bytes))
                                 else:
                                     logger.debug("ES translation HTTP %d for %s", es_resp.status, form["es_url"])
@@ -433,7 +543,17 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
                                     timeout=30000,
                                 )
                                 if pt_resp.status == 200:
-                                    pt_bytes = pt_resp.body()
+                                    pt_raw = pt_resp.body()
+                                    if _is_docx(pt_raw):
+                                        logger.info(
+                                            "DOCX detected for PT translation of '%s' — converting", form["name"]
+                                        )
+                                        try:
+                                            pt_bytes = _convert_docx_to_pdf(pt_raw)
+                                        except Exception as exc:
+                                            logger.warning("PT DOCX conversion failed for '%s': %s", form["name"], exc)
+                                    else:
+                                        pt_bytes = pt_raw
                                     logger.debug("Downloaded PT: %s (%d bytes)", form["name"], len(pt_bytes))
                                 else:
                                     logger.debug("PT translation HTTP %d for %s", pt_resp.status, form["pt_url"])
@@ -465,7 +585,7 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
     except Exception as exc:
         logger.error("Playwright error on %s: %s", page_url, exc)
 
-    logger.info("Downloaded %d/%d PDFs from %s", len(results), len(seen), page_url)
+    logger.info("Downloaded %d/%d files from %s", len(results), len(seen), page_url)
     return results
 
 

@@ -147,6 +147,7 @@ dvc_storage/
 data/form_catalog.json
 data/metrics/
 courtaccess/data/form_catalog.json
+courtaccess/data/
 
 # ── Downloaded court forms (DVC-tracked PDFs, NOT git) ───────────────────────
 /forms/
