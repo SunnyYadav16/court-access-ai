@@ -2,7 +2,7 @@
 name = "courtaccess"
 version = "0.1.0"
 description = "Real-time speech and document translation system for the Massachusetts Trial Court"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 dependencies = [
     # ── Web API ──
     "fastapi[standard]>=0.111.0",
@@ -15,36 +15,32 @@ dependencies = [
     "sqlalchemy>=2.0.0",
     "asyncpg>=0.29.0",
     "alembic>=1.13.0",
-
     # ── Cloud ──
     "google-cloud-storage>=2.16.0",
     "google-cloud-logging>=3.10.0",
-
     # ── AI / ML (ARM64-compatible) ──
     "faster-whisper>=1.0.0",
     "ctranslate2>=4.0.0",
     "transformers>=4.40.0",
     "groq>=0.9.0",
-
     # ── PDF / OCR ──
     "pymupdf>=1.23.0",
     "presidio-analyzer>=2.2.0",
     "presidio-anonymizer>=2.2.0",
-
     # ── Web scraping ──
     "requests>=2.32.0",
     "beautifulsoup4>=4.12.3",
     "lxml>=5.1.0",
     "playwright>=1.40.0",
-
     # ── Data versioning ──
     "dvc>=3.50.0",
-
     # ── Utilities ──
     "numpy>=1.26.0",
     "pydantic>=2.7.0",
     "pydantic-settings>=2.2.0",
     "python-dotenv>=1.0.0",
+    "firebase-admin>=6.9.0",
+    "psycopg2-binary>=2.9.11",
 ]
 
 [project.optional-dependencies]
