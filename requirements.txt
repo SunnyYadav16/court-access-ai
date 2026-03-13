@@ -61,3 +61,8 @@ python-dotenv>=1.0.0
 
 # ── Airflow (Airflow containers only) ────────────────────────────────────────
 # apache-airflow>=3.1.7   # Uncomment if installing into a non-Airflow base image
+
+firebase-admin>=6.5.0
+
+# ── Database ── section — ADD:
+psycopg2-binary>=2.9.9     # sync driver for Alembic migrations
