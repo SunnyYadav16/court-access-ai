@@ -15,7 +15,6 @@ outs:
   size: 562000000
   hash: md5
   path: spacy-en-core-web-lg
-  isdir: true
   cache: true
   persist: false
 

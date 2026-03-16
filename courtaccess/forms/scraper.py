@@ -13,6 +13,7 @@ JSON schema per form:
     "form_name":        <str>,
     "form_slug":        <str>,
     "source_url":       <str>,
+    "file_type":        "pdf" | "docx",  ← original file format (latest version)
     "status":           "active" | "archived",
     "content_hash":     <str>,          ← latest version's hash (denormalized for fast lookup)
     "current_version":  <int>,
@@ -21,16 +22,22 @@ JSON schema per form:
     "last_scraped_at":  <iso8601>,
     "appearances":      [{"division": <str>, "section_heading": <str>}, ...],
     "versions":         [{"version": <int>, "content_hash": <str>,
+                          "file_type": "pdf" | "docx",
                           "file_path_original": <str>, "file_path_es": <str|null>,
-                          "file_path_pt": <str|null>, "created_at": <iso8601>}, ...]
+                          "file_path_pt": <str|null>,
+                          "file_type_es": "pdf" | "docx" | null,
+                          "file_type_pt": "pdf" | "docx" | null,
+                          "created_at": <iso8601>}, ...]
 }
 """
 
 import hashlib
+import io
 import json
 import logging
 import time
 import uuid
+import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -54,7 +61,6 @@ DAGS_DIR = Path(__file__).resolve().parent.parent
 PROJECT_DIR = DAGS_DIR.parent
 CATALOG_PATH = DAGS_DIR / "data" / "form_catalog.json"
 FORMS_DIR = PROJECT_DIR / "forms"
-FORMS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Batch download settings ───────────────────────────────────────────────────
 BATCH_SIZE = 10  # Number of PDFs to download per batch
@@ -152,6 +158,81 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _is_docx(data: bytes) -> bool:
+    """
+    Detect if downloaded bytes are a DOCX file.
+    DOCX files are ZIP archives — they start with the PK magic bytes (50 4B 03 04).
+    We also check for the word/document.xml entry to confirm it's a DOCX
+    and not just any ZIP file.
+    """
+    if not data or len(data) < 4:
+        return False
+    # ZIP magic bytes: PK\x03\x04
+    if data[:4] != b"\x50\x4b\x03\x04":
+        return False
+    # Confirm it's a DOCX by looking for the word/ directory inside the ZIP
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            names = zf.namelist()
+            return any(n.startswith("word/") for n in names)
+    except Exception:
+        return False
+
+
+def _convert_docx_to_pdf(docx_bytes: bytes) -> bytes:
+    """
+    Convert DOCX bytes to PDF bytes using python-docx + reportlab.
+
+    Approach:
+      1. Parse the DOCX with python-docx to extract text paragraphs
+      2. Render the text into a PDF using reportlab
+      3. Return the PDF as bytes
+
+    Note: This is a text-faithful conversion — complex layouts, images,
+    and tables may not render perfectly. For the purposes of this pipeline
+    (feeding into OCR + translation), text fidelity is what matters.
+    """
+    try:
+        import docx
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+
+        # Parse DOCX
+        doc = docx.Document(io.BytesIO(docx_bytes))
+
+        # Build PDF
+        pdf_buffer = io.BytesIO()
+        pdf_doc = SimpleDocTemplate(pdf_buffer, pagesize=letter)
+        styles = getSampleStyleSheet()
+        story = []
+
+        for para in doc.paragraphs:
+            text = para.text.strip()
+            if not text:
+                story.append(Spacer(1, 6))
+                continue
+            # Use Heading1 style for headings, Normal for body text
+            style = styles["Heading1"] if para.style.name.startswith("Heading") else styles["Normal"]
+            # Escape special XML characters that reportlab can't handle
+            text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            story.append(Paragraph(text, style))
+            story.append(Spacer(1, 4))
+
+        # Handle empty documents
+        if not story:
+            story.append(Paragraph("(empty document)", styles["Normal"]))
+
+        pdf_doc.build(story)
+        pdf_bytes = pdf_buffer.getvalue()
+        logger.debug("DOCX → PDF conversion successful (%d bytes)", len(pdf_bytes))
+        return pdf_bytes
+
+    except Exception as exc:
+        logger.warning("DOCX → PDF conversion failed: %s", exc)
+        raise
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # PDF downloading & hashing
 # ══════════════════════════════════════════════════════════════════════════════
@@ -241,24 +322,47 @@ def _download_pdf(url: str) -> bytes | None:
 
 
 def _version_dir(form_id: str, version: int) -> Path:
-    """Return (and create) the directory forms/{form_id}/v{version}/."""
+    """Return (and create) the directory forms/{form_id}/v{version}/.
+
+    Creates the entire path (including the top-level forms/ directory)
+    if it does not already exist.  Raises a clear error when the
+    directory cannot be created due to permission issues.
+    """
     d = FORMS_DIR / form_id / f"v{version}"
-    d.mkdir(parents=True, exist_ok=True)
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except PermissionError:
+        logger.error(
+            "Permission denied creating directory '%s'. Ensure the forms/ volume is mounted and writable.",
+            d,
+        )
+        raise
+    except OSError as exc:
+        logger.error("OS error creating directory '%s': %s", d, exc)
+        raise
     return d
 
 
-def _save_original(form_id: str, version: int, slug: str, pdf_bytes: bytes) -> str:
-    """Save a PDF to forms/{form_id}/v{version}/{slug}.pdf and return the path."""
-    dest = _version_dir(form_id, version) / f"{slug}.pdf"
-    dest.write_bytes(pdf_bytes)
+def _save_original(form_id: str, version: int, slug: str, raw_bytes: bytes, file_type: str = "pdf") -> str:
+    """Save a form file and return the path.
+
+    File is stored at forms/{form_id}/v{version}/{slug}.{ext} where ext
+    is derived from file_type ('pdf' or 'docx').
+    """
+    ext = file_type if file_type in ("pdf", "docx") else "pdf"
+    dest = _version_dir(form_id, version) / f"{slug}.{ext}"
+    dest.write_bytes(raw_bytes)
     return str(dest)
 
 
-def _save_translation(form_id: str, version: int, slug: str, lang: str, pdf_bytes: bytes) -> str:
-    """Save a translation PDF to forms/{form_id}/v{version}/{slug}_{lang}.pdf.
+def _save_translation(
+    form_id: str, version: int, slug: str, lang: str, raw_bytes: bytes, file_type: str = "pdf"
+) -> str:
+    """Save a translation file to forms/{form_id}/v{version}/{slug}_{lang}.{ext}.
     lang should be 'es' or 'pt'."""
-    dest = _version_dir(form_id, version) / f"{slug}_{lang}.pdf"
-    dest.write_bytes(pdf_bytes)
+    ext = file_type if file_type in ("pdf", "docx") else "pdf"
+    dest = _version_dir(form_id, version) / f"{slug}_{lang}.{ext}"
+    dest.write_bytes(raw_bytes)
     return str(dest)
 
 
@@ -271,7 +375,7 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
     """
     Scrape a mass.gov form listing page AND download all PDFs (including
     existing Spanish/Portuguese translations) in a single Playwright
-    browser session.
+    browser session. DOCX files are automatically converted to PDF.
 
     Returns a list of:
         {"name": <str>, "url": <str>, "bytes": <bytes>,
@@ -295,12 +399,6 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 page.wait_for_timeout(1500)
 
-            # ── Extract form links WITH section headings AND translation URLs ─
-            # Walk all h2, h3, and download links in DOM order.
-            # Track the "current heading" — each link inherits the heading
-            # that most recently preceded it in the document.
-            # For each main link, also look inside the parent container for
-            # translation links (Español, Português).
             form_data = page.evaluate("""() => {
                 const results = [];
                 let currentHeading = "General";
@@ -315,7 +413,6 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
                         const nameSpan = el.querySelector('span:not(.ma__visually-hidden)');
                         const name = nameSpan ? nameSpan.textContent.trim() : '';
 
-                        // Find translation links in the parent container.
                         let esUrl = null;
                         let ptUrl = null;
                         const container = el.closest('.ma__download-link') || el.parentElement;
@@ -346,22 +443,24 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
             }""")
 
             forms = []
+
+            # Build forms list from all scraped items (both PDF and DOCX).
             for item in form_data:
-                href = item["href"]
+                href = item.get("href", "")
                 if not href:
                     continue
                 if not href.startswith("http"):
                     href = "https://www.mass.gov" + href
                 if href in seen:
                     continue
-                seen.add(href)
 
-                name = item["name"]
+                name = item.get("name", "")
                 if not name:
                     slug = href.rstrip("/").split("/")[-2]
                     name = slug.replace("-", " ").title()
 
-                # Make translation URLs absolute (if present).
+                seen.add(href)
+
                 es_url = item.get("es_url")
                 pt_url = item.get("pt_url")
                 if es_url and not es_url.startswith("http"):
@@ -384,8 +483,6 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
             )
             time.sleep(PRE_DOWNLOAD_SLEEP)
 
-            # Download PDFs in batches with a sleep between each batch.
-            # For each form: download English, then Spanish/Portuguese if available.
             total = len(forms)
             batches = [forms[i : i + BATCH_SIZE] for i in range(0, total, BATCH_SIZE)]
 
@@ -393,7 +490,7 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
                 logger.info("Downloading batch %d/%d (%d forms)...", batch_num, len(batches), len(batch))
                 for form in batch:
                     try:
-                        # ── Download English original ──
+                        # ── Download English original ──────────────────────
                         api_response = context.request.get(
                             form["url"],
                             timeout=30000,
@@ -405,11 +502,18 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
                                 logger.warning("HTTP %d for %s", api_response.status, form["url"])
                             continue
 
-                        pdf_bytes = api_response.body()
-                        logger.debug("Downloaded: %s (%d bytes)", form["name"], len(pdf_bytes))
+                        raw_bytes = api_response.body()
 
-                        # ── Download Spanish translation (if available) ──
+                        # ── Detect file type ─────────────────────────────────
+                        file_type = "docx" if _is_docx(raw_bytes) else "pdf"
+                        if file_type == "docx":
+                            logger.info("DOCX detected for '%s'", form["name"])
+
+                        logger.debug("Downloaded: %s (%d bytes, %s)", form["name"], len(raw_bytes), file_type)
+
+                        # ── Download Spanish translation (if available) ────
                         es_bytes = None
+                        es_file_type = None
                         if form["es_url"]:
                             try:
                                 es_resp = context.request.get(
@@ -418,7 +522,10 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
                                 )
                                 if es_resp.status == 200:
                                     es_bytes = es_resp.body()
-                                    logger.debug("Downloaded ES: %s (%d bytes)", form["name"], len(es_bytes))
+                                    es_file_type = "docx" if _is_docx(es_bytes) else "pdf"
+                                    logger.debug(
+                                        "Downloaded ES: %s (%d bytes, %s)", form["name"], len(es_bytes), es_file_type
+                                    )
                                 else:
                                     logger.debug("ES translation HTTP %d for %s", es_resp.status, form["es_url"])
                             except Exception as exc:
@@ -426,6 +533,7 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
 
                         # ── Download Portuguese translation (if available) ──
                         pt_bytes = None
+                        pt_file_type = None
                         if form["pt_url"]:
                             try:
                                 pt_resp = context.request.get(
@@ -434,7 +542,10 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
                                 )
                                 if pt_resp.status == 200:
                                     pt_bytes = pt_resp.body()
-                                    logger.debug("Downloaded PT: %s (%d bytes)", form["name"], len(pt_bytes))
+                                    pt_file_type = "docx" if _is_docx(pt_bytes) else "pdf"
+                                    logger.debug(
+                                        "Downloaded PT: %s (%d bytes, %s)", form["name"], len(pt_bytes), pt_file_type
+                                    )
                                 else:
                                     logger.debug("PT translation HTTP %d for %s", pt_resp.status, form["pt_url"])
                             except Exception as exc:
@@ -444,9 +555,12 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
                             {
                                 "name": form["name"],
                                 "url": form["url"],
-                                "bytes": pdf_bytes,
+                                "bytes": raw_bytes,
+                                "file_type": file_type,
                                 "es_bytes": es_bytes,
+                                "es_file_type": es_file_type,
                                 "pt_bytes": pt_bytes,
+                                "pt_file_type": pt_file_type,
                                 "division": division,
                                 "section_heading": form["section_heading"],
                             }
@@ -465,7 +579,7 @@ def _scrape_and_download_page(page_url: str, division: str) -> list[dict]:
     except Exception as exc:
         logger.error("Playwright error on %s: %s", page_url, exc)
 
-    logger.info("Downloaded %d/%d PDFs from %s", len(results), len(seen), page_url)
+    logger.info("Downloaded %d/%d files from %s", len(results), len(seen), page_url)
     return results
 
 
@@ -495,7 +609,19 @@ def _merge_appearances(entry: dict, new_appearances: list[dict]) -> None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def _handle_new_form(catalog, form_name, pdf_url, pdf_bytes, es_bytes, pt_bytes, appearances, pretranslation_queue):
+def _handle_new_form(
+    catalog,
+    form_name,
+    pdf_url,
+    pdf_bytes,
+    es_bytes,
+    pt_bytes,
+    appearances,
+    pretranslation_queue,
+    file_type="pdf",
+    es_file_type=None,
+    pt_file_type=None,
+):
     """Scenario A — brand-new URL not in catalog."""
     form_id = str(uuid.uuid4())
     hash_val = _sha256(pdf_bytes)
@@ -503,17 +629,17 @@ def _handle_new_form(catalog, form_name, pdf_url, pdf_bytes, es_bytes, pt_bytes,
     version = 1
     ts = _now()
 
-    file_path = _save_original(form_id, version, slug, pdf_bytes)
+    file_path = _save_original(form_id, version, slug, pdf_bytes, file_type)
 
     # Save existing translations from mass.gov (if available).
     file_path_es = None
     if es_bytes:
-        file_path_es = _save_translation(form_id, version, slug, "es", es_bytes)
+        file_path_es = _save_translation(form_id, version, slug, "es", es_bytes, es_file_type or "pdf")
         logger.info("  ↳ Saved existing ES translation for '%s'", form_name)
 
     file_path_pt = None
     if pt_bytes:
-        file_path_pt = _save_translation(form_id, version, slug, "pt", pt_bytes)
+        file_path_pt = _save_translation(form_id, version, slug, "pt", pt_bytes, pt_file_type or "pdf")
         logger.info("  ↳ Saved existing PT translation for '%s'", form_name)
 
     entry = {
@@ -521,6 +647,7 @@ def _handle_new_form(catalog, form_name, pdf_url, pdf_bytes, es_bytes, pt_bytes,
         "form_name": form_name,
         "form_slug": slug,
         "source_url": pdf_url,
+        "file_type": file_type,
         "status": "active",
         "content_hash": hash_val,
         "current_version": version,
@@ -532,36 +659,49 @@ def _handle_new_form(catalog, form_name, pdf_url, pdf_bytes, es_bytes, pt_bytes,
             {
                 "version": version,
                 "content_hash": hash_val,
+                "file_type": file_type,
                 "file_path_original": file_path,
                 "file_path_es": file_path_es,
                 "file_path_pt": file_path_pt,
+                "file_type_es": es_file_type,
+                "file_type_pt": pt_file_type,
                 "created_at": ts,
             }
         ],
     }
     catalog.append(entry)
     pretranslation_queue.append(form_id)
-    logger.info("Scenario A — New form: '%s' | form_id=%s", form_name, form_id)
+    logger.info("Scenario A — New form: '%s' (%s) | form_id=%s", form_name, file_type, form_id)
 
 
-def _handle_updated_form(entry, pdf_bytes, new_hash, es_bytes, pt_bytes, pretranslation_queue):
+def _handle_updated_form(
+    entry,
+    pdf_bytes,
+    new_hash,
+    es_bytes,
+    pt_bytes,
+    pretranslation_queue,
+    file_type="pdf",
+    es_file_type=None,
+    pt_file_type=None,
+):
     """Scenario B — URL exists but content hash has changed."""
     old_version = entry["current_version"]
     new_version = old_version + 1
     slug = entry["form_slug"]
     ts = _now()
 
-    file_path = _save_original(entry["form_id"], new_version, slug, pdf_bytes)
+    file_path = _save_original(entry["form_id"], new_version, slug, pdf_bytes, file_type)
 
     # Save existing translations from mass.gov (if available).
     file_path_es = None
     if es_bytes:
-        file_path_es = _save_translation(entry["form_id"], new_version, slug, "es", es_bytes)
+        file_path_es = _save_translation(entry["form_id"], new_version, slug, "es", es_bytes, es_file_type or "pdf")
         logger.info("  ↳ Saved existing ES translation for '%s'", entry["form_name"])
 
     file_path_pt = None
     if pt_bytes:
-        file_path_pt = _save_translation(entry["form_id"], new_version, slug, "pt", pt_bytes)
+        file_path_pt = _save_translation(entry["form_id"], new_version, slug, "pt", pt_bytes, pt_file_type or "pdf")
         logger.info("  ↳ Saved existing PT translation for '%s'", entry["form_name"])
 
     # Append new version at the front (newest first). Old versions stay untouched.
@@ -570,15 +710,19 @@ def _handle_updated_form(entry, pdf_bytes, new_hash, es_bytes, pt_bytes, pretran
         {
             "version": new_version,
             "content_hash": new_hash,
+            "file_type": file_type,
             "file_path_original": file_path,
             "file_path_es": file_path_es,
             "file_path_pt": file_path_pt,
+            "file_type_es": es_file_type,
+            "file_type_pt": pt_file_type,
             "created_at": ts,
         },
     )
 
     entry["current_version"] = new_version
     entry["content_hash"] = new_hash
+    entry["file_type"] = file_type
     entry["needs_human_review"] = True
     entry["last_scraped_at"] = ts
     entry["status"] = "active"
@@ -668,13 +812,16 @@ def run_scrape() -> dict:
     for form_info in scraped_forms:
         pdf_url = form_info["url"]
         form_name = form_info["name"]
-        pdf_bytes = form_info["bytes"]
+        raw_bytes = form_info["bytes"]
+        file_type = form_info.get("file_type", "pdf")
         es_bytes = form_info.get("es_bytes")
+        es_file_type = form_info.get("es_file_type")
         pt_bytes = form_info.get("pt_bytes")
+        pt_file_type = form_info.get("pt_file_type")
         form_appearances = all_appearances.get(pdf_url, [])
         scraped_urls.add(pdf_url)
 
-        new_hash = _sha256(pdf_bytes)
+        new_hash = _sha256(raw_bytes)
         existing = _find_by_url(catalog, pdf_url)
 
         if existing is None:
@@ -689,21 +836,27 @@ def run_scrape() -> dict:
                     catalog,
                     form_name,
                     pdf_url,
-                    pdf_bytes,
+                    raw_bytes,
                     es_bytes,
                     pt_bytes,
                     form_appearances,
                     pretranslation_queue,
+                    file_type=file_type,
+                    es_file_type=es_file_type,
+                    pt_file_type=pt_file_type,
                 )
                 counts["new"] += 1
         elif existing["content_hash"] != new_hash:
             _handle_updated_form(
                 existing,
-                pdf_bytes,
+                raw_bytes,
                 new_hash,
                 es_bytes,
                 pt_bytes,
                 pretranslation_queue,
+                file_type=file_type,
+                es_file_type=es_file_type,
+                pt_file_type=pt_file_type,
             )
             _merge_appearances(existing, form_appearances)
             counts["updated"] += 1

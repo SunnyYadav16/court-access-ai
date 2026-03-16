@@ -57,6 +57,7 @@ def _make_catalog_entry(**overrides) -> dict:
         "form_name": "Test Form",
         "form_slug": "test-form",
         "source_url": "https://www.mass.gov/doc/test-form/download",
+        "file_type": "pdf",
         "status": "active",
         "content_hash": h,
         "current_version": 1,
@@ -68,9 +69,12 @@ def _make_catalog_entry(**overrides) -> dict:
             {
                 "version": 1,
                 "content_hash": h,
+                "file_type": "pdf",
                 "file_path_original": f"forms/{form_id}/v1/test-form.pdf",
                 "file_path_es": None,
                 "file_path_pt": None,
+                "file_type_es": None,
+                "file_type_pt": None,
                 "created_at": ts,
             }
         ],
@@ -162,34 +166,46 @@ class TestFileHelpers:
         assert d.exists()
         assert d.name == "v1"
 
-    def test_save_original_writes_file(self):
+    def test_save_original_writes_pdf(self):
         pdf = _make_pdf("test content")
-        path = sf._save_original("test-id", 1, "my-form", pdf)
+        path = sf._save_original("test-id", 1, "my-form", pdf, "pdf")
         assert Path(path).exists()
         assert Path(path).read_bytes() == pdf
         assert path.endswith("my-form.pdf")
 
+    def test_save_original_writes_docx(self):
+        docx = _make_pdf("docx content")
+        path = sf._save_original("test-id", 1, "my-form", docx, "docx")
+        assert Path(path).exists()
+        assert Path(path).read_bytes() == docx
+        assert path.endswith("my-form.docx")
+
     def test_save_original_path_convention(self):
-        path = sf._save_original("abc-123", 2, "some-form", b"data")
+        path = sf._save_original("abc-123", 2, "some-form", b"data", "pdf")
         assert "abc-123" in path
         assert "/v2/" in path
         assert path.endswith("some-form.pdf")
 
     def test_save_translation_spanish(self):
         pdf = _make_pdf("spanish content")
-        path = sf._save_translation("test-id", 1, "my-form", "es", pdf)
+        path = sf._save_translation("test-id", 1, "my-form", "es", pdf, "pdf")
         assert Path(path).exists()
         assert Path(path).read_bytes() == pdf
         assert path.endswith("my-form_es.pdf")
 
     def test_save_translation_portuguese(self):
         pdf = _make_pdf("portuguese content")
-        path = sf._save_translation("test-id", 1, "my-form", "pt", pdf)
+        path = sf._save_translation("test-id", 1, "my-form", "pt", pdf, "pdf")
         assert path.endswith("my-form_pt.pdf")
 
+    def test_save_translation_docx(self):
+        docx = _make_pdf("docx translation")
+        path = sf._save_translation("test-id", 1, "my-form", "es", docx, "docx")
+        assert path.endswith("my-form_es.docx")
+
     def test_save_translation_same_directory_as_original(self):
-        orig = sf._save_original("test-id", 1, "form", b"en")
-        es = sf._save_translation("test-id", 1, "form", "es", b"es")
+        orig = sf._save_original("test-id", 1, "form", b"en", "pdf")
+        es = sf._save_translation("test-id", 1, "form", "es", b"es", "pdf")
         assert Path(orig).parent == Path(es).parent
 
 
@@ -254,6 +270,7 @@ class TestScenarioA:
         assert e["status"] == "active"
         assert e["needs_human_review"] is True
         assert e["content_hash"] == _sha256(pdf)
+        assert e["file_type"] == "pdf"
 
     def test_creates_version_entry(self):
         catalog = []
@@ -263,6 +280,7 @@ class TestScenarioA:
         versions = catalog[0]["versions"]
         assert len(versions) == 1
         assert versions[0]["version"] == 1
+        assert versions[0]["file_type"] == "pdf"
 
     def test_adds_form_id_to_pretranslation_queue(self):
         catalog = []
@@ -280,6 +298,27 @@ class TestScenarioA:
         assert Path(path).exists()
         assert Path(path).read_bytes() == pdf
 
+    def test_writes_docx_to_disk(self):
+        catalog = []
+        queue = []
+        docx = _make_pdf("docx content")
+        sf._handle_new_form(
+            catalog,
+            "F",
+            "https://www.mass.gov/doc/f/download",
+            docx,
+            None,
+            None,
+            [],
+            queue,
+            file_type="docx",
+        )
+        path = catalog[0]["versions"][0]["file_path_original"]
+        assert Path(path).exists()
+        assert path.endswith(".docx")
+        assert catalog[0]["file_type"] == "docx"
+        assert catalog[0]["versions"][0]["file_type"] == "docx"
+
     def test_saves_spanish_translation_when_available(self):
         catalog = []
         queue = []
@@ -296,6 +335,8 @@ class TestScenarioA:
         v = catalog[0]["versions"][0]
         assert v["file_path_es"] is None
         assert v["file_path_pt"] is None
+        assert v["file_type_es"] is None
+        assert v["file_type_pt"] is None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -332,6 +373,22 @@ class TestScenarioB:
         path = entry["versions"][0]["file_path_original"]
         assert Path(path).exists()
         assert "/v2/" in path
+
+    def test_file_type_updates_on_version(self):
+        entry = _make_catalog_entry(current_version=1, file_type="pdf")
+        new_data = _make_pdf("v2 docx")
+        sf._handle_updated_form(
+            entry,
+            new_data,
+            _sha256(new_data),
+            None,
+            None,
+            [],
+            file_type="docx",
+        )
+        assert entry["file_type"] == "docx"
+        assert entry["versions"][0]["file_type"] == "docx"
+        assert entry["versions"][0]["file_path_original"].endswith(".docx")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -488,8 +545,11 @@ class TestRunScrape:
                     "name": "Form A",
                     "url": "https://mass.gov/doc/a/download",
                     "bytes": pdf,
+                    "file_type": "pdf",
                     "es_bytes": None,
+                    "es_file_type": None,
                     "pt_bytes": None,
+                    "pt_file_type": None,
                     "division": "District Court",
                     "section_heading": "General",
                 }
@@ -510,8 +570,11 @@ class TestRunScrape:
                     "name": "Form A",
                     "url": "https://mass.gov/doc/a/download",
                     "bytes": pdf,
+                    "file_type": "pdf",
                     "es_bytes": None,
+                    "es_file_type": None,
                     "pt_bytes": None,
+                    "pt_file_type": None,
                     "division": "District Court",
                     "section_heading": "General",
                 }
@@ -571,8 +634,11 @@ class TestRunScrape:
                     "name": "New Name",
                     "url": "https://mass.gov/doc/new-url/download",
                     "bytes": pdf,
+                    "file_type": "pdf",
                     "es_bytes": None,
+                    "es_file_type": None,
                     "pt_bytes": None,
+                    "pt_file_type": None,
                     "division": "District Court",
                     "section_heading": "General",
                 }

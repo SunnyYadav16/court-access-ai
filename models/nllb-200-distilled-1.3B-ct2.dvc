@@ -14,7 +14,6 @@ outs:
   size: 612000000
   hash: md5
   path: nllb-200-distilled-1.3B-ct2
-  isdir: true
   cache: true
   persist: false
 

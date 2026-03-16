@@ -1,0 +1,28 @@
+schema: '2.0'
+stages:
+  scrape_forms:
+    cmd: python3 -c "from courtaccess.forms.scraper import run_scrape;
+      run_scrape()"
+    deps:
+    - path: courtaccess/core/validation.py
+      hash: md5
+      md5: 1b88f2563d313b7ec838f856bf43d940
+      size: 12071
+    - path: courtaccess/forms/catalog.py
+      hash: md5
+      md5: 9b0ba8f09ee3beabb12f9e00eae39437
+      size: 2014
+    - path: courtaccess/forms/scraper.py
+      hash: md5
+      md5: a3b21579ebb8c0749abf54542bb3bbb3
+      size: 38719
+    outs:
+    - path: courtaccess/data/form_catalog.json
+      hash: md5
+      md5: 6d4d14b4fccc09eede15cb9d4b051ffa
+      size: 27740
+    - path: forms/
+      hash: md5
+      md5: 066560ca8c416880260f21114e39f279.dir
+      size: 4764763
+      nfiles: 30

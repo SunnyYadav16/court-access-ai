@@ -543,13 +543,24 @@ def task_log_summary(**context) -> None:
 
 
 def task_dvc_version_data(**context) -> None:
-    """Task 8 — Version the scraper outputs using DVC."""
+    """Task 8 — Version the scraper outputs using DVC.
+
+    Tracks two outputs with 'dvc add' and pushes to the configured remote:
+      - courtaccess/data/form_catalog.json  (catalog)
+      - forms/                              (downloaded PDFs, all versions)
+
+    Raises RuntimeError if any DVC command fails so the Airflow task shows
+    as FAILED instead of silently succeeding.
+    """
     import os
 
     logger.info("Starting DVC data versioning.")
     dvc_env = os.environ.copy()
+    dvc_env["GIT_DISCOVERY_ACROSS_FILESYSTEM"] = "1"
 
-    def _run_dvc(cmd: list[str]) -> bool:
+    def _run(cmd: list[str], *, check: bool = False) -> subprocess.CompletedProcess:
+        """Run a shell command, log its output, optionally raise on failure."""
+        logger.info("Running: %s", " ".join(cmd))
         try:
             result = subprocess.run(  # noqa: S603
                 cmd,
@@ -557,33 +568,44 @@ def task_dvc_version_data(**context) -> None:
                 capture_output=True,
                 text=True,
                 env=dvc_env,
-                timeout=120,
+                timeout=300,
             )
-            if result.returncode == 0:
-                logger.info("DVC command succeeded: %s", " ".join(cmd))
-                return True
-            logger.warning(
-                "DVC command failed (rc=%d): %s\n  stderr: %s", result.returncode, " ".join(cmd), result.stderr.strip()
-            )
-            return False
-        except subprocess.TimeoutExpired:
-            logger.warning("DVC command timed out: %s", " ".join(cmd))
-            return False
         except FileNotFoundError:
-            logger.error("DVC not found. Is it installed in the Docker image?")
-            return False
+            raise RuntimeError(f"Command not found: {cmd[0]}. Is it installed in the Docker image?") from None
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"Command timed out after 300s: {' '.join(cmd)}") from None
 
-    catalog_tracked = _run_dvc(["dvc", "add", "courtaccess/data/form_catalog.json"])
-    forms_tracked = _run_dvc(["dvc", "add", "forms"])
-    if catalog_tracked or forms_tracked:
-        pushed = _run_dvc(["dvc", "push"])
-        if pushed:
-            logger.info("DVC push completed — data versioned and stored.")
-        else:
-            logger.warning("DVC push failed — data tracked locally but not pushed.")
-    else:
-        logger.info("No DVC changes to push.")
-    logger.info("DVC versioning task complete.")
+        if result.stdout.strip():
+            logger.info("  stdout: %s", result.stdout.strip())
+        if result.stderr.strip():
+            logger.info("  stderr: %s", result.stderr.strip())
+
+        if check and result.returncode != 0:
+            raise RuntimeError(
+                f"Command failed (rc={result.returncode}): {' '.join(cmd)}\n  stderr: {result.stderr.strip()}"
+            )
+        return result
+
+    # 1. Ensure git safe.directory is set (defense-in-depth — also set in airflow-init)
+    _run(["git", "config", "--global", "--add", "safe.directory", PROJECT_ROOT])
+
+    # 2. Verify DVC remote is configured before attempting any tracking
+    remote_check = _run(["dvc", "remote", "list"])
+    if not remote_check.stdout.strip():
+        raise RuntimeError(
+            "No DVC remote configured! The airflow-init service should have set this up. "
+            "Run: dvc remote add -d local_storage /opt/airflow/dvc_storage"
+        )
+    logger.info("DVC remote verified: %s", remote_check.stdout.strip())
+
+    # 3. Track data with DVC
+    _run(["dvc", "add", "courtaccess/data/form_catalog.json"], check=True)
+    _run(["dvc", "add", "forms"], check=True)
+    logger.info("DVC add completed for catalog and forms.")
+
+    # 4. Push to remote storage
+    _run(["dvc", "push"], check=True)
+    logger.info("DVC push completed — data versioned and stored in remote.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
