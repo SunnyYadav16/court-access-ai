@@ -13,7 +13,6 @@ outs:
   size: 50000000
   hash: md5
   path: piper-tts-pt
-  isdir: true
   cache: true
   persist: false
 

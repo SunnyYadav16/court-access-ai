@@ -49,6 +49,10 @@ x-airflow-common:
     # local volume mounts where the install may not have run yet.
     PYTHONPATH: /opt/airflow
 
+    # ── Git/DVC ──
+    # Required: DVC needs to find .git across the Docker volume mount boundary.
+    GIT_DISCOVERY_ACROSS_FILESYSTEM: '1'
+
     # ── Additional pip packages (dev only — prefer Dockerfile for production) ──
     _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-}
 
@@ -190,16 +194,21 @@ services:
         mkdir -p /opt/airflow/data/forms /opt/airflow/forms /opt/airflow/models /opt/airflow/dvc_storage
         chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/data /opt/airflow/forms /opt/airflow/models /opt/airflow/dvc_storage
 
-        # Initialize DVC with local remote (mirrors data_pipeline DVC setup)
+        # Git safe.directory — required because repo is owned by host user but
+        # accessed by airflow user (UID 50000) inside the container.
+        git config --global --add safe.directory /opt/airflow
+
+        # Initialize DVC if needed, then always ensure remote is configured.
+        # This is idempotent — works whether .dvc/ is fresh or pre-existing.
         cd /opt/airflow
         if [ ! -d ".dvc" ]; then
           dvc init
-          dvc remote add -d local_storage /opt/airflow/dvc_storage
-          chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/.dvc
-          echo "DVC initialized with local remote at /opt/airflow/dvc_storage"
-        else
-          echo "DVC already initialized (skipping)"
+          echo "DVC initialized."
         fi
+        dvc remote add -d local_storage /opt/airflow/dvc_storage 2>/dev/null || \
+          dvc remote modify local_storage url /opt/airflow/dvc_storage
+        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/.dvc
+        echo "DVC remote configured: $(dvc remote list)"
 
         exec /entrypoint airflow version
     environment:

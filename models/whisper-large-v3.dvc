@@ -13,7 +13,6 @@ outs:
   size: 3100000000
   hash: md5
   path: whisper-large-v3
-  isdir: true
   cache: true
   persist: false
 

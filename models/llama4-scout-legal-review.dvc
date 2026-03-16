@@ -16,7 +16,6 @@ outs:
   size: 12000  # small — only stores eval artifacts and prompt templates
   hash: md5
   path: llama4-scout-legal-review
-  isdir: true
   cache: true
   persist: false
 

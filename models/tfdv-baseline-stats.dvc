@@ -18,7 +18,6 @@ outs:
   size: 280000
   hash: md5
   path: tfdv-baseline-stats
-  isdir: true
   cache: true
   persist: false
 
