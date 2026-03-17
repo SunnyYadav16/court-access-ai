@@ -19,7 +19,6 @@ build/
 MANIFEST
 downloads/
 eggs/
-lib/
 lib64/
 parts/
 sdist/
@@ -130,7 +129,7 @@ __marimo__/
 # ── Airflow runtime directories (bind-mounted in Docker, never committed) ─────
 logs/
 plugins/
-config/
+#config/
 airflow.cfg
 airflow.db
 unittests.cfg

@@ -1,4 +1,6 @@
 import { ScreenId, SCREENS } from "@/lib/constants"
+import { signOut } from "firebase/auth"
+import { auth } from "@/config/firebase"
 
 interface TopBarProps {
   user: string
@@ -12,6 +14,11 @@ export default function TopBar({ user, role, onNav }: TopBarProps) {
     if (role === "court_official") return SCREENS.HOME_OFFICIAL
     if (role === "interpreter") return SCREENS.HOME_INTERPRETER
     return SCREENS.HOME_ADMIN
+  }
+
+  const handleSignOut = async () => {
+    await signOut(auth)
+    // App.tsx useEffect watches authState and redirects to LANDING automatically
   }
 
   return (
@@ -30,7 +37,7 @@ export default function TopBar({ user, role, onNav }: TopBarProps) {
           {role.replace("_", " ").toUpperCase()}
         </span>
         <button
-          onClick={() => onNav(SCREENS.LOGIN)}
+          onClick={handleSignOut}
           className="px-3 py-1 rounded text-[11px] cursor-pointer"
           style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", color: "#fff" }}>
           Sign Out

@@ -26,6 +26,8 @@ from api.schemas.schemas import ErrorDetail, HealthResponse
 from courtaccess.core.config import get_settings
 from courtaccess.core.logger import get_logger
 
+
+
 logger = get_logger(__name__)
 
 
@@ -105,6 +107,17 @@ def _configure_middleware(app: FastAPI, settings) -> None:
         expose_headers=["X-Request-ID"],
     )
     app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+    # Add after GZipMiddleware
+    from starlette.middleware.base import BaseHTTPMiddleware
+
+    class COOPMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            response = await call_next(request)
+            response.headers["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
+            return response
+
+    app.add_middleware(COOPMiddleware)
 
     @app.middleware("http")
     async def add_request_id(request: Request, call_next) -> Response:

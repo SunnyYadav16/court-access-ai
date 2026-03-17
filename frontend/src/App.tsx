@@ -1,6 +1,5 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { SCREENS, ScreenId } from "@/lib/constants"
-import ScreenNavigator from "@/components/shared/ScreenNavigator"
 import { useAuth } from "@/hooks/useAuth"
 
 // Public
@@ -45,6 +44,20 @@ export default function App() {
   const [screen, setScreen] = useState<ScreenId>(SCREENS.LANDING)
   const [authPage, setAuthPage] = useState<"login" | "signup" | "forgot">("login")
   const onNav = (s: ScreenId) => setScreen(s)
+
+  // ── All auth-driven navigation in one effect ───────────────────────────────
+  useEffect(() => {
+    if (auth.authState === "authenticated") {
+      if (auth.role === "admin")               setScreen(SCREENS.HOME_ADMIN)
+      else if (auth.role === "court_official") setScreen(SCREENS.HOME_OFFICIAL)
+      else if (auth.role === "interpreter")    setScreen(SCREENS.HOME_INTERPRETER)
+      else                                     setScreen(SCREENS.HOME_PUBLIC)
+    }
+    if (auth.authState === "unauthenticated") {
+      setScreen(SCREENS.LANDING)
+      setAuthPage("login")
+    }
+  }, [auth.authState, auth.role])
 
   // ── Handle Firebase email action links (?mode=resetPassword&oobCode=...) ──
   const params = new URLSearchParams(window.location.search)
@@ -91,16 +104,7 @@ export default function App() {
     return <SignupScreen auth={auth} onNav={onNav} />
   }
 
-  // ── Authenticated — route to correct home based on role ──────────────────
-  if (auth.authState === "authenticated" && screen === SCREENS.LANDING) {
-    // Auto-navigate to role-appropriate home on first login
-    if (auth.role === "admin") setScreen(SCREENS.HOME_ADMIN)
-    else if (auth.role === "court_official") setScreen(SCREENS.HOME_OFFICIAL)
-    else if (auth.role === "interpreter") setScreen(SCREENS.HOME_INTERPRETER)
-    else setScreen(SCREENS.HOME_PUBLIC)
-  }
-
-  // ── Authenticated — use their existing screen router ──────────────────────
+  // ── Authenticated screen router ───────────────────────────────────────────
   const renderScreen = () => {
     switch (screen) {
       case SCREENS.LANDING:            return <LandingScreen onNav={onNav} />
@@ -131,8 +135,7 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen">
-      <ScreenNavigator current={screen} onNav={onNav} />
-      <div className="ml-44 flex-1">
+      <div className="flex-1">
         {renderScreen()}
       </div>
     </div>

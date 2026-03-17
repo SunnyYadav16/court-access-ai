@@ -1,3 +1,5 @@
+// 
+
 import { useState, useEffect, useCallback } from "react";
 import {
   onAuthStateChanged,
@@ -119,18 +121,29 @@ export function useAuth(): AuthHook {
   const signInWithGoogle = useCallback(async () => {
     setError(null);
     try {
-      await signInWithRedirect(auth, new GoogleAuthProvider());
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: "select_account" });
+      await signInWithPopup(auth, provider);
     } catch (e: any) {
-      setError(friendlyError(e.code));
+      if (e.code === "auth/popup-blocked") {
+        // Fallback to redirect if popup is blocked
+        await signInWithRedirect(auth, new GoogleAuthProvider());
+      } else {
+        setError(friendlyError(e.code));
+      }
     }
   }, []);
 
   const signInWithMicrosoft = useCallback(async () => {
     setError(null);
     try {
-      await signInWithRedirect(auth, new OAuthProvider("microsoft.com"));
+      await signInWithPopup(auth, new OAuthProvider("microsoft.com"));
     } catch (e: any) {
-      setError(friendlyError(e.code));
+      if (e.code === "auth/popup-blocked") {
+        await signInWithRedirect(auth, new OAuthProvider("microsoft.com"));
+      } else {
+        setError(friendlyError(e.code));
+      }
     }
   }, []);
 

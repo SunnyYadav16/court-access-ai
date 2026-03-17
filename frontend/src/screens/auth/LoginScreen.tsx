@@ -43,13 +43,6 @@ export default function LoginScreen({ onNav, auth }: Props) {
       style={{ background: "linear-gradient(160deg, #06101F 0%, #162d52 40%, #1a3660 100%)" }}>
       <div className="w-full max-w-sm">
 
-        <button
-          onClick={() => onNav(SCREENS.LANDING)}
-          className="flex items-center gap-1 text-xs mb-6 cursor-pointer"
-          style={{ color: "rgba(255,255,255,0.5)", background: "none", border: "none" }}>
-          ← Back to home
-        </button>
-
         <div className="text-center mb-8">
           <div className="text-4xl mb-2">⚖</div>
           <h1 className="text-2xl font-bold tracking-wide text-white"

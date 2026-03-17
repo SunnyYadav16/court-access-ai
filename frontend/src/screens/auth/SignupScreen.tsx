@@ -43,6 +43,7 @@ export default function SignupScreen({ onNav, auth }: Props) {
   const [selectedRole, setSelectedRole] = useState<string | null>(null)
   const [roleError, setRoleError] = useState<string | null>(null)
   const [showRoleSelect, setShowRoleSelect] = useState(false)
+  const [signupSuccess, setSignupSuccess] = useState(false)
 
   // Password strength
   const strength = [
@@ -55,13 +56,54 @@ export default function SignupScreen({ onNav, auth }: Props) {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!strength.every(Boolean)) {
+      auth.setError("Password must meet all requirements.")
+      return
+    }
     if (password !== confirmPassword) {
       auth.setError("Passwords do not match.")
       return
     }
     await auth.createAccount(email, password)
-    // After account creation, authState → needs_email_verification
-    // App.tsx will render VerifyEmailScreen automatically
+  }
+
+  if (signupSuccess) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4"
+        style={{ background: "linear-gradient(160deg, #06101F 0%, #162d52 40%, #1a3660 100%)" }}>
+        
+        <div className="w-full max-w-sm">
+          <Card className="border-0 shadow-xl">
+            <CardContent className="p-7 text-center">
+  
+              <div className="text-3xl mb-3">✅</div>
+  
+              <h2
+                className="text-xl font-bold mb-2"
+                style={{ fontFamily: "Palatino, Georgia, serif", color: "#1A2332" }}
+              >
+                Account Created
+              </h2>
+  
+              <p className="text-sm mb-6" style={{ color: "#8494A7" }}>
+                Your Google account has been registered successfully.
+                <br />
+                Please return to the login page and sign in.
+              </p>
+  
+              <Button
+                className="w-full"
+                style={{ background: "#0B1D3A" }}
+                onClick={() => onNav(SCREENS.LOGIN)}
+              >
+                Go to Sign In
+              </Button>
+  
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    )
   }
 
   const handleRoleConfirm = async () => {
@@ -142,13 +184,6 @@ export default function SignupScreen({ onNav, auth }: Props) {
       style={{ background: "linear-gradient(160deg, #06101F 0%, #162d52 40%, #1a3660 100%)" }}>
       <div className="w-full max-w-sm">
 
-        <button
-          onClick={() => onNav(SCREENS.LANDING)}
-          className="flex items-center gap-1 text-xs mb-6 cursor-pointer"
-          style={{ color: "rgba(255,255,255,0.5)", background: "none", border: "none" }}>
-          ← Back to home
-        </button>
-
         <div className="text-center mb-6">
           <div className="text-3xl mb-1">⚖</div>
           <h1 className="text-xl font-bold text-white" style={{ fontFamily: "Palatino, Georgia, serif" }}>
@@ -174,7 +209,17 @@ export default function SignupScreen({ onNav, auth }: Props) {
             )}
 
             <button
-              onClick={auth.signInWithGoogle}
+              onClick={async () => {
+                try {
+                  await auth.signInWithGoogle()
+                  setSignupSuccess(true)
+                } catch {
+                  auth.setError("Google signup failed.")
+                }
+              }}
+            // >
+            // <button
+            //   onClick={auth.signInWithGoogle}
               className="w-full flex items-center gap-3 px-4 py-2.5 rounded-md border text-sm font-medium mb-2 cursor-pointer hover:bg-slate-50 transition-colors"
               style={{ borderColor: "#E2E6EC", color: "#1A2332" }}>
               <GoogleIcon /> Sign up with Google

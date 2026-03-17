@@ -26,7 +26,14 @@ export default function HandleActionScreen({ mode, oobCode }: Props) {
         }
         setDone(true)
       })
-      .catch(e => setError(e.message))
+      .catch(e => {
+        // Code already used = email was already verified successfully
+        if (e.code === "auth/invalid-action-code") {
+          setDone(true)
+        } else {
+          setError(e.message)
+        }
+      })
   }, [oobCode, mode])
 
   const cardWrap = (icon: string, title: string, children: React.ReactNode) => (
