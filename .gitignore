@@ -145,6 +145,9 @@ db/pgdata/
 .dvc/config.local
 dvc_storage/
 
+# ── GCP resources ────────────────────────────────────────────────────────────
+.config
+
 # ── DVC-tracked data (actual data ignored, pointer files allowed) ─────────────
 courtaccess/data/*
 !courtaccess/data/.gitignore
