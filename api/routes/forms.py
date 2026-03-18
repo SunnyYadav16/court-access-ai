@@ -268,12 +268,23 @@ async def submit_form_review(
     db: DBSession = None,
 ) -> dict:
     """
-    Record a human review decision.
-
-    TODO (production):
-      - Persist decision to AuditLog DB table
-      - Update FormCatalog.needs_human_review and last_reviewed_by
-      - Write review decision back into form_catalog.json on disk
+    Record a human review decision for a cataloged form.
+    
+    Parameters:
+        form_id (uuid.UUID): Identifier of the form to review.
+        decision (ReviewDecision): Review decision payload; contains `approved` and optional `reviewer_notes`.
+        user (CurrentUser): Authenticated reviewer submitting the decision.
+    
+    Returns:
+        dict: A summary of the recorded decision with keys:
+            - `form_id` (str): The reviewed form's ID.
+            - `approved` (bool): The approval outcome.
+            - `reviewed_by` (str): The reviewer identifier.
+            - `notes` (Optional[str]): Reviewer notes if provided.
+            - `message` (str): Informational status about persistence.
+    
+    Raises:
+        HTTPException: 404 if the specified form_id does not exist in the catalog.
     """
     catalog = _load_catalog()
     entry = next((e for e in catalog if e.get("form_id") == str(form_id)), None)
@@ -284,7 +295,7 @@ async def submit_form_review(
         "Form review submitted: form_id=%s approved=%s reviewer=%s notes=%s",
         form_id,
         decision.approved,
-        user["user_id"],
+        user.user_id,
         decision.reviewer_notes,
     )
 
@@ -292,7 +303,7 @@ async def submit_form_review(
     return {
         "form_id": str(form_id),
         "approved": decision.approved,
-        "reviewed_by": user["user_id"],
+        "reviewed_by": str(user.user_id),
         "notes": decision.reviewer_notes,
         "message": "Review decision recorded (STUB — not yet persisted)",
     }

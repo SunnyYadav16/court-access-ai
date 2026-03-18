@@ -31,6 +31,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import firebase_admin
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -54,16 +55,9 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
-    Async context manager for startup/shutdown logic.
-
-    Startup:
-      - Validate settings (will raise immediately if required env vars missing)
-      - Initialize DB engine + connection pool
-      - (future) warm ML model endpoints
-
-    Shutdown:
-      - Dispose DB engine connection pool
-      - (future) flush in-flight metrics
+    Manage application startup and shutdown lifecycle tasks.
+    
+    On startup, validates settings, initializes the Firebase Admin SDK if needed, and initializes the database connection pool. On shutdown, closes the database connection pool.
     """
     settings = get_settings()
     logger.info(
@@ -72,19 +66,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings.debug,
     )
 
-    # TODO: Initialize real async DB engine once db/models.py is wired
-    # from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-    # engine = create_async_engine(settings.database_url, pool_size=10, max_overflow=20)
-    # app.state.db_engine = engine
-    # app.state.AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+    # ── Initialize Firebase Admin SDK ────────────────────────────────────────
+    # Credentials auto-detected from GOOGLE_APPLICATION_CREDENTIALS env var (local)
+    # or Workload Identity (GKE). No arguments needed.
+    if not firebase_admin._apps:  # Only initialize once
+        firebase_admin.initialize_app()
+        logger.info("Firebase Admin SDK initialized")
+
+    # ── Initialize Database ───────────────────────────────────────────────────
+    from db.database import init_db
+
+    await init_db()
+    logger.info("Database connection pool initialized")
 
     logger.info("Startup complete.")
     yield
 
     # ── Shutdown ─────────────────────────────────────────────────────────────
     logger.info("CourtAccess AI API shutting down.")
-    # if hasattr(app.state, "db_engine"):
-    #     await app.state.db_engine.dispose()
+    from db.database import close_db
+
+    await close_db()
+    logger.info("Database connection pool closed")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

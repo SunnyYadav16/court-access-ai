@@ -2,20 +2,17 @@
 db/models.py
 
 SQLAlchemy async ORM models for the CourtAccess AI system.
+Models match the Cloud SQL schema exactly.
 
 Tables:
-  users               — Registered user accounts (LEP individuals, court officials, etc.)
-  sessions            — Real-time court interpretation sessions
-  translation_requests — User-uploaded document translation jobs
-  audit_logs          — Immutable audit trail: form reviews, PII findings, DAG events
-
-Design principles:
-  - All primary keys are UUIDs (server-generated via gen_random_uuid())
-  - All timestamps are stored as TIMESTAMP WITH TIME ZONE (UTC)
-  - VARCHAR lengths chosen conservatively; TEXT for unbounded fields
-  - No soft-delete columns — use AuditLog instead of deleted_at
-  - Foreign key constraints with ON DELETE CASCADE where appropriate
-  - Indexes on all foreign keys + high-cardinality WHERE-clause columns
+  roles               — Role definitions (public, court_official, interpreter, admin)
+  users               — Registered user accounts with Firebase auth
+  sessions            — Real-time or document translation sessions
+  translation_requests — Individual translation requests within sessions
+  audit_logs          — Immutable audit trail
+  form_catalog        — Pre-translated court forms catalog
+  form_versions       — Version history for each form
+  form_appearances    — Where each form appears in court divisions
 """
 
 from __future__ import annotations
@@ -25,8 +22,9 @@ from datetime import datetime
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
-    Enum,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -34,50 +32,64 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from db.database import Base
 
-# ── Shared column helpers ─────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# Model 1 — Role
+# ══════════════════════════════════════════════════════════════════════════════
 
 
-def _uuid_pk() -> Mapped[uuid.UUID]:
-    """Standard UUID primary key, server-generated."""
-    return mapped_column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        server_default=func.gen_random_uuid(),
-    )
+class Role(Base):
+    """
+    Role definitions for RBAC.
+    Roles:
+      public          — Default role, basic document translation and form access
+      court_official  — Real-time speech translation access
+      interpreter     — Side-by-side translation review and correction
+      admin           — Full system access, user management, monitoring
+    """
 
+    __tablename__ = "roles"
 
-def _now() -> Mapped[datetime]:
-    """Timestamp column that defaults to now() on INSERT."""
-    return mapped_column(
+    role_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    role_name: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False,
     )
 
+    # Relationships
+    users: Mapped[list[User]] = relationship("User", back_populates="role_obj")
+
+    def __repr__(self) -> str:
+        """
+        Return a compact identifying string for the Role instance.
+        
+        Returns:
+            A string formatted as "<Role role_id={role_id} role_name={role_name!r}>" that includes the role's id and quoted name.
+        """
+        return f"<Role role_id={self.role_id} role_name={self.role_name!r}>"
+
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Model 1 — User
+# Model 2 — User
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 class User(Base):
     """
-    Registered user account.
-
-    Roles:
-      public          — Self-registered LEP individual
-      court_official  — Courthouse staff with elevated access
-      interpreter     — Court-certified interpreter
-      admin           — System administrator
-
-    username and email are unique and indexed.
-    hashed_password stores a bcrypt hash (never plain text).
+    Registered user account with Firebase authentication.
+    Firebase fields:
+      firebase_uid       — Unique Firebase user ID
+      auth_provider      — Authentication method (google.com, password, saml.massgov)
+      email_verified     — Email verification status
+      mfa_enabled        — Multi-factor authentication status
     """
 
     __tablename__ = "users"
@@ -87,52 +99,98 @@ class User(Base):
         primary_key=True,
         server_default=func.gen_random_uuid(),
     )
-    username: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
-    email: Mapped[str] = mapped_column(String(254), nullable=False, unique=True)
-    hashed_password: Mapped[str] = mapped_column(String(128), nullable=False)
-    role: Mapped[str] = mapped_column(
-        Enum("public", "court_official", "interpreter", "admin", name="user_role_enum"),
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Role (foreign key to roles table)
+    role_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("roles.role_id"),
         nullable=False,
-        server_default="public",
+        server_default="1",  # Default to 'public' role
     )
-    preferred_language: Mapped[str] = mapped_column(String(8), nullable=False, server_default="en")
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    # ── Relationships ─────────────────────────────────────────────────────────
-    sessions: Mapped[list[Session]] = relationship("Session", back_populates="creator", cascade="all, delete-orphan")
-    translation_requests: Mapped[list[TranslationRequest]] = relationship(
-        "TranslationRequest", back_populates="user", cascade="all, delete-orphan"
+    # Firebase authentication fields
+    firebase_uid: Mapped[str | None] = mapped_column(
+        String(128),
+        unique=True,
+        nullable=True,
+        comment="Firebase user ID",
     )
-    audit_logs: Mapped[list[AuditLog]] = relationship("AuditLog", back_populates="actor", cascade="all, delete-orphan")
+    auth_provider: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        server_default="password",
+        comment="Auth method: google.com, microsoft.com, password, saml.massgov",
+    )
+    email_verified: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default="false",
+    )
+    mfa_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default="false",
+    )
 
-    # ── Indexes ───────────────────────────────────────────────────────────────
+    # Role approval tracking
+    role_approved_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.user_id"),
+        nullable=True,
+    )
+    role_approved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    last_login_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    # Relationships
+    role_obj: Mapped[Role] = relationship("Role", back_populates="users", foreign_keys=[role_id])
+    sessions: Mapped[list[Session]] = relationship("Session", back_populates="user")
+    audit_logs: Mapped[list[AuditLog]] = relationship("AuditLog", back_populates="user")
+
+    # Indexes
     __table_args__ = (
-        Index("ix_users_email", "email"),
-        Index("ix_users_username", "username"),
-        Index("ix_users_role", "role"),
+        Index("idx_users_email", "email"),
+        Index("idx_users_firebase_uid", "firebase_uid"),
     )
 
     def __repr__(self) -> str:
-        return f"<User user_id={self.user_id!s} username={self.username!r} role={self.role!r}>"
+        """
+        Produce a concise developer-facing representation of the User containing its user_id and email.
+        
+        Returns:
+            repr_str (str): String in the form "<User user_id={user_id} email={email!r}>".
+        """
+        return f"<User user_id={self.user_id!s} email={self.email!r}>"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Model 2 — Session
+# Model 3 — Session
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 class Session(Base):
     """
-    A real-time court interpretation session.
-
-    Lifecycle: active → paused → ended
-    Each session has one creator (the court official or interpreter who opens it)
-    and optionally many participants (observers, other interpreters).
-
-    transcript_gcs_uri: When the session ends, the full transcript is flushed
-    to GCS as a JSONL file and the URI stored here for audit purposes.
+    A translation session (realtime or document-based).
+    Types:
+      realtime  — Real-time speech interpretation session
+      document  — Document translation session
+    Target languages:
+      spa_Latn  — Spanish (Latin script)
+      por_Latn  — Portuguese (Latin script)
     """
 
     __tablename__ = "sessions"
@@ -142,306 +200,387 @@ class Session(Base):
         primary_key=True,
         server_default=func.gen_random_uuid(),
     )
-    creator_id: Mapped[uuid.UUID] = mapped_column(
+    user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.user_id", ondelete="CASCADE"),
+        ForeignKey("users.user_id"),
         nullable=False,
     )
+    type: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        comment="Session type: realtime or document",
+    )
+    target_language: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        comment="Target language: spa_Latn or por_Latn",
+    )
+    input_file_gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(
-        Enum("active", "paused", "ended", name="session_status_enum"),
+        String(20),
         nullable=False,
         server_default="active",
+        comment="Status: active, processing, completed, failed",
     )
-    source_language: Mapped[str] = mapped_column(String(8), nullable=False, server_default="en")
-    target_language: Mapped[str] = mapped_column(String(8), nullable=False, server_default="es")
-
-    # ── Timestamps ────────────────────────────────────────────────────────────
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
-    # ── Transcript storage ────────────────────────────────────────────────────
-    transcript_gcs_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
-    segment_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-
-    # ── Metadata ──────────────────────────────────────────────────────────────
-    # JSONB for flexible participant tracking without a separate join table.
-    participants: Mapped[list[dict] | None] = mapped_column(
-        JSONB,
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
         nullable=True,
-        comment='[{"user_id": "...", "role": "creator|interpreter|observer"}]',
     )
 
-    # ── Relationships ─────────────────────────────────────────────────────────
-    creator: Mapped[User] = relationship("User", back_populates="sessions")
+    # Relationships
+    user: Mapped[User] = relationship("User", back_populates="sessions")
+    translation_requests: Mapped[list[TranslationRequest]] = relationship(
+        "TranslationRequest",
+        back_populates="session",
+    )
+    audit_logs: Mapped[list[AuditLog]] = relationship("AuditLog", back_populates="session")
 
-    # ── Indexes ───────────────────────────────────────────────────────────────
+    # Constraints and indexes
     __table_args__ = (
-        Index("ix_sessions_creator_id", "creator_id"),
-        Index("ix_sessions_status", "status"),
-        Index("ix_sessions_created_at", "created_at"),
+        CheckConstraint("type IN ('realtime', 'document')", name="check_session_type"),
+        CheckConstraint(
+            "target_language IN ('spa_Latn', 'por_Latn')",
+            name="check_session_target_language",
+        ),
+        CheckConstraint(
+            "status IN ('active', 'processing', 'completed', 'failed', 'ended')",
+            name="check_session_status",
+        ),
+        Index("idx_sessions_user_id", "user_id"),
+        Index("idx_sessions_status", "status"),
     )
 
     def __repr__(self) -> str:
-        return f"<Session session_id={self.session_id!s} status={self.status!r}>"
+        """
+        Provide a concise, developer-focused string representation of the Session instance.
+        
+        Returns:
+            str: A string containing the session's id, type, and status in angle-bracketed form,
+                 for example: <Session session_id={session_id} type='realtime' status='active'>.
+        """
+        return f"<Session session_id={self.session_id!s} type={self.type!r} status={self.status!r}>"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Model 3 — TranslationRequest
+# Model 4 — TranslationRequest
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 class TranslationRequest(Base):
     """
-    A single user-uploaded document translation job.
-
-    Lifecycle: pending → processing → translated → approved | rejected | error
-
-    GCS paths:
-      upload_gcs_uri          — Original PDF (auto-deleted after 24h)
-      translated_uris         — JSONB map: {"es": "gs://...", "pt": "gs://..."}
-
-    The document_pipeline_dag writes back status updates via the Airflow REST API.
-    In the future, a webhook from Airflow can directly update this row.
+    Individual translation request within a session.
+    Tracks classification, PII detection, LLM corrections, and output.
     """
 
     __tablename__ = "translation_requests"
 
-    document_id: Mapped[uuid.UUID] = mapped_column(
+    request_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.gen_random_uuid(),
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sessions.session_id"),
+        nullable=False,
+    )
+    target_language: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        comment="Target language: spa_Latn or por_Latn",
+    )
+    classification_result: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+        comment="Classification: LEGAL or NOT_LEGAL",
+    )
+    output_file_gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    avg_confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pii_findings_count: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    llama_corrections_count: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    processing_time_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default="processing",
+        comment="Status: processing, completed, failed, rejected",
+    )
+    signed_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    signed_url_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    # Relationships
+    session: Mapped[Session] = relationship("Session", back_populates="translation_requests")
+    audit_logs: Mapped[list[AuditLog]] = relationship("AuditLog", back_populates="request")
+
+    # Constraints and indexes
+    __table_args__ = (
+        CheckConstraint(
+            "target_language IN ('spa_Latn', 'por_Latn')",
+            name="check_request_target_language",
+        ),
+        CheckConstraint(
+            "classification_result IN ('LEGAL', 'NOT_LEGAL')",
+            name="check_classification_result",
+        ),
+        CheckConstraint(
+            "status IN ('processing', 'completed', 'failed', 'rejected')",
+            name="check_request_status",
+        ),
+        Index("idx_translation_requests_session_id", "session_id"),
+    )
+
+    def __repr__(self) -> str:
+        """
+        Return a concise developer-facing representation of the TranslationRequest including its `request_id` and `status`.
+        
+        Returns:
+            str: A string in the form "<TranslationRequest request_id=<request_id> status='<status>'>".
+        """
+        return f"<TranslationRequest request_id={self.request_id!s} status={self.status!r}>"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Model 5 — AuditLog
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class AuditLog(Base):
+    """
+    Immutable audit trail for all user actions.
+    """
+
+    __tablename__ = "audit_logs"
+
+    audit_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         primary_key=True,
         server_default=func.gen_random_uuid(),
     )
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.user_id", ondelete="CASCADE"),
+        ForeignKey("users.user_id"),
         nullable=False,
     )
-
-    # ── Status ────────────────────────────────────────────────────────────────
-    status: Mapped[str] = mapped_column(
-        Enum(
-            "pending",
-            "processing",
-            "translated",
-            "approved",
-            "rejected",
-            "error",
-            name="doc_status_enum",
-        ),
-        nullable=False,
-        server_default="pending",
-    )
-
-    # ── File metadata ─────────────────────────────────────────────────────────
-    original_filename: Mapped[str] = mapped_column(String(512), nullable=False)
-    file_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    upload_gcs_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
-    target_languages: Mapped[list[str] | None] = mapped_column(
-        ARRAY(String(8)),
-        nullable=True,
-        comment="e.g. ['es', 'pt']",
-    )
-
-    # ── Translation results ───────────────────────────────────────────────────
-    translated_uris: Mapped[dict | None] = mapped_column(
-        JSONB, nullable=True, comment='{"es": "gs://courtaccess-translated/...", "pt": "gs://..."}'
-    )
-    legal_review_status: Mapped[dict | None] = mapped_column(
-        JSONB, nullable=True, comment='{"es": "ok", "pt": "skipped"}'
-    )
-
-    # ── PII & review flags ────────────────────────────────────────────────────
-    pii_findings_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    needs_human_review: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
-    reviewer_id: Mapped[uuid.UUID | None] = mapped_column(
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.user_id", ondelete="SET NULL"),
+        ForeignKey("sessions.session_id"),
         nullable=True,
     )
-
-    # ── Airflow tracking ──────────────────────────────────────────────────────
-    airflow_dag_run_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
-    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    submitter_notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
-
-    # ── Timestamps ────────────────────────────────────────────────────────────
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
-    # ── Relationships ─────────────────────────────────────────────────────────
-    user: Mapped[User] = relationship("User", back_populates="translation_requests", foreign_keys=[user_id])
-
-    # ── Indexes ───────────────────────────────────────────────────────────────
-    __table_args__ = (
-        Index("ix_translation_requests_user_id", "user_id"),
-        Index("ix_translation_requests_status", "status"),
-        Index("ix_translation_requests_created_at", "created_at"),
-        Index("ix_translation_requests_airflow_run", "airflow_dag_run_id"),
-    )
-
-    def __repr__(self) -> str:
-        return f"<TranslationRequest document_id={self.document_id!s} status={self.status!r} user_id={self.user_id!s}>"
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Model 4 — AuditLog
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-class AuditLog(Base):
-    """
-    Immutable audit trail for security-sensitive events.
-
-    Events captured:
-      - user.register, user.login, user.logout
-      - document.upload, document.delete
-      - translation.completed, translation.approved, translation.rejected
-      - form.reviewed, form.review_approved, form.review_rejected
-      - pii.detected (count only — no PII text is stored)
-      - session.created, session.ended
-      - dag.triggered, dag.completed, dag.failed
-
-    This table is append-only — no UPDATE or DELETE is ever performed.
-    Retention policy: 7 years (legal requirement for court records).
-    Foreign keys use ON DELETE SET NULL so log entries survive user deletion.
-    """
-
-    __tablename__ = "audit_logs"
-
-    log_id: Mapped[uuid.UUID] = mapped_column(
+    request_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        primary_key=True,
-        server_default=func.gen_random_uuid(),
-    )
-
-    # ── Who did it ────────────────────────────────────────────────────────────
-    actor_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("users.user_id", ondelete="SET NULL"),
-        nullable=True,  # NULL for system/DAG-initiated events
-    )
-
-    # ── What happened ─────────────────────────────────────────────────────────
-    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    resource_type: Mapped[str | None] = mapped_column(
-        String(64),
+        ForeignKey("translation_requests.request_id"),
         nullable=True,
-        comment="'user', 'document', 'form', 'session', 'dag'",
     )
-    resource_id: Mapped[str | None] = mapped_column(
-        String(256),
-        nullable=True,
-        comment="UUID of the affected resource as a string",
-    )
-
-    # ── Extra context ─────────────────────────────────────────────────────────
+    action_type: Mapped[str] = mapped_column(String(100), nullable=False)
     details: Mapped[dict | None] = mapped_column(
         JSONB,
+        server_default="{}",
         nullable=True,
-        comment="Freeform event details — NEVER store PII or secret values here",
     )
-    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)  # IPv6 max = 45 chars
-    user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
 
-    # ── When ──────────────────────────────────────────────────────────────────
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    # Relationships
+    user: Mapped[User] = relationship("User", back_populates="audit_logs")
+    session: Mapped[Session | None] = relationship("Session", back_populates="audit_logs")
+    request: Mapped[TranslationRequest | None] = relationship(
+        "TranslationRequest",
+        back_populates="audit_logs",
+    )
 
-    # ── Relationships ─────────────────────────────────────────────────────────
-    actor: Mapped[User | None] = relationship("User", back_populates="audit_logs")
-
-    # ── Indexes ───────────────────────────────────────────────────────────────
+    # Indexes
     __table_args__ = (
-        Index("ix_audit_logs_actor_id", "actor_id"),
-        Index("ix_audit_logs_event_type", "event_type"),
-        Index("ix_audit_logs_resource", "resource_type", "resource_id"),
-        Index("ix_audit_logs_created_at", "created_at"),
+        Index("idx_audit_logs_user_id", "user_id"),
+        Index("idx_audit_logs_session_id", "session_id"),
+        Index("idx_audit_logs_created_at", "created_at"),
     )
 
     def __repr__(self) -> str:
-        return f"<AuditLog log_id={self.log_id!s} event_type={self.event_type!r} actor_id={self.actor_id!s}>"
+        """
+        Return a concise developer-facing string that identifies the AuditLog instance.
+        
+        Returns:
+            A string containing the AuditLog's `audit_id` and `action_type`, formatted for debugging and logging.
+        """
+        return f"<AuditLog audit_id={self.audit_id!s} action_type={self.action_type!r}>"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Model 5 — FormCatalog
+# Model 6 — FormCatalog
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 class FormCatalog(Base):
     """
-    Database mirror of the form_catalog.json maintained by form_scraper_dag.
-
-    This table enables:
-      - Fast indexed search vs full JSON file scan
-      - Human review tracking with foreign key to the reviewer
-      - Query-based filtering by division, language coverage, status
-
-    The raw JSON versions array is stored in JSONB (versions_json) alongside
-    the denormalized current_version fields for fast access.
-
-    Sync strategy: form_scraper_dag upserts rows after each weekly run.
-    Primary key is the form_id from the catalog (a UUID assigned on first scrape).
+    Pre-translated court forms catalog.
     """
 
     __tablename__ = "form_catalog"
 
-    form_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        comment="UUID assigned by form_scraper_dag on first scrape",
-    )
-    form_name: Mapped[str] = mapped_column(String(512), nullable=False)
-    form_slug: Mapped[str] = mapped_column(String(256), nullable=False, unique=True)
-    source_url: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    form_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    form_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    form_slug: Mapped[str] = mapped_column(String(500), unique=True, nullable=False)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    file_type: Mapped[str] = mapped_column(String(10), nullable=False)
     status: Mapped[str] = mapped_column(
-        Enum("active", "archived", name="form_status_enum"),
+        String(20),
         nullable=False,
         server_default="active",
+        comment="Status: active or archived",
     )
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     current_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
-
-    # ── Language availability ─────────────────────────────────────────────────
-    # Denormalized from latest version for fast filtering.
-    has_spanish: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
-    has_portuguese: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
-    languages_available: Mapped[list[str] | None] = mapped_column(ARRAY(String(8)), nullable=True)
-
-    # ── Court divisions ───────────────────────────────────────────────────────
-    # Denormalized list of division names for searchability.
-    divisions: Mapped[list[str] | None] = mapped_column(ARRAY(String(256)), nullable=True)
-
-    # ── Full version history ──────────────────────────────────────────────────
-    versions_json: Mapped[list[dict] | None] = mapped_column(
-        JSONB,
-        nullable=True,
-        comment="Full versions array from form_catalog.json",
-    )
-
-    # ── Human review ─────────────────────────────────────────────────────────
     needs_human_review: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
-    last_reviewed_by: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("users.user_id", ondelete="SET NULL"),
+    preprocessing_flags: Mapped[list | None] = mapped_column(
+        JSONB,
+        server_default="[]",
         nullable=True,
     )
-    last_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    audit_notes: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    last_scraped_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
 
-    # ── Timestamps ────────────────────────────────────────────────────────────
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    last_scraped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Relationships
+    versions: Mapped[list[FormVersion]] = relationship("FormVersion", back_populates="form")
+    appearances: Mapped[list[FormAppearance]] = relationship("FormAppearance", back_populates="form")
 
-    # ── Indexes ───────────────────────────────────────────────────────────────
+    # Constraints and indexes
     __table_args__ = (
-        Index("ix_form_catalog_status", "status"),
-        Index("ix_form_catalog_has_spanish", "has_spanish"),
-        Index("ix_form_catalog_has_portuguese", "has_portuguese"),
-        Index("ix_form_catalog_needs_review", "needs_human_review"),
-        Index("ix_form_catalog_last_scraped", "last_scraped_at"),
-        # GIN index for fast ARRAY containment queries on divisions
-        Index("ix_form_catalog_divisions_gin", "divisions", postgresql_using="gin"),
-        UniqueConstraint("form_slug", name="uq_form_catalog_slug"),
+        CheckConstraint("status IN ('active', 'archived')", name="check_form_status"),
+        Index("idx_form_catalog_status", "status"),
+        Index("idx_form_catalog_slug", "form_slug"),
     )
 
     def __repr__(self) -> str:
-        return f"<FormCatalog form_id={self.form_id!s} form_name={self.form_name!r} status={self.status!r}>"
+        """
+        Return a developer-facing representation of the FormCatalog instance.
+        
+        Returns:
+            str: A string containing the instance's `form_id` and `form_name` in angle-bracket notation (e.g. "<FormCatalog form_id=... form_name='...'>").
+        """
+        return f"<FormCatalog form_id={self.form_id!s} form_name={self.form_name!r}>"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Model 7 — FormVersion
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class FormVersion(Base):
+    """
+    Version history for each form.
+    """
+
+    __tablename__ = "form_versions"
+
+    version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.gen_random_uuid(),
+    )
+    form_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("form_catalog.form_id"),
+        nullable=False,
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    file_type: Mapped[str] = mapped_column(String(10), nullable=False)
+    file_path_original: Mapped[str] = mapped_column(Text, nullable=False)
+    file_path_es: Mapped[str | None] = mapped_column(Text, nullable=True)
+    file_path_pt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    file_type_es: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    file_type_pt: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    # Relationships
+    form: Mapped[FormCatalog] = relationship("FormCatalog", back_populates="versions")
+
+    # Constraints and indexes
+    __table_args__ = (
+        UniqueConstraint("form_id", "version", name="uq_form_version"),
+        Index("idx_form_versions_form_id", "form_id"),
+    )
+
+    def __repr__(self) -> str:
+        """
+        Provide a developer-facing representation of the FormVersion including its `version_id`, `form_id`, and `version`.
+        
+        Returns:
+            str: A string formatted as "<FormVersion version_id=<version_id> form_id=<form_id> version=<version>>".
+        """
+        return f"<FormVersion version_id={self.version_id!s} form_id={self.form_id!s} version={self.version}>"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Model 8 — FormAppearance
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class FormAppearance(Base):
+    """
+    Where each form appears in court divisions.
+    """
+
+    __tablename__ = "form_appearances"
+
+    appearance_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.gen_random_uuid(),
+    )
+    form_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("form_catalog.form_id"),
+        nullable=False,
+    )
+    division: Mapped[str] = mapped_column(String(255), nullable=False)
+    section_heading: Mapped[str] = mapped_column(String(500), nullable=False)
+
+    # Relationships
+    form: Mapped[FormCatalog] = relationship("FormCatalog", back_populates="appearances")
+
+    # Constraints and indexes
+    __table_args__ = (
+        UniqueConstraint("form_id", "division", "section_heading", name="uq_form_appearance"),
+        Index("idx_form_appearances_form_id", "form_id"),
+        Index("idx_form_appearances_division", "division"),
+    )
+
+    def __repr__(self) -> str:
+        """
+        Return a concise, developer-friendly string identifying this FormAppearance instance.
+        
+        @returns A string containing the class name and the instance's `appearance_id` and `division` (e.g., "<FormAppearance appearance_id=... division='...'>").
+        """
+        return f"<FormAppearance appearance_id={self.appearance_id!s} division={self.division!r}>"

@@ -26,10 +26,11 @@ import json
 import logging
 import uuid
 from datetime import UTC, datetime
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 
-from api.dependencies import CurrentUser, DBSession
+from api.dependencies import CurrentUser, DBSession, require_role
 from api.schemas.schemas import (
     SessionCreateRequest,
     SessionResponse,
@@ -65,34 +66,36 @@ _sessions: dict[str, dict] = {}
 )
 async def create_session(
     body: SessionCreateRequest,
-    user: CurrentUser,
+    user: Annotated[
+        CurrentUser, Depends(require_role("court_official", "interpreter", "admin"))
+    ],  # Elevated roles only
     db: DBSession,
 ) -> SessionResponse:
     """
-    Create a new active session for the authenticated user.
-
-    TODO (production):
-      - Persist session to db via db/models.py Session model
-      - Register session in Redis for WebSocket worker fan-out
-      - Return real WebSocket URL based on current host
+    Create a new active realtime session owned by the authenticated user.
+    
+    Creates an in-memory session record with a generated UUID, status set to ACTIVE, recorded source/target languages, and the creator listed as a participant; returns the metadata clients need to connect to the session.
+    
+    Returns:
+        SessionResponse: Metadata for the newly created session including session_id, websocket_url, status, created_at, target_language, and source_language.
     """
     session_id = uuid.uuid4()
     now = datetime.now(tz=UTC)
 
     _sessions[str(session_id)] = {
         "session_id": session_id,
-        "user_id": user["user_id"],
+        "user_id": user.user_id,
         "status": SessionStatus.ACTIVE,
         "created_at": now,
         "target_language": body.target_language,
         "source_language": body.source_language,
-        "participants": [{"user_id": user["user_id"], "role": "creator"}],
+        "participants": [{"user_id": user.user_id, "role": "creator"}],
     }
 
     logger.info(
         "Session created: session_id=%s user_id=%s target=%s",
         session_id,
-        user["user_id"],
+        user.user_id,
         body.target_language,
     )
 
@@ -117,17 +120,21 @@ async def get_session(
     db: DBSession,
 ) -> SessionResponse:
     """
-    Return metadata for an existing session.
-    Users can only retrieve their own sessions unless they are admin/court_official.
-
-    TODO (production): Query db/models.py Session for persistent state.
+    Retrieve metadata for a realtime session by ID.
+    
+    Raises:
+        HTTPException(404): If no session exists with the given ID.
+        HTTPException(403): If the caller is not the session owner and does not have admin (role_id 4) or court_official (role_id 2) privileges.
+    
+    Returns:
+        SessionResponse: Session metadata including `session_id`, `websocket_url`, `status`, `created_at`, `target_language`, and `source_language`.
     """
     sid = str(session_id)
     session = _sessions.get(sid)
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
-    if session["user_id"] != user["user_id"] and user["role"] not in ("admin", "court_official"):
+    if session["user_id"] != user.user_id and user.role_id not in (4, 2):  # admin, court_official
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     return SessionResponse(
@@ -151,24 +158,24 @@ async def end_session(
     db: DBSession,
 ) -> None:
     """
-    End an active session. Triggers transcript finalization and cleanup.
-
-    TODO (production):
-      - Mark session ENDED in database
-      - Flush transcript to GCS
-      - Notify connected WebSocket clients via Redis pub/sub
+    Mark the session identified by `session_id` as ended and perform finalization steps.
+    
+    Sets the session's status to `SessionStatus.ENDED` in the in-memory registry. This operation is idempotent and returns immediately if the session is already ended. Intended production side effects (persisting the end state, flushing transcripts, notifying clients) are noted but not implemented here.
+    
+    Raises:
+        HTTPException: 404 if the session does not exist; 403 if the requester is neither the session owner nor an admin.
     """
     sid = str(session_id)
     session = _sessions.get(sid)
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-    if session["user_id"] != user["user_id"] and user["role"] != "admin":
+    if session["user_id"] != user.user_id and user.role_id != 4:  # admin
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     if session["status"] == SessionStatus.ENDED:
         return  # Idempotent
 
     _sessions[sid]["status"] = SessionStatus.ENDED
-    logger.info("Session ended: session_id=%s user_id=%s", session_id, user["user_id"])
+    logger.info("Session ended: session_id=%s user_id=%s", session_id, user.user_id)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

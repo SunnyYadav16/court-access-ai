@@ -1,14 +1,32 @@
 """
 api/routes/auth.py
 
-Authentication endpoints for the CourtAccess AI API.
+Authentication endpoints for the CourtAccess AI API (Firebase version).
 
-Endpoints:
-  POST /auth/register  — Create a new user account
-  POST /auth/login     — Exchange credentials for a JWT token pair
-  POST /auth/refresh   — Rotate a refresh token into a new access token
-  GET  /auth/me        — Return the authenticated user's profile
-  POST /auth/logout    — Invalidate refresh token (client-side + token deny-list)
+FIREBASE AUTHENTICATION FLOW:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Registration, login, and logout are handled by the FRONTEND via Firebase SDK.
+The backend does NOT provide register/login/logout endpoints.
+
+Frontend Flow:
+  1. User signs up/logs in via Firebase SDK (Google, Microsoft, Email/Password, SAML)
+  2. Firebase returns an ID token to the frontend
+  3. Frontend calls GET /auth/me with the token
+  4. Backend verifies token and creates/updates user in database
+  5. Frontend stores user data and routes accordingly
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Active Endpoints:
+  GET  /auth/me         — Verify token + get/create user profile (called after Firebase login)
+  POST /auth/select-role — User selects their role after first login
+
+Legacy Endpoints (deprecated, kept for backward compatibility):
+  POST /auth/register   — ⚠️ DEPRECATED: Use Firebase SDK on frontend instead
+  POST /auth/login      — ⚠️ DEPRECATED: Use Firebase SDK on frontend instead
+  POST /auth/refresh    — ⚠️ DEPRECATED: Firebase tokens auto-refresh
+  POST /auth/logout     — ⚠️ DEPRECATED: Use Firebase SDK signOut() on frontend
+
 """
 
 from __future__ import annotations
@@ -32,6 +50,7 @@ from api.dependencies import CurrentUser, DBSession
 from api.schemas.schemas import (
     LoginRequest,
     RegisterRequest,
+    RoleUpdateRequest,
     TokenRefreshRequest,
     TokenResponse,
     UserResponse,
@@ -211,55 +230,123 @@ async def refresh_token(body: TokenRefreshRequest, db: DBSession) -> TokenRespon
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# GET /auth/me
+# GET /auth/me — Firebase version
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 @router.get(
     "/me",
     response_model=UserResponse,
-    summary="Get current user profile",
+    summary="Get current user profile (Firebase)",
+    description=(
+        "Returns the current user's profile. "
+        "On first login, automatically creates the user record in the database. "
+        "Requires a valid Firebase ID token in the Authorization header."
+    ),
 )
-async def get_me(user: CurrentUser, db: DBSession) -> UserResponse:
+async def get_me_firebase(user: CurrentUser) -> UserResponse:
     """
-    Return the profile of the currently authenticated user.
-
-    TODO (production): Query user from DB by user["user_id"].
+    Retrieve the current authenticated user's profile.
+    
+    If this is the user's first sign-in, the authentication dependency creates a user record and assigns a default role before returning the profile.
+    
+    Returns:
+        UserResponse: Profile containing user_id, username, email, role, preferred_language, and created_at.
     """
-    uid = user["user_id"]
-    db_user = _users_by_id.get(uid)
-    if not db_user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-
-    return UserResponse(
-        user_id=db_user["user_id"],
-        username=db_user["username"],
-        email=db_user["email"],
-        role=db_user["role"],
-        preferred_language=db_user["preferred_language"],
-        created_at=db_user["created_at"],
-    )
+    return UserResponse.from_orm_user(user)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# POST /auth/logout
+# POST /auth/select-role — Firebase version
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@router.post(
+    "/select-role",
+    response_model=UserResponse,
+    summary="Select user role",
+    description=(
+        "Allows a user to select their role after first login. "
+        "Public role is assigned immediately. "
+        "Court official and interpreter roles require admin approval "
+        "unless the user authenticated via Mass.gov SAML (auto-approved)."
+    ),
+)
+async def select_role_firebase(
+    body: RoleUpdateRequest,
+    user: CurrentUser,
+    db: DBSession,
+) -> UserResponse:
+    """
+    Assign the requesting user's role based on their selection and authentication provider.
+    
+    Assigns the selected role immediately for "public". For "court_official" or "interpreter", auto-approves and sets approval metadata when the user's auth_provider is "saml.massgov"; otherwise keeps the user as public and leaves the upgrade pending approval. Persists changes and returns the updated user record.
+    
+    Returns:
+        UserResponse: The updated user profile reflecting the assigned role and any approval timestamps or pending state.
+    
+    Notes:
+        Role ID mapping: 1 = public, 2 = court_official, 3 = interpreter, 4 = admin.
+    """
+    from datetime import UTC, datetime
+
+    selected_role = body.selected_role.value
+
+    if selected_role == "public":
+        # Public role — assign immediately (role_id=1)
+        user.role_id = 1
+    elif selected_role == "court_official" and user.auth_provider == "saml.massgov":
+        # Mass.gov SAML user requesting court_official → auto-approve (role_id=2)
+        user.role_id = 2
+        user.role_approved_by = None  # System auto-approval
+        user.role_approved_at = datetime.now(tz=UTC)
+        logger.info(
+            "Auto-approved court_official role for SAML user: user_id=%s email=%s",
+            user.user_id,
+            user.email,
+        )
+    elif selected_role == "interpreter" and user.auth_provider == "saml.massgov":
+        # Mass.gov SAML user requesting interpreter → auto-approve (role_id=3)
+        user.role_id = 3
+        user.role_approved_by = None  # System auto-approval
+        user.role_approved_at = datetime.now(tz=UTC)
+        logger.info(
+            "Auto-approved interpreter role for SAML user: user_id=%s email=%s",
+            user.user_id,
+            user.email,
+        )
+    else:
+        # Elevated role for non-SAML user → pending approval
+        # In a full implementation, create a role_request record here
+        user.role_id = 1  # Keep as public
+        logger.info(
+            "Role upgrade request pending approval: user_id=%s requested_role=%s",
+            user.user_id,
+            selected_role,
+        )
+
+    await db.commit()
+    await db.refresh(user)
+
+    return UserResponse.from_orm_user(user)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# POST /auth/logout — Legacy JWT (deprecated)
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 @router.post(
     "/logout",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Logout (invalidate refresh token)",
+    summary="Logout (invalidate refresh token) [DEPRECATED]",
+    deprecated=True,
 )
 async def logout(body: TokenRefreshRequest, db: DBSession) -> None:
     """
-    Invalidate the provided refresh token server-side.
-
-    Client should also delete the access token from local storage.
-
-    TODO (production):
-      - Add refresh token JTI to Redis deny-list with TTL = token expiry
-      - Return 204 even if token is already expired (idempotent logout)
+    [DEPRECATED] Record a legacy JWT logout request without server-side token revocation.
+    
+    Attempts to decode the provided refresh token to exercise token validation but does not revoke or store the token. No deny-list or persistent logout tracking is performed; Firebase clients should remove tokens client-side.
     """
     with contextlib.suppress(JWTError):
         decode_refresh_token(body.refresh_token)

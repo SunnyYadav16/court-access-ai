@@ -27,14 +27,13 @@ Usage in route handlers:
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.auth import decode_token
+from api.auth import get_or_create_user, verify_firebase_token
 from api.schemas.schemas import UserRole
 from courtaccess.core.logger import get_logger
 
@@ -49,25 +48,25 @@ _bearer = HTTPBearer(auto_error=False)
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-async def get_db() -> AsyncSession:  # type: ignore[return]
+async def get_db():
     """
-    Yield an async SQLAlchemy session for the duration of the request.
+    Yield an AsyncSession scoped to the current request lifecycle.
+    
+    Yields a SQLAlchemy AsyncSession taken from the application's connection pool. If an exception occurs while the session is in use, the session is rolled back; the session is always closed after use.
+    
+    Returns:
+        AsyncSession: an async SQLAlchemy session for database operations during the request
+    """
+    from db.database import AsyncSessionLocal
 
-    The session is obtained from the connection pool initialised in
-    api/main.py lifespan. Rolls back on exception, closes unconditionally.
-
-    NOTE: Replace the stub below with the real import once db/models.py
-          and the engine are wired up:
-
-        from db.database import AsyncSessionLocal
-        async with AsyncSessionLocal() as session:
+    async with AsyncSessionLocal() as session:
+        try:
             yield session
-    """
-    # STUB — yields None until the real DB engine is wired in main.py lifespan.
-    # Route handlers that call get_db() will need the real implementation
-    # before making any ORM calls.
-    logger.debug("get_db() called — STUB: no real session yet")
-    yield None  # type: ignore[misc]
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -90,37 +89,29 @@ _EXPIRED_EXCEPTION = HTTPException(
 
 async def get_current_user(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
-) -> dict:
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
     """
-    Validate the Bearer token and return the current user dict.
-
-    Returns a minimal dict:
-        {
-            "user_id": str,   # UUID string from token 'sub' claim
-            "role":    str,   # One of UserRole values
-        }
-
-    Raises HTTP 401 if:
-      - Authorization header is missing
-      - Token is malformed or expired
-      - Token is a refresh token (wrong type)
-
-    NOTE: In production this should also query the database to confirm
-          the user still exists and is not banned. Wire in get_db() once
-          db/models.py is ready.
+    Authenticate the request using a Firebase Bearer token and return the corresponding User ORM object.
+    
+    Verifies the provided ID token, maps its claims to a user record, and returns the matching or newly created User ORM instance.
+    
+    Returns:
+        User ORM object representing the authenticated user.
+    
+    Raises:
+        HTTP 401 if the Authorization bearer token is missing, invalid, or expired.
     """
     if credentials is None:
         raise _CREDENTIALS_EXCEPTION
 
-    try:
-        payload = decode_token(credentials.credentials, expected_type="access")
-    except JWTError as exc:
-        logger.warning("Token validation failed: %s", exc)
-        if "expired" in str(exc).lower():
-            raise _EXPIRED_EXCEPTION from exc
-        raise _CREDENTIALS_EXCEPTION from exc
+    # Verify Firebase token and extract claims
+    claims = verify_firebase_token(credentials.credentials)
 
-    return {"user_id": payload.sub, "role": payload.role}
+    # Get or create user from claims
+    user = await get_or_create_user(claims, db)
+
+    return user
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -130,39 +121,92 @@ async def get_current_user(
 
 def require_role(*allowed_roles: str):
     """
-    Dependency factory — gate an endpoint to specific roles.
-
-    Usage:
-        @router.get("/admin")
-        async def admin_only(_=Depends(require_role("admin", "court_official"))):
-            ...
-
-    Raises HTTP 403 if the authenticated user's role is not in *allowed_roles*.
+    Create a FastAPI dependency that restricts access to users to the specified roles.
+    
+    Accepts role names (strings) or UserRole enum values and maps them to internal role IDs:
+      public = 1, court_official = 2, interpreter = 3, admin = 4.
+    Invalid role names are ignored when building the allowed set.
+    
+    Returns:
+        A dependency callable that, when used, returns the authenticated User ORM object if the user's `role_id` is one of the allowed role IDs; raises HTTP 403 otherwise.
     """
-    allowed_set = {r.value if isinstance(r, UserRole) else r for r in allowed_roles}
+    # Map role names to role_ids
+    role_name_to_id = {
+        "public": 1,
+        "court_official": 2,
+        "interpreter": 3,
+        "admin": 4,
+    }
+
+    allowed_role_ids = {role_name_to_id.get(r.value if isinstance(r, UserRole) else r) for r in allowed_roles}
+    allowed_role_ids.discard(None)  # Remove None if any invalid role names
 
     async def _check(
-        user: Annotated[dict, Depends(get_current_user)],
-    ) -> dict:
-        if user["role"] not in allowed_set:
+        user: Annotated[Any, Depends(get_current_user)],
+    ):
+        """
+        Ensure the authenticated user's role is one of the allowed roles.
+        
+        Parameters:
+            user (Any): The current authenticated user ORM object (must have `role_id` and `user_id` attributes).
+        
+        Returns:
+            Any: The same authenticated user object when their role is permitted.
+        
+        Raises:
+            HTTPException: HTTP 403 Forbidden if the user's role_id is not in the allowed set.
+        """
+        if user.role_id not in allowed_role_ids:
             logger.warning(
-                "Role check failed: user_id=%s role=%s required=%s",
-                user["user_id"],
-                user["role"],
-                allowed_set,
+                "Role check failed: user_id=%s role_id=%s required_role_ids=%s",
+                user.user_id,
+                user.role_id,
+                allowed_role_ids,
             )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"This endpoint requires one of: {sorted(allowed_set)}",
+                detail=f"This endpoint requires one of: {sorted(allowed_roles)}",
             )
         return user
 
     return _check
 
 
+async def require_verified_email(
+    user: Annotated[Any, Depends(get_current_user)],
+):
+    """
+    Require that the authenticated user's email address is verified.
+    
+    Raises HTTPException with status 403 if the user's email is not verified.
+    
+    Returns:
+        The authenticated user object.
+    
+    Raises:
+        HTTPException: If the user's `email_verified` is False (403 Forbidden).
+    """
+    if not user.email_verified:
+        logger.warning(
+            "Email verification required: user_id=%s email=%s",
+            user.user_id,
+            user.email,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email verification required. Please verify your email before using this feature.",
+        )
+    return user
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Convenience type aliases for route signatures
 # ══════════════════════════════════════════════════════════════════════════════
 
-CurrentUser = Annotated[dict, Depends(get_current_user)]
-DBSession = Annotated[AsyncSession | None, Depends(get_db)]
+# Import User model for type hints
+
+if TYPE_CHECKING:
+    pass
+
+CurrentUser = Annotated[Any, Depends(get_current_user)]  # Returns User ORM object
+DBSession = Annotated[AsyncSession, Depends(get_db)]

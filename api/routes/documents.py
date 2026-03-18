@@ -18,10 +18,11 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import UTC, datetime
+from typing import Annotated
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
-from api.dependencies import CurrentUser, DBSession
+from api.dependencies import CurrentUser, DBSession, require_verified_email
 from api.schemas.schemas import (
     DocumentListResponse,
     DocumentResponse,
@@ -58,7 +59,7 @@ _ALLOWED_CONTENT_TYPES = {"application/pdf"}
     ),
 )
 async def upload_document(
-    user: CurrentUser,
+    user: Annotated[CurrentUser, Depends(require_verified_email)],  # Requires verified email
     db: DBSession,
     file: UploadFile = File(..., description="PDF file to translate"),  # noqa: B008
     target_languages: str = Form(
@@ -68,18 +69,24 @@ async def upload_document(
     notes: str | None = Form(default=None, max_length=500),
 ) -> DocumentResponse:
     """
-    Accept a PDF upload, validate it, and enqueue document_pipeline_dag.
-
-    Validation steps:
-      1. File must be PDF (content-type header)
-      2. File must be ≤50 MB
-      3. File must have a PDF magic-bytes signature (%PDF-)
-
-    TODO (production):
-      - Upload raw bytes to GCS bucket (GCS_BUCKET_UPLOADS)
-      - Persist document record to db via db/models.py TranslationRequest
-      - Trigger Airflow document_pipeline_dag via Airflow REST API
-      - Return real GCS upload path
+    Accept a PDF upload, validate it, and enqueue a document translation pipeline.
+    
+    Validations performed:
+    - Content-Type must be "application/pdf".
+    - File size must be less than or equal to 50 MB.
+    - File must start with the PDF magic bytes ("%PDF-").
+    - Target language codes must be supported ('es' or 'pt').
+    
+    Parameters:
+        file: Uploaded PDF file to translate.
+        target_languages: Comma-separated language codes (e.g., "es,pt"); defaults to "es,pt".
+        notes: Optional user-provided notes (max 500 characters).
+    
+    Returns:
+        DocumentResponse: Contains `document_id`, `status` (PENDING), `upload_path`, `created_at`, and `estimated_completion_seconds`.
+    
+    Raises:
+        HTTPException: 415 if content type is not PDF; 413 if file exceeds 50 MB; 422 if file is not a valid PDF or if an unsupported language code is provided.
     """
     # ── Content-type check ───────────────────────────────────────────────────
     if file.content_type not in _ALLOWED_CONTENT_TYPES:
@@ -124,7 +131,7 @@ async def upload_document(
 
     _documents[str(doc_id)] = {
         "document_id": doc_id,
-        "user_id": user["user_id"],
+        "user_id": user.user_id,
         "status": DocumentStatus.PENDING,
         "upload_path": upload_path,
         "created_at": now,
@@ -141,7 +148,7 @@ async def upload_document(
     logger.info(
         "Document uploaded: doc_id=%s user_id=%s size=%d bytes file=%s langs=%s",
         doc_id,
-        user["user_id"],
+        user.user_id,
         len(contents),
         file.filename,
         langs,
@@ -150,7 +157,7 @@ async def upload_document(
     # TODO: Trigger Airflow DAG via REST
     # await _trigger_airflow_dag("document_pipeline_dag", {
     #     "document_id": str(doc_id),
-    #     "user_id": user["user_id"],
+    #     "user_id": str(user.user_id),
     #     "upload_path": upload_path,
     #     "target_langs": [l.value for l in langs],
     # })
@@ -185,18 +192,20 @@ async def get_document_status(
     db: DBSession,
 ) -> TranslationStatusResponse:
     """
-    Return the current processing status and translation output URLs.
-
-    TODO (production):
-      - Query Airflow REST API for DAG run status
-      - Look up document in db/models.py
-      - Generate signed GCS URLs for completed translations
+    Retrieve translation status and associated metadata for a document.
+    
+    Raises:
+        HTTPException: 404 if the document does not exist.
+        HTTPException: 403 if the authenticated user is neither the owner nor has a role_id of 4 (admin), 2 (court_official), or 3 (interpreter).
+    
+    Returns:
+        TranslationStatusResponse: Document status and related fields including timestamps, PII findings count, translation URLs, legal review status, human review flag, and any error message.
     """
     doc = _documents.get(str(document_id))
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
-    if doc["user_id"] != user["user_id"] and user["role"] not in ("admin", "court_official", "interpreter"):
+    if doc["user_id"] != user.user_id and user.role_id not in (4, 2, 3):  # admin, court_official, interpreter
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     return TranslationStatusResponse(
@@ -230,18 +239,26 @@ async def list_documents(
     page_size: int = 20,
 ) -> DocumentListResponse:
     """
-    Paginated list of documents for the authenticated user.
-
-    TODO (production):
-      - Replace in-memory dict with DB query (order by created_at DESC)
-      - Admin/court_official can filter by user_id query param
+    Return a paginated list of documents belonging to the authenticated user.
+    
+    Documents are ordered by created_at descending and limited to documents owned by the current user. Pagination parameters must satisfy page >= 1 and 1 <= page_size <= 100.
+    
+    Parameters:
+        page (int): Page number to retrieve (1-based).
+        page_size (int): Number of items per page.
+    
+    Returns:
+        DocumentListResponse: Contains `items` (list of TranslationStatusResponse), `total` (total documents for the user), `page`, and `page_size`.
+    
+    Raises:
+        HTTPException: If `page` < 1 or `page_size` is outside the 1–100 range.
     """
     if page < 1:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="page must be ≥ 1")
     if not 1 <= page_size <= 100:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="page_size must be 1-100")
 
-    user_docs = [d for d in _documents.values() if d["user_id"] == user["user_id"]]
+    user_docs = [d for d in _documents.values() if d["user_id"] == user.user_id]
     user_docs.sort(key=lambda d: d["created_at"], reverse=True)
 
     start = (page - 1) * page_size
@@ -290,23 +307,20 @@ async def delete_document(
     db: DBSession,
 ) -> None:
     """
-    Soft-delete or hard-delete a document (per retention policy).
-
-    Business rules:
-      - Users may only delete their own documents.
-      - Admins may delete any document.
-      - Documents with status 'processing' cannot be deleted (must cancel DAG first).
-
-    TODO (production):
-      - Delete GCS objects for upload_path, translation_urls
-      - Mark document as deleted in DB (soft-delete with deleted_at timestamp)
-      - Cancel running Airflow DAG run if status == processing
+    Delete a document if the caller is authorized and the document is not currently processing.
+    
+    Deletes the document from the store when the requesting user owns the document or when the requester is an admin (role_id == 4). Deletion is disallowed while the document status is PROCESSING.
+    
+    Raises:
+        HTTPException: 404 if the document does not exist.
+        HTTPException: 403 if the caller is not the owner and not an admin.
+        HTTPException: 409 if the document is currently being processed and cannot be deleted.
     """
     doc = _documents.get(str(document_id))
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
-    if doc["user_id"] != user["user_id"] and user["role"] != "admin":
+    if doc["user_id"] != user.user_id and user.role_id != 4:  # admin
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     if doc["status"] == DocumentStatus.PROCESSING:
@@ -317,4 +331,4 @@ async def delete_document(
         )
 
     del _documents[str(document_id)]
-    logger.info("Document deleted: doc_id=%s by user_id=%s", document_id, user["user_id"])
+    logger.info("Document deleted: doc_id=%s by user_id=%s", document_id, user.user_id)
