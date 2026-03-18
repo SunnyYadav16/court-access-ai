@@ -26,10 +26,11 @@ import json
 import logging
 import uuid
 from datetime import UTC, datetime
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 
-from api.dependencies import CurrentUser, DBSession
+from api.dependencies import CurrentUser, DBSession, require_role
 from api.schemas.schemas import (
     SessionCreateRequest,
     SessionResponse,
@@ -65,7 +66,9 @@ _sessions: dict[str, dict] = {}
 )
 async def create_session(
     body: SessionCreateRequest,
-    user: CurrentUser,
+    user: Annotated[
+        CurrentUser, Depends(require_role("court_official", "interpreter", "admin"))
+    ],  # Elevated roles only
     db: DBSession,
 ) -> SessionResponse:
     """
@@ -81,18 +84,18 @@ async def create_session(
 
     _sessions[str(session_id)] = {
         "session_id": session_id,
-        "user_id": user["user_id"],
+        "user_id": user.user_id,
         "status": SessionStatus.ACTIVE,
         "created_at": now,
         "target_language": body.target_language,
         "source_language": body.source_language,
-        "participants": [{"user_id": user["user_id"], "role": "creator"}],
+        "participants": [{"user_id": user.user_id, "role": "creator"}],
     }
 
     logger.info(
         "Session created: session_id=%s user_id=%s target=%s",
         session_id,
-        user["user_id"],
+        user.user_id,
         body.target_language,
     )
 
@@ -127,7 +130,7 @@ async def get_session(
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
-    if session["user_id"] != user["user_id"] and user["role"] not in ("admin", "court_official"):
+    if session["user_id"] != user.user_id and user.role_id not in (4, 2):  # admin, court_official
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     return SessionResponse(
@@ -162,13 +165,13 @@ async def end_session(
     session = _sessions.get(sid)
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-    if session["user_id"] != user["user_id"] and user["role"] != "admin":
+    if session["user_id"] != user.user_id and user.role_id != 4:  # admin
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     if session["status"] == SessionStatus.ENDED:
         return  # Idempotent
 
     _sessions[sid]["status"] = SessionStatus.ENDED
-    logger.info("Session ended: session_id=%s user_id=%s", session_id, user["user_id"])
+    logger.info("Session ended: session_id=%s user_id=%s", session_id, user.user_id)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

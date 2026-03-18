@@ -7,6 +7,7 @@
     "skipLibCheck": true,
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
+    "allowJs": true,
     "isolatedModules": true,
     "moduleDetection": "force",
     "noEmit": true,
@@ -18,7 +19,8 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"]
-    }
+    },
+    "types": ["vite/client"]
   },
   "include": ["src"]
 }

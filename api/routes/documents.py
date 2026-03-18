@@ -18,10 +18,11 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import UTC, datetime
+from typing import Annotated
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
-from api.dependencies import CurrentUser, DBSession
+from api.dependencies import CurrentUser, DBSession, require_verified_email
 from api.schemas.schemas import (
     DocumentListResponse,
     DocumentResponse,
@@ -58,7 +59,7 @@ _ALLOWED_CONTENT_TYPES = {"application/pdf"}
     ),
 )
 async def upload_document(
-    user: CurrentUser,
+    user: Annotated[CurrentUser, Depends(require_verified_email)],  # Requires verified email
     db: DBSession,
     file: UploadFile = File(..., description="PDF file to translate"),  # noqa: B008
     target_languages: str = Form(
@@ -124,7 +125,7 @@ async def upload_document(
 
     _documents[str(doc_id)] = {
         "document_id": doc_id,
-        "user_id": user["user_id"],
+        "user_id": user.user_id,
         "status": DocumentStatus.PENDING,
         "upload_path": upload_path,
         "created_at": now,
@@ -141,7 +142,7 @@ async def upload_document(
     logger.info(
         "Document uploaded: doc_id=%s user_id=%s size=%d bytes file=%s langs=%s",
         doc_id,
-        user["user_id"],
+        user.user_id,
         len(contents),
         file.filename,
         langs,
@@ -150,7 +151,7 @@ async def upload_document(
     # TODO: Trigger Airflow DAG via REST
     # await _trigger_airflow_dag("document_pipeline_dag", {
     #     "document_id": str(doc_id),
-    #     "user_id": user["user_id"],
+    #     "user_id": str(user.user_id),
     #     "upload_path": upload_path,
     #     "target_langs": [l.value for l in langs],
     # })
@@ -196,7 +197,7 @@ async def get_document_status(
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
-    if doc["user_id"] != user["user_id"] and user["role"] not in ("admin", "court_official", "interpreter"):
+    if doc["user_id"] != user.user_id and user.role_id not in (4, 2, 3):  # admin, court_official, interpreter
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     return TranslationStatusResponse(
@@ -241,7 +242,7 @@ async def list_documents(
     if not 1 <= page_size <= 100:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="page_size must be 1-100")
 
-    user_docs = [d for d in _documents.values() if d["user_id"] == user["user_id"]]
+    user_docs = [d for d in _documents.values() if d["user_id"] == user.user_id]
     user_docs.sort(key=lambda d: d["created_at"], reverse=True)
 
     start = (page - 1) * page_size
@@ -306,7 +307,7 @@ async def delete_document(
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
-    if doc["user_id"] != user["user_id"] and user["role"] != "admin":
+    if doc["user_id"] != user.user_id and user.role_id != 4:  # admin
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     if doc["status"] == DocumentStatus.PROCESSING:
@@ -317,4 +318,4 @@ async def delete_document(
         )
 
     del _documents[str(document_id)]
-    logger.info("Document deleted: doc_id=%s by user_id=%s", document_id, user["user_id"])
+    logger.info("Document deleted: doc_id=%s by user_id=%s", document_id, user.user_id)

@@ -57,11 +57,8 @@ numpy>=1.26.0
 pydantic>=2.7.0
 pydantic-settings>=2.2.0
 python-dotenv>=1.0.0
+firebase-admin>=6.9.0
+psycopg2-binary>=2.9.11
 
 # ── Airflow (Airflow containers only) ────────────────────────────────────────
 # apache-airflow>=3.1.7   # Uncomment if installing into a non-Airflow base image
-
-firebase-admin>=6.5.0
-
-# ── Database ── section — ADD:
-psycopg2-binary>=2.9.9     # sync driver for Alembic migrations
