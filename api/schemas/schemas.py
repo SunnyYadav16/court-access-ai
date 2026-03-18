@@ -120,38 +120,6 @@ class RoleResponse(BaseModel):
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-class TokenResponse(BaseModel):
-    """JWT token pair returned after successful login (deprecated)."""
-
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"  # noqa: S105
-    expires_in: int = Field(description="Seconds until access_token expires")
-
-
-class TokenRefreshRequest(BaseModel):
-    """Request body for refreshing an access token (deprecated)."""
-
-    refresh_token: str
-
-
-class LoginRequest(BaseModel):
-    """Credentials for username/password login (deprecated)."""
-
-    username: str = Field(min_length=3, max_length=64)
-    password: str = Field(min_length=8)
-
-
-class RegisterRequest(BaseModel):
-    """New user registration payload (deprecated)."""
-
-    username: str = Field(min_length=3, max_length=64)
-    email: EmailStr
-    password: str = Field(min_length=8, description="Min 8 chars, must include a digit")
-    preferred_language: Language = Language.ENGLISH
-    role: UserRole = UserRole.PUBLIC
-
-
 class UserResponse(BaseModel):
     """Public user representation — matches actual database schema."""
 

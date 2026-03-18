@@ -73,7 +73,7 @@ export default function LandingScreen({ onNav: _onNav }: Props) {
       </nav>
 
       {/* Hero */}
-      <div className="max-w-3xl mx-auto px-6 py-20 text-center">
+      <div className="max-w-6xl mx-auto px-6 py-20 text-center">
         <div className="text-5xl mb-6">⚖</div>
         <h1 className="text-4xl font-bold mb-4 leading-tight"
           style={{ fontFamily: "Palatino, Georgia, serif", color: "#0B1D3A" }}>
@@ -130,7 +130,7 @@ export default function LandingScreen({ onNav: _onNav }: Props) {
       </div>
 
       {/* About */}
-      <div className="max-w-3xl mx-auto px-6 pb-16">
+      <div className="max-w-6xl mx-auto px-6 pb-16">
         <div className="rounded-xl p-8 text-center mb-16"
           style={{ background: "#fff", border: "1px solid #E2E6EC" }}>
           <h2 className="text-2xl font-bold mb-3"

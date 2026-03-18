@@ -34,10 +34,14 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Remove 'ended' from sessions.status constraint."""
-    # Drop the constraint with 'ended'
+    # Migrate any 'ended' rows to 'completed' before reinstating the old
+    # constraint, which does not include 'ended'.  Skipping this step would
+    # cause the CREATE CHECK CONSTRAINT call to fail immediately because
+    # PostgreSQL validates all existing rows on constraint creation.
+    op.execute("UPDATE sessions SET status = 'completed' WHERE status = 'ended'")
+
     op.drop_constraint("sessions_status_check", "sessions", type_="check")
 
-    # Restore original constraint without 'ended'
     op.create_check_constraint(
         "sessions_status_check",
         "sessions",

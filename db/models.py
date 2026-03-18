@@ -7,6 +7,7 @@ Models match the Cloud SQL schema exactly.
 Tables:
   roles               — Role definitions (public, court_official, interpreter, admin)
   users               — Registered user accounts with Firebase auth
+  role_requests       — Role upgrade requests pending admin approval
   sessions            — Real-time or document translation sessions
   translation_requests — Individual translation requests within sessions
   audit_logs          — Immutable audit trail
@@ -166,7 +167,77 @@ class User(Base):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Model 3 — Session
+# Model 3 — RoleRequest
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class RoleRequest(Base):
+    """
+    Role upgrade requests from users.
+    Status values:
+      pending  — Awaiting admin review
+      approved — Admin approved, role granted
+      rejected — Admin rejected request
+    """
+
+    __tablename__ = "role_requests"
+
+    request_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.user_id"),
+        nullable=False,
+    )
+    requested_role_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("roles.role_id"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default="pending",
+    )
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.user_id"),
+        nullable=True,
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    # Relationships
+    user: Mapped[User] = relationship("User", foreign_keys=[user_id])
+    requested_role: Mapped[Role] = relationship("Role", foreign_keys=[requested_role_id])
+    reviewer: Mapped[User | None] = relationship("User", foreign_keys=[reviewed_by])
+
+    # Indexes and constraints
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'approved', 'rejected')",
+            name="check_role_request_status",
+        ),
+        Index("idx_role_requests_user_id", "user_id"),
+        Index("idx_role_requests_status", "status"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<RoleRequest request_id={self.request_id!s} user_id={self.user_id!s} status={self.status!r}>"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Model 4 — Session
 # ══════════════════════════════════════════════════════════════════════════════
 
 
@@ -230,14 +301,14 @@ class Session(Base):
 
     # Constraints and indexes
     __table_args__ = (
-        CheckConstraint("type IN ('realtime', 'document')", name="check_session_type"),
+        CheckConstraint("type IN ('realtime', 'document')", name="sessions_type_check"),
         CheckConstraint(
             "target_language IN ('spa_Latn', 'por_Latn')",
-            name="check_session_target_language",
+            name="sessions_target_language_check",
         ),
         CheckConstraint(
             "status IN ('active', 'processing', 'completed', 'failed', 'ended')",
-            name="check_session_status",
+            name="sessions_status_check",
         ),
         Index("idx_sessions_user_id", "user_id"),
         Index("idx_sessions_status", "status"),
@@ -248,7 +319,7 @@ class Session(Base):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Model 4 — TranslationRequest
+# Model 5 — TranslationRequest
 # ══════════════════════════════════════════════════════════════════════════════
 
 
@@ -314,15 +385,15 @@ class TranslationRequest(Base):
     __table_args__ = (
         CheckConstraint(
             "target_language IN ('spa_Latn', 'por_Latn')",
-            name="check_request_target_language",
+            name="translation_requests_target_language_check",
         ),
         CheckConstraint(
             "classification_result IN ('LEGAL', 'NOT_LEGAL')",
-            name="check_classification_result",
+            name="translation_requests_classification_check",
         ),
         CheckConstraint(
             "status IN ('processing', 'completed', 'failed', 'rejected')",
-            name="check_request_status",
+            name="translation_requests_status_check",
         ),
         Index("idx_translation_requests_session_id", "session_id"),
     )
@@ -332,7 +403,7 @@ class TranslationRequest(Base):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Model 5 — AuditLog
+# Model 6 — AuditLog
 # ══════════════════════════════════════════════════════════════════════════════
 
 
@@ -395,7 +466,7 @@ class AuditLog(Base):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Model 6 — FormCatalog
+# Model 7 — FormCatalog
 # ══════════════════════════════════════════════════════════════════════════════
 
 
@@ -441,7 +512,7 @@ class FormCatalog(Base):
 
     # Constraints and indexes
     __table_args__ = (
-        CheckConstraint("status IN ('active', 'archived')", name="check_form_status"),
+        CheckConstraint("status IN ('active', 'archived')", name="form_catalog_status_check"),
         Index("idx_form_catalog_status", "status"),
         Index("idx_form_catalog_slug", "form_slug"),
     )
@@ -451,7 +522,7 @@ class FormCatalog(Base):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Model 7 — FormVersion
+# Model 8 — FormVersion
 # ══════════════════════════════════════════════════════════════════════════════
 
 
@@ -491,7 +562,7 @@ class FormVersion(Base):
 
     # Constraints and indexes
     __table_args__ = (
-        UniqueConstraint("form_id", "version", name="uq_form_version"),
+        UniqueConstraint("form_id", "version", name="form_versions_form_id_version_key"),
         Index("idx_form_versions_form_id", "form_id"),
     )
 
@@ -500,7 +571,7 @@ class FormVersion(Base):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Model 8 — FormAppearance
+# Model 9 — FormAppearance
 # ══════════════════════════════════════════════════════════════════════════════
 
 
@@ -529,7 +600,12 @@ class FormAppearance(Base):
 
     # Constraints and indexes
     __table_args__ = (
-        UniqueConstraint("form_id", "division", "section_heading", name="uq_form_appearance"),
+        UniqueConstraint(
+            "form_id",
+            "division",
+            "section_heading",
+            name="form_appearances_form_id_division_section_heading_key",
+        ),
         Index("idx_form_appearances_form_id", "form_id"),
         Index("idx_form_appearances_division", "division"),
     )

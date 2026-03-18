@@ -35,6 +35,9 @@ export const SCREENS = {
   ADMIN_USERS: "ADMIN_USERS",
   ADMIN_FORMS: "ADMIN_FORMS",
   INTERPRETER_REVIEW: "INTERPRETER_REVIEW",
+
+  // Settings
+  SETTINGS: "SETTINGS",
 } as const;
 
 /** Union type of all valid screen IDs */

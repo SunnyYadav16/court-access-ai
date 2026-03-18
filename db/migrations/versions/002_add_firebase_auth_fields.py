@@ -9,7 +9,7 @@ Adds Firebase authentication fields to the users table:
 - auth_provider: Authentication method (google.com, password, saml.massgov, etc.)
 - email_verified: Whether the email is verified (mirrors Firebase emailVerified)
 - mfa_enabled: Whether MFA is enabled
-- display_name: User's display name from Firebase or signup form
+- name: User's display name from Firebase or signup form
 - role_approved_by: FK to user who approved a role upgrade
 - role_approved_at: Timestamp of role approval
 
@@ -32,14 +32,16 @@ depends_on = None
 def upgrade() -> None:
     """Add Firebase auth fields to users table."""
     # Add new columns
+    # firebase_uid is nullable so existing rows stay NULL rather than being
+    # populated with a shared empty-string default that would break the unique
+    # constraint. Rows are backfilled at login time via get_or_create_user().
     op.add_column(
         "users",
         sa.Column(
             "firebase_uid",
             sa.String(length=128),
-            nullable=False,
+            nullable=True,
             comment="Firebase user ID — queried on every authenticated request",
-            server_default="",  # Temporary default for existing rows
         ),
     )
     op.add_column(
@@ -101,20 +103,20 @@ def upgrade() -> None:
         ),
     )
 
-    # Remove server_default from firebase_uid and auth_provider after backfill
-    # (In production, you'd backfill existing users with Firebase UIDs first)
-    op.alter_column("users", "firebase_uid", server_default=None)
+    # Remove server_default from auth_provider after backfill
     op.alter_column("users", "auth_provider", server_default=None)
 
     # Make hashed_password nullable (unused with Firebase auth)
     op.alter_column("users", "hashed_password", nullable=True)
 
-    # Create unique index on firebase_uid for fast lookups
+    # Partial unique index: only enforce uniqueness for rows where firebase_uid
+    # is NOT NULL, so existing rows with NULL don't collide with each other.
     op.create_index(
         "ix_users_firebase_uid",
         "users",
         ["firebase_uid"],
         unique=True,
+        postgresql_where=sa.text("firebase_uid IS NOT NULL"),
     )
 
     # Create index on auth_provider for analytics

@@ -23,21 +23,21 @@ depends_on = None
 
 def upgrade() -> None:
     """
-    Sync with Cloud SQL schema.
-    Since Cloud SQL already has the tables, this migration:
-    1. Drops the old structure (if different)
-    2. Creates tables matching Cloud SQL exactly
-    """
+    Sync with Cloud SQL schema — non-destructive, idempotent.
 
-    # Drop old tables if they exist (cascade to handle foreign keys)
-    op.execute("DROP TABLE IF EXISTS form_appearances CASCADE")
-    op.execute("DROP TABLE IF EXISTS form_versions CASCADE")
-    op.execute("DROP TABLE IF EXISTS form_catalog CASCADE")
-    op.execute("DROP TABLE IF EXISTS audit_logs CASCADE")
-    op.execute("DROP TABLE IF EXISTS translation_requests CASCADE")
-    op.execute("DROP TABLE IF EXISTS sessions CASCADE")
-    op.execute("DROP TABLE IF EXISTS users CASCADE")
-    op.execute("DROP TABLE IF EXISTS roles CASCADE")
+    All CREATE TABLE and CREATE INDEX calls use IF NOT EXISTS so this
+    migration is safe to run against:
+      • A fresh local dev database (creates everything from scratch).
+      • Cloud SQL or any database where the schema already exists
+        (every statement is a no-op).
+
+    For Cloud SQL specifically, prefer advancing the revision pointer
+    without executing SQL:
+        alembic stamp 003   # or: alembic stamp head
+
+    The original DROP TABLE … CASCADE statements have been removed to
+    prevent accidental data loss on databases that contain real data.
+    """
 
     # 1. Roles table with seed data
     op.create_table(
@@ -48,15 +48,17 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=True),
         sa.PrimaryKeyConstraint("role_id"),
         sa.UniqueConstraint("role_name"),
+        if_not_exists=True,
     )
 
-    # Insert seed data
+    # Seed data — ON CONFLICT DO NOTHING makes this idempotent on re-runs
     op.execute("""
         INSERT INTO roles (role_name, description) VALUES
         ('public', 'Default role, basic document translation and form access'),
         ('court_official', 'Real-time speech translation access'),
         ('interpreter', 'Side-by-side translation review and correction'),
         ('admin', 'Full system access, user management, monitoring')
+        ON CONFLICT (role_name) DO NOTHING
     """)
 
     # 2. Users table
@@ -81,10 +83,11 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("user_id"),
         sa.UniqueConstraint("email"),
         sa.UniqueConstraint("firebase_uid"),
+        if_not_exists=True,
     )
 
-    op.create_index("idx_users_email", "users", ["email"])
-    op.create_index("idx_users_firebase_uid", "users", ["firebase_uid"])
+    op.create_index("idx_users_email", "users", ["email"], if_not_exists=True)
+    op.create_index("idx_users_firebase_uid", "users", ["firebase_uid"], if_not_exists=True)
 
     # 3. Sessions table
     op.create_table(
@@ -106,10 +109,11 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(["user_id"], ["users.user_id"]),
         sa.PrimaryKeyConstraint("session_id"),
+        if_not_exists=True,
     )
 
-    op.create_index("idx_sessions_user_id", "sessions", ["user_id"])
-    op.create_index("idx_sessions_status", "sessions", ["status"])
+    op.create_index("idx_sessions_user_id", "sessions", ["user_id"], if_not_exists=True)
+    op.create_index("idx_sessions_status", "sessions", ["status"], if_not_exists=True)
 
     # 4. Translation requests table
     op.create_table(
@@ -141,9 +145,10 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(["session_id"], ["sessions.session_id"]),
         sa.PrimaryKeyConstraint("request_id"),
+        if_not_exists=True,
     )
 
-    op.create_index("idx_translation_requests_session_id", "translation_requests", ["session_id"])
+    op.create_index("idx_translation_requests_session_id", "translation_requests", ["session_id"], if_not_exists=True)
 
     # 5. Audit logs table
     op.create_table(
@@ -161,11 +166,12 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["session_id"], ["sessions.session_id"]),
         sa.ForeignKeyConstraint(["request_id"], ["translation_requests.request_id"]),
         sa.PrimaryKeyConstraint("audit_id"),
+        if_not_exists=True,
     )
 
-    op.create_index("idx_audit_logs_user_id", "audit_logs", ["user_id"])
-    op.create_index("idx_audit_logs_session_id", "audit_logs", ["session_id"])
-    op.create_index("idx_audit_logs_created_at", "audit_logs", ["created_at"])
+    op.create_index("idx_audit_logs_user_id", "audit_logs", ["user_id"], if_not_exists=True)
+    op.create_index("idx_audit_logs_session_id", "audit_logs", ["session_id"], if_not_exists=True)
+    op.create_index("idx_audit_logs_created_at", "audit_logs", ["created_at"], if_not_exists=True)
 
     # 6. Form catalog table
     op.create_table(
@@ -185,10 +191,11 @@ def upgrade() -> None:
         sa.CheckConstraint("status IN ('active', 'archived')", name="form_catalog_status_check"),
         sa.PrimaryKeyConstraint("form_id"),
         sa.UniqueConstraint("form_slug"),
+        if_not_exists=True,
     )
 
-    op.create_index("idx_form_catalog_status", "form_catalog", ["status"])
-    op.create_index("idx_form_catalog_slug", "form_catalog", ["form_slug"])
+    op.create_index("idx_form_catalog_status", "form_catalog", ["status"], if_not_exists=True)
+    op.create_index("idx_form_catalog_slug", "form_catalog", ["form_slug"], if_not_exists=True)
 
     # 7. Form versions table
     op.create_table(
@@ -209,9 +216,10 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["form_id"], ["form_catalog.form_id"]),
         sa.PrimaryKeyConstraint("version_id"),
         sa.UniqueConstraint("form_id", "version", name="form_versions_form_id_version_key"),
+        if_not_exists=True,
     )
 
-    op.create_index("idx_form_versions_form_id", "form_versions", ["form_id"])
+    op.create_index("idx_form_versions_form_id", "form_versions", ["form_id"], if_not_exists=True)
 
     # 8. Form appearances table
     op.create_table(
@@ -227,19 +235,26 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "form_id", "division", "section_heading", name="form_appearances_form_id_division_section_heading_key"
         ),
+        if_not_exists=True,
     )
 
-    op.create_index("idx_form_appearances_form_id", "form_appearances", ["form_id"])
-    op.create_index("idx_form_appearances_division", "form_appearances", ["division"])
+    op.create_index("idx_form_appearances_form_id", "form_appearances", ["form_id"], if_not_exists=True)
+    op.create_index("idx_form_appearances_division", "form_appearances", ["division"], if_not_exists=True)
 
 
 def downgrade() -> None:
-    """Drop all tables."""
-    op.drop_table("form_appearances")
-    op.drop_table("form_versions")
-    op.drop_table("form_catalog")
-    op.drop_table("audit_logs")
-    op.drop_table("translation_requests")
-    op.drop_table("sessions")
-    op.drop_table("users")
-    op.drop_table("roles")
+    """
+    Drop all Cloud SQL schema tables in reverse dependency order.
+
+    NOTE: This will destroy all data in the tables listed below.
+    On Cloud SQL, use 'alembic stamp 002' to revert the revision
+    pointer without executing any SQL.
+    """
+    op.drop_table("form_appearances", if_exists=True)
+    op.drop_table("form_versions", if_exists=True)
+    op.drop_table("form_catalog", if_exists=True)
+    op.drop_table("audit_logs", if_exists=True)
+    op.drop_table("translation_requests", if_exists=True)
+    op.drop_table("sessions", if_exists=True)
+    op.drop_table("users", if_exists=True)
+    op.drop_table("roles", if_exists=True)

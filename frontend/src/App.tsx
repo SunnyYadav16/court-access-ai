@@ -40,6 +40,9 @@ import AdminUsers from "@/screens/admin/AdminUsers"
 import AdminForms from "@/screens/admin/AdminForms"
 import InterpreterReview from "@/screens/admin/InterpreterReview"
 
+// Settings
+import Settings from "@/screens/settings/Settings"
+
 /** Full-screen loading spinner during auth initialization */
 function LoadingSpinner() {
   return (
@@ -85,6 +88,11 @@ export default function App() {
 
   // Auto-navigate to role-appropriate home screen on authentication
   useEffect(() => {
+    if (authState === "unauthenticated") {
+      setScreen(SCREENS.LANDING)
+      return
+    }
+
     if (authState === "authenticated" && role) {
       switch (role) {
         case "public":
@@ -135,6 +143,8 @@ export default function App() {
       case SCREENS.ADMIN_USERS:      return <AdminUsers onNav={onNav} />
       case SCREENS.ADMIN_FORMS:      return <AdminForms onNav={onNav} />
       case SCREENS.INTERPRETER_REVIEW: return <InterpreterReview onNav={onNav} />
+      // Settings
+      case SCREENS.SETTINGS:         return <Settings onNav={onNav} />
       default:                       return <LandingScreen onNav={onNav} />
     }
   }

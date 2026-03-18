@@ -2,6 +2,9 @@ import { ScreenId, SCREENS } from "@/lib/constants"
 import { Card, CardContent } from "@/components/ui/card"
 import TopBar from "@/components/shared/TopBar"
 import ScreenLabel from "@/components/shared/ScreenLabel"
+import WelcomeBanner from "@/components/shared/WelcomeBanner"
+import { useAuth } from "@/hooks/useAuth"
+import { getFirstName } from "@/lib/utils"
 
 interface Props { onNav: (s: ScreenId) => void }
 
@@ -31,6 +34,7 @@ const FeatureCard = ({ icon, title, desc, badge, onClick }: {
   </Card>
 )
 
+// TODO: Replace with sessionsApi call
 const sessions = [
   { id: "S-20260222-001", lang: "Spanish", type: "Real-Time", time: "Today, 9:15 AM", dur: "42 min" },
   { id: "S-20260221-014", lang: "Portuguese", type: "Document", time: "Yesterday, 2:30 PM", dur: "—" },
@@ -38,25 +42,22 @@ const sessions = [
 ]
 
 export default function HomeOfficial({ onNav }: Props) {
+  const { backendUser } = useAuth()
+  const firstName = getFirstName(backendUser?.name, backendUser?.email)
+
   return (
     <div className="min-h-screen" style={{ background: "#F6F7F9" }}>
-      <TopBar user="judge.thompson@mass.gov" role="court_official" onNav={onNav} />
+      <TopBar onNav={onNav} />
 
-      {/* Welcome banner */}
-      <div className="px-5 py-3" style={{ background: "#EFF6FF", borderBottom: "1px solid #BFDBFE" }}>
-        <div className="max-w-xl mx-auto">
-          <p className="text-xs leading-relaxed" style={{ color: "#1e40af" }}>
-            👋 <strong>Welcome back, Judge Thompson.</strong> As a court official, you can start
-            live real-time interpretation sessions, upload documents for translation, or access
-            pre-translated court forms using the services below.
-          </p>
-        </div>
-      </div>
+      <WelcomeBanner
+        firstName={firstName}
+        roleDescription="As a court official, you can start live real-time interpretation sessions, upload documents for translation, or access pre-translated court forms using the services below."
+      />
 
-      <div className="max-w-xl mx-auto px-5 py-8">
+      <div className="max-w-7xl mx-auto px-5 py-8">
         <h1 className="text-2xl font-bold mb-1"
           style={{ fontFamily: "Palatino, Georgia, serif", color: "#1A2332" }}>
-          Welcome, Judge Thompson
+          Welcome, {firstName}
         </h1>
         <p className="text-sm mb-6" style={{ color: "#4A5568" }}>
           Court translation and interpretation services
