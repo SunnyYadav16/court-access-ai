@@ -31,6 +31,15 @@ class UserRole(StrEnum):
     ADMIN = "admin"  # System administrators
 
 
+# Role ID to role name mapping (matches db/models.py Role table)
+ROLE_ID_TO_NAME: dict[int, str] = {
+    1: UserRole.PUBLIC,
+    2: UserRole.COURT_OFFICIAL,
+    3: UserRole.INTERPRETER,
+    4: UserRole.ADMIN,
+}
+
+
 class Language(StrEnum):
     """Supported output languages for translation."""
 
@@ -51,11 +60,59 @@ class DocumentStatus(StrEnum):
 
 
 class SessionStatus(StrEnum):
-    """States for a real-time interpretation session."""
+    """States for a session."""
 
     ACTIVE = "active"
-    PAUSED = "paused"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
     ENDED = "ended"
+
+
+class SessionType(StrEnum):
+    """Session types."""
+
+    REALTIME = "realtime"
+    DOCUMENT = "document"
+
+
+class TargetLanguage(StrEnum):
+    """Target languages for translation."""
+
+    SPANISH = "spa_Latn"
+    PORTUGUESE = "por_Latn"
+
+
+class TranslationRequestStatus(StrEnum):
+    """Translation request statuses."""
+
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    REJECTED = "rejected"
+
+
+class ClassificationResult(StrEnum):
+    """Document classification results."""
+
+    LEGAL = "LEGAL"
+    NOT_LEGAL = "NOT_LEGAL"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Role schemas
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class RoleResponse(BaseModel):
+    """Role definition."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    role_id: int
+    role_name: str
+    description: str | None
+    created_at: datetime
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -63,49 +120,47 @@ class SessionStatus(StrEnum):
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-class TokenResponse(BaseModel):
-    """JWT token pair returned after successful login."""
-
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"  # noqa: S105
-    expires_in: int = Field(description="Seconds until access_token expires")
-
-
-class TokenRefreshRequest(BaseModel):
-    """Request body for refreshing an access token."""
-
-    refresh_token: str
-
-
-class LoginRequest(BaseModel):
-    """Credentials for username/password login."""
-
-    username: str = Field(min_length=3, max_length=64)
-    password: str = Field(min_length=8)
-
-
-class RegisterRequest(BaseModel):
-    """New user registration payload."""
-
-    username: str = Field(min_length=3, max_length=64)
-    email: EmailStr
-    password: str = Field(min_length=8, description="Min 8 chars, must include a digit")
-    preferred_language: Language = Language.ENGLISH
-    role: UserRole = UserRole.PUBLIC
-
-
 class UserResponse(BaseModel):
-    """Public user representation (no password fields)."""
+    """Public user representation — matches actual database schema."""
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
     user_id: uuid.UUID
-    username: str
     email: EmailStr
-    role: UserRole
-    preferred_language: Language
+    name: str
+    role: str = Field(default="unknown", description="Role name: public, court_official, interpreter, admin")
+    firebase_uid: str | None
+    auth_provider: str
+    email_verified: bool
+    mfa_enabled: bool
+    role_approved_by: uuid.UUID | None
+    role_approved_at: datetime | None
     created_at: datetime
+    last_login_at: datetime | None
+
+    @classmethod
+    def from_orm_user(cls, user) -> UserResponse:
+        """Create UserResponse from User ORM object with role name mapping."""
+        return cls(
+            user_id=user.user_id,
+            email=user.email,
+            name=user.name,
+            role=ROLE_ID_TO_NAME.get(user.role_id, "unknown"),
+            firebase_uid=user.firebase_uid,
+            auth_provider=user.auth_provider,
+            email_verified=user.email_verified,
+            mfa_enabled=user.mfa_enabled,
+            role_approved_by=user.role_approved_by,
+            role_approved_at=user.role_approved_at,
+            created_at=user.created_at,
+            last_login_at=user.last_login_at,
+        )
+
+
+class RoleUpdateRequest(BaseModel):
+    """Request body for role selection."""
+
+    selected_role: UserRole = Field(description="Role to assign: public, court_official, or interpreter")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -174,26 +229,33 @@ class DocumentListResponse(BaseModel):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Real-time session schemas
+# Session schemas
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 class SessionCreateRequest(BaseModel):
-    """Create a new real-time interpretation session."""
+    """Create a new session (realtime or document)."""
 
-    target_language: Language = Language.SPANISH
-    source_language: Language = Language.ENGLISH
+    type: SessionType
+    target_language: TargetLanguage = TargetLanguage.SPANISH
+    source_language: str = "en"
 
 
 class SessionResponse(BaseModel):
-    """Created session metadata returned to the client."""
+    """Session metadata."""
+
+    model_config = ConfigDict(from_attributes=True)
 
     session_id: uuid.UUID
-    websocket_url: str = Field(description="WebSocket endpoint for this session")
-    status: SessionStatus = SessionStatus.ACTIVE
+    user_id: uuid.UUID | None = None
+    type: SessionType | None = None
+    target_language: TargetLanguage | str
+    source_language: str | None = None
+    input_file_gcs_path: str | None = None
+    status: SessionStatus
     created_at: datetime
-    target_language: Language
-    source_language: Language
+    completed_at: datetime | None = None
+    websocket_url: str | None = Field(default=None, description="WebSocket endpoint for realtime sessions")
 
 
 class SessionParticipantRequest(BaseModel):
@@ -232,25 +294,81 @@ class WebSocketMessage(BaseModel):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Translation Request schemas
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TranslationRequestResponse(BaseModel):
+    """Translation request details."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    request_id: uuid.UUID
+    session_id: uuid.UUID
+    target_language: TargetLanguage
+    classification_result: ClassificationResult | None
+    output_file_gcs_path: str | None
+    avg_confidence_score: float | None
+    pii_findings_count: int
+    llama_corrections_count: int
+    processing_time_seconds: float | None
+    status: TranslationRequestStatus
+    signed_url: str | None
+    signed_url_expires_at: datetime | None
+    created_at: datetime
+    completed_at: datetime | None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Audit Log schemas
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class AuditLogResponse(BaseModel):
+    """Audit log entry."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    audit_id: uuid.UUID
+    user_id: uuid.UUID
+    session_id: uuid.UUID | None
+    request_id: uuid.UUID | None
+    action_type: str
+    details: dict[str, Any] | None
+    created_at: datetime
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Form catalog schemas
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-class FormAppearance(BaseModel):
+class FormAppearanceResponse(BaseModel):
     """A single court division + section heading where this form appears."""
 
+    model_config = ConfigDict(from_attributes=True)
+
+    appearance_id: uuid.UUID
+    form_id: uuid.UUID
     division: str
     section_heading: str
 
 
-class FormVersion(BaseModel):
+class FormVersionResponse(BaseModel):
     """One version record for a court form."""
 
+    model_config = ConfigDict(from_attributes=True)
+
+    version_id: uuid.UUID
+    form_id: uuid.UUID
     version: int
     content_hash: str
-    file_url_original: str | None = Field(default=None, description="Signed GCS URL for original EN PDF")
-    file_url_es: str | None = Field(default=None, description="Signed GCS URL for Spanish PDF")
-    file_url_pt: str | None = Field(default=None, description="Signed GCS URL for Portuguese PDF")
+    file_type: str
+    file_path_original: str
+    file_path_es: str | None
+    file_path_pt: str | None
+    file_type_es: str | None
+    file_type_pt: str | None
     created_at: datetime
 
 
@@ -263,13 +381,18 @@ class FormResponse(BaseModel):
     form_name: str
     form_slug: str
     source_url: str
+    file_type: str
     status: str = Field(description="'active' or 'archived'")
+    content_hash: str
     current_version: int
     needs_human_review: bool
-    languages_available: list[str] = Field(default_factory=list)
-    appearances: list[FormAppearance] = Field(default_factory=list)
-    latest_version: FormVersion | None = None
-    last_scraped_at: datetime | None = None
+    preprocessing_flags: list[Any] | None
+    created_at: datetime
+    last_scraped_at: datetime | None
+
+    # Related data (populated via joins)
+    versions: list[FormVersionResponse] = Field(default_factory=list)
+    appearances: list[FormAppearanceResponse] = Field(default_factory=list)
 
 
 class FormListResponse(BaseModel):

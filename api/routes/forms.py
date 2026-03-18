@@ -284,7 +284,7 @@ async def submit_form_review(
         "Form review submitted: form_id=%s approved=%s reviewer=%s notes=%s",
         form_id,
         decision.approved,
-        user["user_id"],
+        user.user_id,
         decision.reviewer_notes,
     )
 
@@ -292,7 +292,7 @@ async def submit_form_review(
     return {
         "form_id": str(form_id),
         "approved": decision.approved,
-        "reviewed_by": user["user_id"],
+        "reviewed_by": str(user.user_id),
         "notes": decision.reviewer_notes,
         "message": "Review decision recorded (STUB — not yet persisted)",
     }

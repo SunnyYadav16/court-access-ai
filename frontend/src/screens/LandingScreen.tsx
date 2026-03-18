@@ -1,6 +1,7 @@
-import { ScreenId, SCREENS } from "@/lib/constants"
+import { ScreenId } from "@/lib/constants"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import useAuthStore from "@/store/authStore"
 
 interface Props { onNav: (s: ScreenId) => void }
 
@@ -32,7 +33,9 @@ const features = [
   { icon: "🔒", label: "Secure & Private" },
 ]
 
-export default function LandingScreen({ onNav }: Props) {
+export default function LandingScreen({ onNav: _onNav }: Props) {
+  const openAuthModal = useAuthStore((s) => s.openAuthModal);
+
   return (
     <div className="min-h-screen" style={{ background: "#F6F7F9", fontFamily: "'Segoe UI', sans-serif" }}>
 
@@ -51,15 +54,26 @@ export default function LandingScreen({ onNav }: Props) {
           </span>
         </div>
         <Button
-          onClick={() => onNav(SCREENS.LOGIN)}
-          className="cursor-pointer"
-          style={{ background: "#0B1D3A" }}>
+          onClick={() => openAuthModal("login")}
+          className="cursor-pointer transition-all"
+          style={{
+            background: "#C8963E",
+            color: "#fff",
+            border: "none",
+            fontWeight: 600
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "#B8852E";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "#C8963E";
+          }}>
           Sign In
         </Button>
       </nav>
 
       {/* Hero */}
-      <div className="max-w-3xl mx-auto px-6 py-20 text-center">
+      <div className="max-w-6xl mx-auto px-6 py-20 text-center">
         <div className="text-5xl mb-6">⚖</div>
         <h1 className="text-4xl font-bold mb-4 leading-tight"
           style={{ fontFamily: "Palatino, Georgia, serif", color: "#0B1D3A" }}>
@@ -84,15 +98,30 @@ export default function LandingScreen({ onNav }: Props) {
         </div>
 
         <Button
-          onClick={() => onNav(SCREENS.LOGIN)}
-          className="cursor-pointer px-8 py-3 text-base h-auto"
-          style={{ background: "#0B1D3A" }}>
+          onClick={() => openAuthModal("login")}
+          className="cursor-pointer px-8 py-3 text-base h-auto transition-all shadow-md"
+          style={{
+            background: "#C8963E",
+            color: "#fff",
+            fontWeight: 600,
+            border: "none"
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "#B8852E";
+            e.currentTarget.style.transform = "translateY(-1px)";
+            e.currentTarget.style.boxShadow = "0 8px 16px rgba(200, 150, 62, 0.3)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "#C8963E";
+            e.currentTarget.style.transform = "translateY(0)";
+            e.currentTarget.style.boxShadow = "0 4px 6px rgba(0, 0, 0, 0.1)";
+          }}>
           Sign In to Use Services
         </Button>
         <p className="text-xs mt-3" style={{ color: "#8494A7" }}>
           Don't have an account?{" "}
           <button
-            onClick={() => onNav(SCREENS.SIGNUP)}
+            onClick={() => openAuthModal("signup")}
             className="font-semibold cursor-pointer"
             style={{ color: "#2563eb", background: "none", border: "none" }}>
             Create one for free
@@ -101,7 +130,7 @@ export default function LandingScreen({ onNav }: Props) {
       </div>
 
       {/* About */}
-      <div className="max-w-3xl mx-auto px-6 pb-16">
+      <div className="max-w-6xl mx-auto px-6 pb-16">
         <div className="rounded-xl p-8 text-center mb-16"
           style={{ background: "#fff", border: "1px solid #E2E6EC" }}>
           <h2 className="text-2xl font-bold mb-3"
@@ -155,9 +184,22 @@ export default function LandingScreen({ onNav }: Props) {
             Sign in to access translation and interpretation services.
           </p>
           <Button
-            onClick={() => onNav(SCREENS.LOGIN)}
-            className="cursor-pointer px-8"
-            style={{ background: "#C8963E", color: "#fff", border: "none" }}>
+            onClick={() => openAuthModal("login")}
+            className="cursor-pointer px-8 transition-all"
+            style={{
+              background: "#C8963E",
+              color: "#fff",
+              border: "none",
+              fontWeight: 600
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "#B8852E";
+              e.currentTarget.style.transform = "translateY(-1px)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "#C8963E";
+              e.currentTarget.style.transform = "translateY(0)";
+            }}>
             Sign In to Use Services
           </Button>
         </div>

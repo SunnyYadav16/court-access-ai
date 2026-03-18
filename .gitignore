@@ -14,12 +14,14 @@ __pycache__/
 .installed.cfg
 .eggs/
 develop-eggs/
-dist/
-build/
+# Python build directories (using specific paths to avoid catching source folders)
+/dist/
+/build/
 MANIFEST
-downloads/
+/downloads/
 eggs/
-lib/
+# Python virtual environment lib folders (not source code)
+**/site-packages/
 lib64/
 parts/
 sdist/
@@ -80,6 +82,15 @@ ipython_config.py
 .env
 .envrc
 !.env.example
+frontend/.env
+!frontend/.env.example
+
+# Firebase service account keys and other secrets (CRITICAL - DO NOT COMMIT)
+secrets/
+**/service-account*.json
+**/firebase-adminsdk*.json
+**/*credentials*.json
+!.vscode/settings.json
 
 # ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store
@@ -103,7 +114,8 @@ Thumbs.db
 # ── Misc Python tools ────────────────────────────────────────────────────────
 .scrapy
 .pybuilder/
-target/
+# Maven/Java target directory (using specific path to avoid catching other target folders)
+/target/
 /site
 .pypirc
 celerybeat-schedule
@@ -115,7 +127,8 @@ celerybeat.pid
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
-instance/
+# Flask instance folder (using specific path to avoid catching other instance folders)
+/instance/
 .webassets-cache
 docs/_build/
 marimo/_static/
@@ -128,9 +141,10 @@ __marimo__/
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ── Airflow runtime directories (bind-mounted in Docker, never committed) ─────
-logs/
-plugins/
-config/
+# Only ignore Airflow-specific directories, not source code folders
+/logs/
+/plugins/
+/config/
 airflow.cfg
 airflow.db
 unittests.cfg
@@ -146,11 +160,11 @@ db/pgdata/
 dvc_storage/
 
 # ── GCP resources ────────────────────────────────────────────────────────────
-.config
+# GCP configuration directory (contains service account keys)
+.config/
 
 # ── DVC-tracked data (actual data ignored, pointer files allowed) ─────────────
 courtaccess/data/*
-!courtaccess/data/.gitignore
 !courtaccess/data/*.dvc
 
 # ── Downloaded court forms (DVC-tracked, NOT git) ─────────────────────────────
@@ -167,10 +181,15 @@ frontend/dist/
 frontend/dist-ssr/
 frontend/.eslintcache
 frontend/coverage/
+frontend/tsconfig.app.tsbuildinfo
+
+# pnpm
+.pnpm-store/
+node_modules/
 
 # ── Downloaded & translated PDFs (DVC-tracked, not Git) ──────────────────────
-downloads/
-temp/
+/downloads/
+/temp/
 docs/_build/
 
 # ── Docker artifacts ──────────────────────────────────────────────────────────

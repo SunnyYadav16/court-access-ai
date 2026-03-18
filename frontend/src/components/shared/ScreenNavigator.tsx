@@ -23,6 +23,7 @@ const ALL_SCREENS: [ScreenId, string][] = [
   [SCREENS.ADMIN_USERS, "👥 Admin Users"],
   [SCREENS.ADMIN_FORMS, "🗂 Admin Forms"],
   [SCREENS.INTERPRETER_REVIEW, "✏️ Interpreter Review"],
+  [SCREENS.SETTINGS, "⚙️ Settings"],
 ]
 
 interface Props {
@@ -36,7 +37,7 @@ export default function ScreenNavigator({ current, onNav }: Props) {
       style={{ background: "#0a0f1a", borderRight: "1px solid rgba(255,255,255,0.06)" }}>
       <div className="text-[10px] uppercase tracking-widest px-2 py-1 mb-1"
         style={{ color: "rgba(255,255,255,0.3)" }}>
-        22 Screens
+        23 Screens
       </div>
       {ALL_SCREENS.map(([id, label]) => (
         <button

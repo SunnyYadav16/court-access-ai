@@ -1,8 +1,11 @@
 """
 api/tests/test_auth.py
 
-Unit tests for api/auth.py — JWT creation, decoding, and password utilities.
-Uses no database or external services.
+[DEPRECATED] Unit tests for legacy JWT authentication.
+
+NOTE: These tests are for legacy JWT code that has been removed from the system.
+The application now uses Firebase Authentication exclusively.
+This file can be safely deleted or replaced with Firebase auth tests.
 """
 
 from __future__ import annotations
