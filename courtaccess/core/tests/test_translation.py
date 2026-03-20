@@ -168,7 +168,7 @@ class TestExtractCitations:
 
     def test_extracts_url(self):
         _, placeholders = self.t._extract_citations("Visit https://www.mass.gov/courts for more info.")
-        assert any("mass.gov" in v for v in placeholders.values())
+        assert any(v == "https://www.mass.gov/courts" for v in placeholders.values())
 
     def test_placeholder_format(self):
         _, placeholders = self.t._extract_citations("Under G.L. c. 263.")
