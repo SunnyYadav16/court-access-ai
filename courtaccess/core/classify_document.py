@@ -24,24 +24,36 @@ OUTPUT CONTRACT (success):
   }
 
 RAISES:
+  ClassificationError if the AI response cannot be parsed or is missing required
+    keys — callers must treat this as a hard-reject (fail closed).
+  RuntimeError on Vertex auth or network failure.
   ValueError if classification == "non_legal" and caller should hard-reject.
 """
 
 import json
 import logging
-import os
+
+from courtaccess.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_USE_REAL = os.getenv("USE_REAL_CLASSIFICATION", "false").lower() == "true"
-_VERTEX_PROJECT = os.getenv("VERTEX_PROJECT_ID", "")
-_VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", "us-east5")
-_VERTEX_MODEL = os.getenv(
-    "VERTEX_MODEL_ID",
-    "meta/llama-4-maverick-17b-128e-instruct-maas",
-)
-_GCP_SA_JSON = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "")
+_USE_REAL = settings.use_real_classification
+_VERTEX_PROJECT = settings.vertex_project_id
+_VERTEX_LOCATION = settings.vertex_location
+_VERTEX_MODEL = settings.vertex_model_id
+_GCP_SA_JSON = settings.gcp_service_account_json
 _MAX_PAGES = 3  # only classify first 3 pages
+
+
+class ClassificationError(Exception):
+    """
+    Raised when the AI classifier returns a response that cannot be used:
+      - Non-JSON output
+      - JSON missing required keys ('classification' or 'confidence')
+
+    Callers must treat this as a hard-reject (fail closed) — do not
+    silently pass the document through.
+    """
 
 
 def classify_document(pdf_path: str) -> dict:
@@ -111,12 +123,13 @@ def _real_classify(pdf_path: str) -> dict:
     Production classifier via Vertex AI (Llama 4 Maverick).
     Reads first 3 pages via PyMuPDF, sends text to Llama for classification.
 
-    Bad response (non-JSON, missing keys) → falls back to stub result
-    rather than crashing the pipeline, since classification is a gate
-    check and a false positive is safer than a pipeline crash.
+    Fail-closed on bad AI responses: a non-JSON reply or a response missing
+    required keys raises ClassificationError rather than falling back to a
+    stub that unconditionally approves documents.
 
     RAISES:
-        RuntimeError on Vertex auth or network failure.
+        ClassificationError: AI response is unparseable or missing required keys.
+        RuntimeError: Vertex auth or network failure.
     """
     import pymupdf
 
@@ -151,16 +164,28 @@ def _real_classify(pdf_path: str) -> dict:
         raw = response.choices[0].message.content.strip()
         raw = raw.replace("```json", "").replace("```", "").strip()
 
-        # ── Bad response guard — fall back to stub rather than crash ─────────
+        # ── Fail-closed response guard ────────────────────────────────────────
+        # A bad AI response must never silently approve a document.
         try:
             result = json.loads(raw)
         except json.JSONDecodeError as exc:
-            logger.warning("[REAL CLASSIFY] Bad JSON from Vertex (%s) — falling back to stub", exc)
-            return _stub_classify(pdf_path)
+            logger.error(
+                "[REAL CLASSIFY] Vertex returned non-JSON for '%s' — failing closed. raw=%r error=%s",
+                pdf_path,
+                raw[:200],
+                exc,
+            )
+            raise ClassificationError(f"Vertex AI returned unparseable JSON for '{pdf_path}': {exc}") from exc
 
-        if "classification" not in result or "confidence" not in result:
-            logger.warning("[REAL CLASSIFY] Missing keys in Vertex response — falling back to stub")
-            return _stub_classify(pdf_path)
+        missing = [k for k in ("classification", "confidence") if k not in result]
+        if missing:
+            logger.error(
+                "[REAL CLASSIFY] Vertex response missing keys %s for '%s' — failing closed. result=%r",
+                missing,
+                pdf_path,
+                result,
+            )
+            raise ClassificationError(f"Vertex AI response missing required keys {missing} for '{pdf_path}'")
 
         result["pages_reviewed"] = pages_read
         logger.info(
@@ -171,6 +196,8 @@ def _real_classify(pdf_path: str) -> dict:
         )
         return result
 
+    except ClassificationError:
+        raise  # propagate as-is — distinct from a transport/auth failure
     except Exception as exc:
         logger.error("[REAL CLASSIFY] Vertex AI failed: %s", exc)
         raise RuntimeError(f"Document classification failed: {exc}") from exc

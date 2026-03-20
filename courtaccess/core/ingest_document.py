@@ -169,13 +169,18 @@ def classify_page(page) -> dict:
 
 def is_content_image(info: dict) -> bool:
     """
-    Returns True only if a page has absolutely no content —
-    no spans, no drawings, no images, and coverage > 95%.
-    Almost no real page meets this bar — prefer attempting OCR
-    over silently skipping.
+    Returns True only if a SCANNED page has absolutely no extractable
+    content — no spans, no drawings, no images, and coverage > 95%.
+    Almost no real page meets this bar — prefer attempting OCR over
+    silently skipping.
+
+    DIGITAL pages always return False: they have selectable text by
+    definition and must never be skipped regardless of image coverage.
 
     Source: Cell 5 is_content_image() — updated logic.
     """
+    if not info.get("is_scanned", True):
+        return False
     return info["img_coverage"] > 95.0 and info["span_count"] == 0 and info["drawings"] == 0 and info["images"] == 0
 
 

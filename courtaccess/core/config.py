@@ -34,7 +34,6 @@ class Settings(BaseSettings):
     gcp_region: str = "us-east1"
 
     # ── API keys ──────────────────────────────────────────────────────────────
-    redis_url: str = "redis://localhost:6379"
     secret_key: str = "change-me-in-production"  # noqa: S105
 
     # ── Vertex AI (Llama 4 — primary legal review provider) ──────────────────
@@ -58,6 +57,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379"
 
     # ── Model toggles (set to true in prod to use real models) ───────────────
+    use_real_classification: bool = False
     use_real_translation: bool = False
     use_real_legal_review: bool = False
     use_vertex_legal_review: bool = False  # True = Vertex AI, False = Groq fallback

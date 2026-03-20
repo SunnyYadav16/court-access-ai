@@ -5,7 +5,7 @@ Shared fixtures available to all test modules across the project:
   - mock_db_session   : async SQLAlchemy session mock
   - mock_gcs_client   : Google Cloud Storage client mock
   - mock_vertex_ai    : Vertex AI / Groq Llama response mock
-  - mock_redis        : Redis client mock (session-scoped)
+  - mock_redis        : Redis client mock (function-scoped)
 """
 
 from unittest.mock import AsyncMock, MagicMock
@@ -95,11 +95,15 @@ def mock_vertex_ai():
 # ── Redis ─────────────────────────────────────────────────────────────────────
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def mock_redis():
     """
     Mock Redis client. Patches redis.Redis so no real instance is needed.
     get() returns None by default (cache miss), set() and ping() succeed.
+
+    Function-scoped (default) so each test receives a fresh MagicMock with
+    clean call counts and default return values — prevents state leakage when
+    one test overrides mock_redis.get.return_value or asserts call counts.
 
     Use in tests that exercise LegalReviewer with USE_REAL_LEGAL_REVIEW=true:
 

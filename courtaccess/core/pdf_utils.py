@@ -25,36 +25,36 @@ logger = logging.getLogger(__name__)
 
 # ── Font map (display reference) ─────────────────────────────────────────────
 FONT_MAP = {
-    "Helvetica":             "helv",
-    "Helvetica-Bold":        "hebo",
-    "Helvetica-Oblique":     "heit",
+    "Helvetica": "helv",
+    "Helvetica-Bold": "hebo",
+    "Helvetica-Oblique": "heit",
     "Helvetica-BoldOblique": "hebi",
-    "Times-Roman":           "tiro",
-    "Times-Bold":            "tibo",
-    "Times-Italic":          "tiit",
-    "Times-BoldItalic":      "tibi",
-    "Courier":               "cour",
-    "Courier-Bold":          "cobo",
-    "Courier-Oblique":       "coit",
-    "Courier-BoldOblique":   "cobi",
-    "Symbol":                "symb",
-    "ZapfDingbats":          "zadb",
+    "Times-Roman": "tiro",
+    "Times-Bold": "tibo",
+    "Times-Italic": "tiit",
+    "Times-BoldItalic": "tibi",
+    "Courier": "cour",
+    "Courier-Bold": "cobo",
+    "Courier-Oblique": "coit",
+    "Courier-BoldOblique": "cobi",
+    "Symbol": "symb",
+    "ZapfDingbats": "zadb",
 }
 
 # ── CSS font families (used by insert_htmlbox) ────────────────────────────────
 CSS_FONTS = {
-    "helv": ("Helvetica, Arial, sans-serif",  False, False),
-    "hebo": ("Helvetica, Arial, sans-serif",  True,  False),
-    "heit": ("Helvetica, Arial, sans-serif",  False, True),
-    "hebi": ("Helvetica, Arial, sans-serif",  True,  True),
-    "tiro": ("'Times New Roman', serif",      False, False),
-    "tibo": ("'Times New Roman', serif",      True,  False),
-    "tiit": ("'Times New Roman', serif",      False, True),
-    "tibi": ("'Times New Roman', serif",      True,  True),
-    "cour": ("'Courier New', monospace",      False, False),
-    "cobo": ("'Courier New', monospace",      True,  False),
-    "coit": ("'Courier New', monospace",      False, True),
-    "cobi": ("'Courier New', monospace",      True,  True),
+    "helv": ("Helvetica, Arial, sans-serif", False, False),
+    "hebo": ("Helvetica, Arial, sans-serif", True, False),
+    "heit": ("Helvetica, Arial, sans-serif", False, True),
+    "hebi": ("Helvetica, Arial, sans-serif", True, True),
+    "tiro": ("'Times New Roman', serif", False, False),
+    "tibo": ("'Times New Roman', serif", True, False),
+    "tiit": ("'Times New Roman', serif", False, True),
+    "tibi": ("'Times New Roman', serif", True, True),
+    "cour": ("'Courier New', monospace", False, False),
+    "cobo": ("'Courier New', monospace", True, False),
+    "coit": ("'Courier New', monospace", False, True),
+    "cobi": ("'Courier New', monospace", True, True),
 }
 
 
@@ -62,31 +62,20 @@ CSS_FONTS = {
 # Font utilities — Cell 4
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def get_font_code(span: dict) -> str:
     """
     Map a PyMuPDF span to the closest built-in font code.
     Source: Cell 4 get_font_code()
     """
     fontname = span.get("font", "")
-    flags    = span.get("flags", 0)
+    flags = span.get("flags", 0)
 
-    is_bold = (
-        bool(flags & 16) or
-        any(w in fontname.lower() for w in ["bold", "black", "heavy", "demi"])
-    )
-    is_italic = (
-        bool(flags & 2) or
-        any(w in fontname.lower() for w in ["italic", "oblique", "slant"])
-    )
-    is_mono = (
-        bool(flags & 8) or
-        any(w in fontname.lower() for w in
-            ["courier", "mono", "typewriter", "fixed"])
-    )
-    is_serif = (
-        bool(flags & 4) or
-        any(w in fontname.lower() for w in
-            ["times", "serif", "nimbus", "georgia", "garamond", "palatino"])
+    is_bold = bool(flags & 16) or any(w in fontname.lower() for w in ["bold", "black", "heavy", "demi"])
+    is_italic = bool(flags & 2) or any(w in fontname.lower() for w in ["italic", "oblique", "slant"])
+    is_mono = bool(flags & 8) or any(w in fontname.lower() for w in ["courier", "mono", "typewriter", "fixed"])
+    is_serif = bool(flags & 4) or any(
+        w in fontname.lower() for w in ["times", "serif", "nimbus", "georgia", "garamond", "palatino"]
     )
 
     if is_mono:
@@ -148,6 +137,7 @@ def fit_fontsize(
 # Color utilities — Cell 4
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def safe_color(span) -> tuple:
     """
     Convert span color to (r, g, b) 0.0-1.0 tuple.
@@ -165,8 +155,8 @@ def safe_color(span) -> tuple:
         return (0.0, 0.0, 0.0)
 
     r = ((n >> 16) & 0xFF) / 255.0
-    g = ((n >>  8) & 0xFF) / 255.0
-    b = ( n        & 0xFF) / 255.0
+    g = ((n >> 8) & 0xFF) / 255.0
+    b = (n & 0xFF) / 255.0
     return (r, g, b)
 
 
@@ -187,9 +177,7 @@ def get_background_color(page, bbox: tuple) -> tuple:
     Source: Cell 4 get_background_color()
     """
     try:
-        pix = page.get_pixmap(
-            clip=pymupdf.Rect(bbox), matrix=pymupdf.Matrix(1, 1)
-        )
+        pix = page.get_pixmap(clip=pymupdf.Rect(bbox), matrix=pymupdf.Matrix(1, 1))
         s = pix.samples
         if len(s) >= 3:
             return (s[0] / 255, s[1] / 255, s[2] / 255)
@@ -205,10 +193,10 @@ def get_background_color(page, bbox: tuple) -> tuple:
 
 # Source: Cell 9 _FORM_FIELD_RE
 _FORM_FIELD_RE = re.compile(
-    r'^(X|DATE|BBO\s*NO\.?|DOCKET\s*NO\.?|PRINT\s*NAME'
-    r'|COURT\s*DIVISION|DEFENDANT\s*NAME'
-    r'|SECTION\s*\d+\s*:?'
-    r'|SIGNATURE(\s+OF\s+\w+(\s+\w+)*)?)$',
+    r"^(X|DATE|BBO\s*NO\.?|DOCKET\s*NO\.?|PRINT\s*NAME"
+    r"|COURT\s*DIVISION|DEFENDANT\s*NAME"
+    r"|SECTION\s*\d+\s*:?"
+    r"|SIGNATURE(\s+OF\s+\w+(\s+\w+)*)?)$",
     re.IGNORECASE,
 )
 
@@ -222,11 +210,11 @@ def _is_blank_fill_line(text: str) -> bool:
     t = text.strip()
     if not t:
         return True
-    if re.match(r'^[\s_\-]{4,}$', t):
+    if re.match(r"^[\s_\-]{4,}$", t):
         return True
-    if re.match(r'^\$[\s_\-\.]{3,}$', t):
+    if re.match(r"^\$[\s_\-\.]{3,}$", t):
         return True
-    return len(re.sub(r'[\s_\-]', '', t)) == 0
+    return len(re.sub(r"[\s_\-]", "", t)) == 0
 
 
 def _should_never_translate(text: str) -> bool:
@@ -237,7 +225,7 @@ def _should_never_translate(text: str) -> bool:
     t = text.strip()
     if t.upper() in {"PRINT", "CLEAR", "SUBMIT", "RESET", "SAVE"}:
         return True
-    return bool(re.search(r'https?://|www\.', t, re.IGNORECASE))
+    return bool(re.search(r"https?://|www\.", t, re.IGNORECASE))
 
 
 def _is_form_field_line(text: str) -> bool:
@@ -262,12 +250,12 @@ def _classify(text: str, n_lines: int) -> str:
             return "FORM_LABEL"
         return "SKIP"
     # Numbered/lettered list items → FORM_LABEL
-    if re.match(r'^([A-Za-z]|\d+|[ivxlcdmIVXLCDM]+)[\.\)]\s+\w', text):
+    if re.match(r"^([A-Za-z]|\d+|[ivxlcdmIVXLCDM]+)[\.\)]\s+\w", text):
         return "FORM_LABEL"
     all_caps = all(c.isupper() for c in letters)
-    if n_lines <= 2 and any(re.search(p, text) for p in
-            [r"G\.L\.", r"§", r"CERTIFICATE", r"WAIVER",
-             r"REQUIRED BY", r"OPTIONAL"]):
+    if n_lines <= 2 and any(
+        re.search(p, text) for p in [r"G\.L\.", r"§", r"CERTIFICATE", r"WAIVER", r"REQUIRED BY", r"OPTIONAL"]
+    ):
         return "HEADER"
     if all_caps and len(text) < 80 and n_lines <= 3:
         return "FORM_LABEL"
@@ -301,7 +289,7 @@ def _lines_are_same_row(ln1: dict, ln2: dict, tolerance: float = 3.0) -> bool:
     """
     y0_1, y1_1 = ln1["bbox"][1], ln1["bbox"][3]
     y0_2, y1_2 = ln2["bbox"][1], ln2["bbox"][3]
-    overlap    = min(y1_1, y1_2) - max(y0_1, y0_2)
+    overlap = min(y1_1, y1_2) - max(y0_1, y0_2)
     min_height = min(y1_1 - y0_1, y1_2 - y0_2)
     return overlap > min_height * 0.5
 
@@ -331,9 +319,7 @@ def _group_lines_into_rows(lines: list, tolerance: float = 3.0) -> list:
     return rows
 
 
-def _split_line_by_columns(
-    line: dict, block_x1: float | None = None, gap: float = 15.0
-) -> list:
+def _split_line_by_columns(line: dict, block_x1: float | None = None, gap: float = 15.0) -> list:
     """
     Split a line into column clusters based on horizontal gaps between spans.
     Returns list of column dicts with text, orig_rect, avail_rect, first_span.
@@ -358,16 +344,17 @@ def _split_line_by_columns(
         text = " ".join(s["text"] for s in cl).strip()
         if not text:
             continue
-        x0   = cl[0]["bbox"][0]
-        x1   = (clusters[i + 1][0]["bbox"][0] - 2.0
-                if i + 1 < len(clusters) else right)
+        x0 = cl[0]["bbox"][0]
+        x1 = clusters[i + 1][0]["bbox"][0] - 2.0 if i + 1 < len(clusters) else right
         y0, y1 = line["bbox"][1], line["bbox"][3]
-        result.append({
-            "text":       text,
-            "orig_rect":  pymupdf.Rect(x0, y0, cl[-1]["bbox"][2], y1),
-            "avail_rect": pymupdf.Rect(x0, y0, max(x1, x0 + 10), y1),
-            "first_span": cl[0],
-        })
+        result.append(
+            {
+                "text": text,
+                "orig_rect": pymupdf.Rect(x0, y0, cl[-1]["bbox"][2], y1),
+                "avail_rect": pymupdf.Rect(x0, y0, max(x1, x0 + 10), y1),
+                "first_span": cl[0],
+            }
+        )
     return result
 
 
@@ -379,8 +366,10 @@ def _union_rects(rects: list):
     if not rects:
         return pymupdf.Rect()
     return pymupdf.Rect(
-        min(r.x0 for r in rects), min(r.y0 for r in rects),
-        max(r.x1 for r in rects), max(r.y1 for r in rects),
+        min(r.x0 for r in rects),
+        min(r.y0 for r in rects),
+        max(r.x1 for r in rects),
+        max(r.y1 for r in rects),
     )
 
 
@@ -405,30 +394,30 @@ def _find_tightest_cell(line_rect, cell_rects: list, pad: float = 4.0):
     Used for grid-aware width calculation only — not for placement.
     Source: Cell 9 _find_tightest_cell()
     """
-    best      = None
+    best = None
     best_area = float("inf")
     for cell in cell_rects:
         expanded = pymupdf.Rect(
-            cell.x0 - pad, cell.y0 - pad,
-            cell.x1 + pad, cell.y1 + pad,
+            cell.x0 - pad,
+            cell.y0 - pad,
+            cell.x1 + pad,
+            cell.y1 + pad,
         )
         if expanded.contains(line_rect):
             area = cell.width * cell.height
             if area < best_area:
                 best_area = area
-                best      = cell
+                best = cell
     return best
 
 
-def _get_available_width(
-    avail_rect, cell_rects: list, page_width: float = 594.0
-) -> float:
+def _get_available_width(avail_rect, cell_rects: list, page_width: float = 594.0) -> float:
     """
     Compute available text width considering form table cell boundaries.
     Falls back to distance-to-right-margin for free-floating text.
     Source: Cell 9 _get_available_width()
     """
-    x0    = avail_rect.x0
+    x0 = avail_rect.x0
     y_mid = (avail_rect.y0 + avail_rect.y1) / 2
 
     best_width = None
@@ -444,7 +433,7 @@ def _get_available_width(
     if best_width is not None:
         return best_width
 
-    return (page_width - 36) - x0   # 36pt right margin
+    return (page_width - 36) - x0  # 36pt right margin
 
 
 def _get_block_units(blk: dict) -> list:
@@ -462,31 +451,24 @@ def _get_block_units(blk: dict) -> list:
 
     Source: Cell 9 _get_block_units() — exact logic, inner closures preserved.
     """
-    all_spans = [
-        s for ln in blk["lines"]
-        for s in ln["spans"] if s["text"].strip()
-    ]
+    all_spans = [s for ln in blk["lines"] for s in ln["spans"] if s["text"].strip()]
     if not all_spans:
         return []
 
     block_first = all_spans[0]
-    block_rect  = pymupdf.Rect(blk["bbox"])
+    block_rect = pymupdf.Rect(blk["bbox"])
 
     # Detect alignment from non-trivial lines
-    tls = [
-        ln for ln in blk["lines"]
-        if " ".join(s["text"] for s in ln["spans"]).strip()
-        not in ("", "X")
-    ]
-    alignment   = _detect_alignment(tls, block_rect) if tls else "left"
-    is_centered = (alignment == "center")
-    is_right    = (alignment == "right")
+    tls = [ln for ln in blk["lines"] if " ".join(s["text"] for s in ln["spans"]).strip() not in ("", "X")]
+    alignment = _detect_alignment(tls, block_rect) if tls else "left"
+    is_centered = alignment == "center"
+    is_right = alignment == "right"
 
     prose_texts: list = []
-    prose_orig:  list = []
+    prose_orig: list = []
     prose_avail: list = []
     prose_spans: list = []
-    units:       list = []
+    units: list = []
 
     def _flush():
         if not prose_texts:
@@ -498,22 +480,24 @@ def _get_block_units(blk: dict) -> list:
             prose_avail.clear()
             prose_spans.clear()
             return
-        ou   = _union_rects(prose_orig)
-        av   = pymupdf.Rect(block_rect.x0, ou.y0, block_rect.x1, ou.y1)
-        fs   = prose_spans[0] if prose_spans else block_first
-        ut   = _classify(text, len(prose_texts))
+        ou = _union_rects(prose_orig)
+        av = pymupdf.Rect(block_rect.x0, ou.y0, block_rect.x1, ou.y1)
+        fs = prose_spans[0] if prose_spans else block_first
+        ut = _classify(text, len(prose_texts))
         lets = [c for c in text if c.isalpha()]
-        units.append({
-            "text":       text,
-            "orig_rect":  ou,
-            "avail_rect": av,
-            "unit_type":  ut,
-            "first_span": fs,
-            "is_caps":    bool(lets) and all(c.isupper() for c in lets),
-            "is_centered": is_centered,
-            "is_right":   is_right,
-            "preserve":   False,
-        })
+        units.append(
+            {
+                "text": text,
+                "orig_rect": ou,
+                "avail_rect": av,
+                "unit_type": ut,
+                "first_span": fs,
+                "is_caps": bool(lets) and all(c.isupper() for c in lets),
+                "is_centered": is_centered,
+                "is_right": is_right,
+                "preserve": False,
+            }
+        )
         prose_texts.clear()
         prose_orig.clear()
         prose_avail.clear()
@@ -521,36 +505,34 @@ def _get_block_units(blk: dict) -> list:
 
     def _emit(text, orig_r, avail_r, fs, preserve=False):
         lets = [c for c in text if c.isalpha()]
-        units.append({
-            "text":       text.strip(),
-            "orig_rect":  orig_r,
-            "avail_rect": avail_r,
-            "unit_type":  "FORM_LABEL",
-            "first_span": fs,
-            "is_caps":    bool(lets) and all(c.isupper() for c in lets),
-            "is_centered": False,
-            "is_right":   False,
-            "preserve":   preserve,
-        })
+        units.append(
+            {
+                "text": text.strip(),
+                "orig_rect": orig_r,
+                "avail_rect": avail_r,
+                "unit_type": "FORM_LABEL",
+                "first_span": fs,
+                "is_caps": bool(lets) and all(c.isupper() for c in lets),
+                "is_centered": False,
+                "is_right": False,
+                "preserve": preserve,
+            }
+        )
 
     for row in _group_lines_into_rows(blk["lines"]):
-
         if len(row) > 1:
             # Side-by-side columns — emit each as its own unit
             _flush()
             for k, ln in enumerate(row):
-                t = " ".join(
-                    s["text"] for s in ln["spans"] if s["text"].strip()
-                ).strip()
+                t = " ".join(s["text"] for s in ln["spans"] if s["text"].strip()).strip()
                 if not t or t.strip() == "X":
                     continue
-                x0     = ln["bbox"][0]
-                x1     = (row[k + 1]["bbox"][0] - 2.0
-                          if k + 1 < len(row) else block_rect.x1)
+                x0 = ln["bbox"][0]
+                x1 = row[k + 1]["bbox"][0] - 2.0 if k + 1 < len(row) else block_rect.x1
                 y0, y1 = ln["bbox"][1], ln["bbox"][3]
                 orig_r = pymupdf.Rect(ln["bbox"])
                 avail_r = pymupdf.Rect(x0, y0, x1, y1)
-                fs     = ln["spans"][0] if ln["spans"] else block_first
+                fs = ln["spans"][0] if ln["spans"] else block_first
                 if _is_blank_fill_line(t) or _should_never_translate(t):
                     _emit(t, orig_r, avail_r, fs, preserve=True)
                 else:
@@ -558,7 +540,7 @@ def _get_block_units(blk: dict) -> list:
             continue
 
         # Single line
-        ln   = row[0]
+        ln = row[0]
         cols = _split_line_by_columns(ln, block_rect.x1)
 
         if len(cols) > 1:
@@ -568,7 +550,10 @@ def _get_block_units(blk: dict) -> list:
                 if not t or t.strip() == "X" or _is_blank_fill_line(t):
                     continue
                 _emit(
-                    t, cl["orig_rect"], cl["avail_rect"], cl["first_span"],
+                    t,
+                    cl["orig_rect"],
+                    cl["avail_rect"],
+                    cl["first_span"],
                     preserve=_should_never_translate(t),
                 )
         elif len(cols) == 1:
@@ -578,23 +563,19 @@ def _get_block_units(blk: dict) -> list:
                 continue
             if _is_blank_fill_line(text):
                 _flush()
-                _emit(text, cl["orig_rect"], cl["avail_rect"],
-                      cl["first_span"], preserve=True)
+                _emit(text, cl["orig_rect"], cl["avail_rect"], cl["first_span"], preserve=True)
                 continue
             if _should_never_translate(text):
                 _flush()
-                _emit(text, cl["orig_rect"], cl["avail_rect"],
-                      cl["first_span"], preserve=True)
+                _emit(text, cl["orig_rect"], cl["avail_rect"], cl["first_span"], preserve=True)
                 continue
             if _is_form_field_line(text):
                 _flush()
-                _emit(text, cl["orig_rect"], cl["avail_rect"],
-                      cl["first_span"])
+                _emit(text, cl["orig_rect"], cl["avail_rect"], cl["first_span"])
                 continue
             if _classify(text, 1) in ("FORM_LABEL", "HEADER"):
                 _flush()
-                _emit(text, cl["orig_rect"], cl["avail_rect"],
-                      cl["first_span"])
+                _emit(text, cl["orig_rect"], cl["avail_rect"], cl["first_span"])
                 continue
             prose_texts.append(text)
             prose_orig.append(cl["orig_rect"])

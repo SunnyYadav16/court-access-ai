@@ -4,9 +4,8 @@ courtaccess/core/legal_review.py
 LegalReviewer class for Llama-based legal terminology verification.
 
 Provider priority (controlled by env vars):
-  1. Vertex AI — Llama 4 Maverick (USE_VERTEX_LEGAL_REVIEW=true)
-  2. Groq      — Llama 3.1 fallback (USE_REAL_LEGAL_REVIEW=true + GROQ_API_KEY)
-  3. Stub      — always returns OK (default)
+  1. Vertex AI — Llama 4 Maverick (USE_VERTEX_LEGAL_REVIEW=true + USE_REAL_LEGAL_REVIEW=true)
+  2. Stub      — always returns OK (default)
 
 Translation cache (Redis-backed):
   Caches Llama verification results keyed by SHA-256 of
@@ -42,9 +41,9 @@ _NOT_VERIFIED_PREFIX = "[NOT VERIFIED — Vertex AI unavailable]"
 
 class LegalReviewer:
     """
-    Verifies translated legal text using Llama 4 (Vertex AI) or
-    Llama 3.1 (Groq fallback). Caches results in Redis to avoid
-    redundant API calls across container restarts.
+    Verifies translated legal text using Llama 4 via Vertex AI.
+    Caches results in Redis to avoid redundant API calls across
+    container restarts.
 
     Instantiate once at app startup per language:
         reviewer = LegalReviewer(config, glossary.glossary)
@@ -438,10 +437,10 @@ class LegalReviewer:
         Find glossary terms in texts and build reference string.
         Source: Cell 7 _build_glossary_snippet()
         """
-        combined = " ".join(texts).lower()
+        combined = " ".join(texts).casefold()
         matches = {}
         for term in sorted(self.glossary, key=len, reverse=True):
-            if term in combined:
+            if term.casefold() in combined:
                 matches[term] = self.glossary[term]
             if len(matches) >= 15:
                 break
