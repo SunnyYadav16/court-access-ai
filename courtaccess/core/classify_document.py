@@ -4,11 +4,12 @@ courtaccess/core/classify_document.py
 Document classifier: determines if an uploaded PDF is a legal document
 or an irrelevant file that should be rejected.
 
-Uses Llama 3.1 via Groq API (first 3 pages only — fast and cost-effective).
+Uses Llama 4 via Vertex AI (first 3 pages only — fast and cost-effective).
+Same auth pattern as legal_review.py — service account JSON from env.
 
 STUB/REAL HYBRID:
   - Stub: always returns "legal" to allow pipeline testing end-to-end.
-  - Real: calls Groq API with Llama 3.1. Enabled with USE_REAL_CLASSIFICATION=true.
+  - Real: calls Vertex AI with Llama 4. Enabled with USE_REAL_CLASSIFICATION=true.
 
 PRODUCTION NOTES:
   - Hard-rejects non-legal docs — the pipeline stops here for invalid uploads.
@@ -26,15 +27,21 @@ RAISES:
   ValueError if classification == "non_legal" and caller should hard-reject.
 """
 
+import json
+import logging
 import os
 
-from courtaccess.core.logger import get_logger
-
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 _USE_REAL = os.getenv("USE_REAL_CLASSIFICATION", "false").lower() == "true"
-_GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-_MAX_PAGES = 3  # Only classify the first 3 pages
+_VERTEX_PROJECT = os.getenv("VERTEX_PROJECT_ID", "")
+_VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", "us-east5")
+_VERTEX_MODEL = os.getenv(
+    "VERTEX_MODEL_ID",
+    "meta/llama-4-maverick-17b-128e-instruct-maas",
+)
+_GCP_SA_JSON = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "")
+_MAX_PAGES = 3  # only classify first 3 pages
 
 
 def classify_document(pdf_path: str) -> dict:
@@ -55,7 +62,7 @@ def classify_document(pdf_path: str) -> dict:
     if not Path(pdf_path).exists():
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
-    if _USE_REAL and _GROQ_API_KEY:
+    if _USE_REAL and _VERTEX_PROJECT and _GCP_SA_JSON:
         return _real_classify(pdf_path)
     return _stub_classify(pdf_path)
 
@@ -74,20 +81,47 @@ def _stub_classify(pdf_path: str) -> dict:
     }
 
 
+def _get_vertex_client():
+    """
+    Build OpenAI-compatible Vertex AI client.
+    Same auth pattern as LegalReviewer._get_vertex_client().
+    """
+    import google.auth.transport.requests
+    from google.oauth2 import service_account
+    from openai import OpenAI
+
+    credentials = service_account.Credentials.from_service_account_info(
+        json.loads(_GCP_SA_JSON),
+        scopes=["https://www.googleapis.com/auth/cloud-platform"],
+    )
+    credentials.refresh(google.auth.transport.requests.Request())
+
+    return OpenAI(
+        base_url=(
+            f"https://{_VERTEX_LOCATION}-aiplatform.googleapis.com/v1"
+            f"/projects/{_VERTEX_PROJECT}"
+            f"/locations/{_VERTEX_LOCATION}/endpoints/openapi"
+        ),
+        api_key=credentials.token,
+    )
+
+
 def _real_classify(pdf_path: str) -> dict:
     """
-    Production classifier via Groq API (Llama 3.1).
+    Production classifier via Vertex AI (Llama 4 Maverick).
     Reads first 3 pages via PyMuPDF, sends text to Llama for classification.
 
+    Bad response (non-JSON, missing keys) → falls back to stub result
+    rather than crashing the pipeline, since classification is a gate
+    check and a false positive is safer than a pipeline crash.
+
     RAISES:
-        RuntimeError on Groq API failure (caller should surface error to user).
+        RuntimeError on Vertex auth or network failure.
     """
-    import json as _json
+    import pymupdf
 
-    import fitz  # PyMuPDF
-
-    # Extract text from first N pages
-    doc = fitz.open(pdf_path)
+    # ── Extract text from first N pages ──────────────────────────────────────
+    doc = pymupdf.open(pdf_path)
     pages_text = []
     pages_read = min(_MAX_PAGES, len(doc))
     for i in range(pages_read):
@@ -96,27 +130,38 @@ def _real_classify(pdf_path: str) -> dict:
 
     excerpt = "\n\n".join(pages_text)[:4000]  # cap tokens
 
-    try:
-        from groq import Groq
+    prompt = (
+        "You are a document classifier for Massachusetts courts. "
+        "Determine if the following document excerpt is a legal document "
+        "(court forms, legal filings, affidavits, motions, orders, etc.) "
+        "or a non-legal document. "
+        "Respond ONLY with JSON: "
+        '{"classification":"legal"|"non_legal","confidence":0.0-1.0,"reason":"..."}\n\n'
+        f"DOCUMENT EXCERPT:\n{excerpt}"
+    )
 
-        client = Groq(api_key=_GROQ_API_KEY)
-        prompt = (
-            "You are a document classifier for Massachusetts courts. "
-            "Determine if the following document excerpt is a legal document "
-            "(court forms, legal filings, affidavits, motions, orders, etc.) "
-            "or a non-legal document. "
-            'Respond ONLY with JSON: {"classification":"legal"|"non_legal","confidence":0.0-1.0,"reason":"..."}\n\n'
-            f"DOCUMENT EXCERPT:\n{excerpt}"
-        )
+    try:
+        client = _get_vertex_client()
         response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model=_VERTEX_MODEL,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,
             max_tokens=200,
         )
         raw = response.choices[0].message.content.strip()
         raw = raw.replace("```json", "").replace("```", "").strip()
-        result = _json.loads(raw)
+
+        # ── Bad response guard — fall back to stub rather than crash ─────────
+        try:
+            result = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            logger.warning("[REAL CLASSIFY] Bad JSON from Vertex (%s) — falling back to stub", exc)
+            return _stub_classify(pdf_path)
+
+        if "classification" not in result or "confidence" not in result:
+            logger.warning("[REAL CLASSIFY] Missing keys in Vertex response — falling back to stub")
+            return _stub_classify(pdf_path)
+
         result["pages_reviewed"] = pages_read
         logger.info(
             "[REAL CLASSIFY] '%s' → %s (confidence=%.2f)",
@@ -127,5 +172,5 @@ def _real_classify(pdf_path: str) -> dict:
         return result
 
     except Exception as exc:
-        logger.error("[REAL CLASSIFY] Groq API failed: %s", exc)
+        logger.error("[REAL CLASSIFY] Vertex AI failed: %s", exc)
         raise RuntimeError(f"Document classification failed: {exc}") from exc
