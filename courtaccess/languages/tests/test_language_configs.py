@@ -53,11 +53,9 @@ class TestSpanishConfig:
         keys = list(self.config.court_name_translations.keys())
         sorted_keys = sorted(keys, key=len, reverse=True)
         # "Massachusetts Trial Court" must come before "Trial Court"
-        assert sorted_keys.index("Massachusetts Trial Court") < \
-            sorted_keys.index("Trial Court")
+        assert sorted_keys.index("Massachusetts Trial Court") < sorted_keys.index("Trial Court")
         # "Land Court Department" must come before "Land Court"
-        assert sorted_keys.index("Land Court Department") < \
-            sorted_keys.index("Land Court")
+        assert sorted_keys.index("Land Court Department") < sorted_keys.index("Land Court")
 
     def test_critical_court_translations(self):
         ct = self.config.court_name_translations
@@ -90,8 +88,8 @@ class TestSpanishConfig:
 
     def test_glossary_skip_lines_contains_key_strings(self):
         assert "glossary of legal" in self.config.glossary_skip_lines
-        assert "revised"           in self.config.glossary_skip_lines
-        assert "introduction"      in self.config.glossary_skip_lines
+        assert "revised" in self.config.glossary_skip_lines
+        assert "introduction" in self.config.glossary_skip_lines
 
 
 class TestPortugueseConfig:
@@ -100,6 +98,7 @@ class TestPortugueseConfig:
     not translation values. Full tests added when Portuguese
     Colab script is provided.
     """
+
     def setup_method(self):
         self.config = get_language_config("portuguese")
 
@@ -119,33 +118,36 @@ class TestPortugueseConfig:
         # so the pipeline can look up any court name regardless of language
         es = get_language_config("spanish").court_name_translations
         pt = self.config.court_name_translations
-        assert set(es.keys()) == set(pt.keys()), (
-            "Portuguese court name keys must match Spanish. "
-            "Missing: " + str(set(es.keys()) - set(pt.keys()))
+        assert set(es.keys()) == set(pt.keys()), "Portuguese court name keys must match Spanish. Missing: " + str(
+            set(es.keys()) - set(pt.keys())
         )
 
     def test_form_tokens_keys_match_spanish(self):
         es = get_language_config("spanish").form_token_translations
         pt = self.config.form_token_translations
-        assert set(es.keys()) == set(pt.keys()), (
-            "Portuguese form token keys must match Spanish. "
-            "Missing: " + str(set(es.keys()) - set(pt.keys()))
+        assert set(es.keys()) == set(pt.keys()), "Portuguese form token keys must match Spanish. Missing: " + str(
+            set(es.keys()) - set(pt.keys())
         )
 
     def test_is_stub(self):
         # Confirms Portuguese is still a stub —
         # remove this test when real values are added
-        assert "[PT STUB]" in list(
-            self.config.court_name_translations.values()
-        ), "Portuguese stub marker missing — did you add real values?"
+        assert "[PT STUB]" in list(self.config.court_name_translations.values()), (
+            "Portuguese stub marker missing — did you add real values?"
+        )
+        assert self.config.ready_for_production is False, (
+            "Portuguese should be marked ready_for_production=False until real translation values are provided."
+        )
 
     def test_glossary_skip_lines_is_set(self):
         # Portuguese stub — empty set is correct until PT script provided
         assert isinstance(self.config.glossary_skip_lines, set)
 
+
 class TestBaseConfig:
     def test_llama_lang_label_defaults_to_display_name(self):
         from courtaccess.languages.base import LanguageConfig
+
         config = LanguageConfig(
             code="test",
             display_name="Test Language",
@@ -157,14 +159,19 @@ class TestBaseConfig:
 
     def test_empty_dicts_are_independent(self):
         from courtaccess.languages.base import LanguageConfig
+
         c1 = LanguageConfig(
-            code="a", display_name="A",
-            nllb_source="eng_Latn", nllb_target="a_Latn",
+            code="a",
+            display_name="A",
+            nllb_source="eng_Latn",
+            nllb_target="a_Latn",
             glossary_path="data/glossaries/a.json",
         )
         c2 = LanguageConfig(
-            code="b", display_name="B",
-            nllb_source="eng_Latn", nllb_target="b_Latn",
+            code="b",
+            display_name="B",
+            nllb_source="eng_Latn",
+            nllb_target="b_Latn",
             glossary_path="data/glossaries/b.json",
         )
         c1.court_name_translations["test"] = "value"
@@ -172,14 +179,19 @@ class TestBaseConfig:
 
     def test_glossary_skip_lines_independent(self):
         from courtaccess.languages.base import LanguageConfig
+
         c1 = LanguageConfig(
-            code="a", display_name="A",
-            nllb_source="eng_Latn", nllb_target="a_Latn",
+            code="a",
+            display_name="A",
+            nllb_source="eng_Latn",
+            nllb_target="a_Latn",
             glossary_path="data/glossaries/a.json",
         )
         c2 = LanguageConfig(
-            code="b", display_name="B",
-            nllb_source="eng_Latn", nllb_target="b_Latn",
+            code="b",
+            display_name="B",
+            nllb_source="eng_Latn",
+            nllb_target="b_Latn",
             glossary_path="data/glossaries/b.json",
         )
         c1.glossary_skip_lines.add("test_string")

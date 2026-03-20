@@ -167,7 +167,7 @@ class TestSafeColor:
 
     def test_float_tuple_passthrough(self):
         result = safe_color({"color": (0.5, 0.25, 0.75)})
-        assert abs(result[0] - 0.5)  < 0.01
+        assert abs(result[0] - 0.5) < 0.01
         assert abs(result[1] - 0.25) < 0.01
         assert abs(result[2] - 0.75) < 0.01
 
@@ -190,8 +190,7 @@ class TestSafeColor:
         assert abs(r - 1.0) < 0.01
 
     def test_all_values_in_range(self):
-        for color_int in [0x000000, 0xFFFFFF, 0xFF0000,
-                          0x00FF00, 0x0000FF, 0x808080]:
+        for color_int in [0x000000, 0xFFFFFF, 0xFF0000, 0x00FF00, 0x0000FF, 0x808080]:
             r, g, b = safe_color({"color": color_int})
             assert 0.0 <= r <= 1.0
             assert 0.0 <= g <= 1.0
@@ -225,9 +224,18 @@ class TestConstants:
 
     def test_css_fonts_covers_all_variants(self):
         expected = [
-            "helv", "hebo", "heit", "hebi",
-            "tiro", "tibo", "tiit", "tibi",
-            "cour", "cobo", "coit", "cobi",
+            "helv",
+            "hebo",
+            "heit",
+            "hebi",
+            "tiro",
+            "tibo",
+            "tiit",
+            "tibi",
+            "cour",
+            "cobo",
+            "coit",
+            "cobi",
         ]
         for code in expected:
             assert code in CSS_FONTS, f"'{code}' missing from CSS_FONTS"
@@ -235,7 +243,7 @@ class TestConstants:
     def test_css_fonts_tuple_structure(self):
         for code, val in CSS_FONTS.items():
             assert isinstance(val, tuple), f"{code}: expected tuple"
-            assert len(val) == 3,          f"{code}: expected 3 items"
-            assert isinstance(val[0], str),  f"{code}: family must be str"
+            assert len(val) == 3, f"{code}: expected 3 items"
+            assert isinstance(val[0], str), f"{code}: family must be str"
             assert isinstance(val[1], bool), f"{code}: bold must be bool"
             assert isinstance(val[2], bool), f"{code}: italic must be bool"

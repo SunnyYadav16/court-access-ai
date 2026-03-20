@@ -90,6 +90,12 @@ class RealtimeSession:
         lang_map = {"spa_Latn": "spanish", "por_Latn": "portuguese"}
         _lang = lang_map.get(target_language, "spanish")
         _config = get_language_config(_lang)
+        if not _config.ready_for_production:
+            raise ValueError(
+                f"Language '{_lang}' is not ready for production use "
+                f"(stub config with placeholder values). "
+                f"Switch to a supported language or complete the language config first."
+            )
         self._translator = Translator(_config).load()
         self._reviewer = LegalReviewer(_config, glossary={}, verification_mode="audio")
         logger.info("Session %s created (target_language=%s).", session_id, target_language)

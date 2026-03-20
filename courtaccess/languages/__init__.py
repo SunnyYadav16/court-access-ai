@@ -7,12 +7,16 @@ Usage:
     config = get_language_config("spanish")
 """
 
+import logging
+
 from courtaccess.languages.base import LanguageConfig
 from courtaccess.languages.portuguese import PORTUGUESE_CONFIG
 from courtaccess.languages.spanish import SPANISH_CONFIG
 
+logger = logging.getLogger(__name__)
+
 _REGISTRY: dict[str, LanguageConfig] = {
-    "spanish":    SPANISH_CONFIG,
+    "spanish": SPANISH_CONFIG,
     "portuguese": PORTUGUESE_CONFIG,
 }
 
@@ -34,11 +38,15 @@ def get_language_config(language: str) -> LanguageConfig:
     key = language.lower().strip()
     if key not in _REGISTRY:
         supported = ", ".join(_REGISTRY.keys())
-        raise ValueError(
-            f"Unsupported language: '{language}'. "
-            f"Supported: {supported}"
+        raise ValueError(f"Unsupported language: '{language}'. Supported: {supported}")
+    config = _REGISTRY[key]
+    if not config.ready_for_production:
+        logger.warning(
+            "Language '%s' is not ready for production (stub config). "
+            "Set USE_REAL_TRANSLATION=false or switch to a supported language.",
+            key,
         )
-    return _REGISTRY[key]
+    return config
 
 
 def supported_languages() -> list[str]:

@@ -14,15 +14,15 @@ from dataclasses import dataclass, field
 @dataclass
 class LanguageConfig:
     # ── Identity ──────────────────────────────────────────────────────────
-    code: str                    # short code used in API: "spanish" | "portuguese"
-    display_name: str            # shown in UI: "Spanish (Español)"
+    code: str  # short code used in API: "spanish" | "portuguese"
+    display_name: str  # shown in UI: "Spanish (Español)"
 
     # ── NLLB language codes ───────────────────────────────────────────────
-    nllb_source: str             # always "eng_Latn" for our use case
-    nllb_target: str             # "spa_Latn" | "por_Latn"
+    nllb_source: str  # always "eng_Latn" for our use case
+    nllb_target: str  # "spa_Latn" | "por_Latn"
 
     # ── Glossary ──────────────────────────────────────────────────────────
-    glossary_path: str           # path to data/glossaries/glossary_xx.json
+    glossary_path: str  # path to data/glossaries/glossary_xx.json
 
     # ── Court name translations ───────────────────────────────────────────
     # Longest first — matched before NLLB so they're never mistranslated
@@ -45,7 +45,12 @@ class LanguageConfig:
 
     # ── Llama prompt language label ───────────────────────────────────────
     # Used in the Vertex AI verification prompt
-    llama_lang_label: str = ""   # "Spanish" | "Portuguese"
+    llama_lang_label: str = ""  # "Spanish" | "Portuguese"
+
+    # ── Production readiness ──────────────────────────────────────────────
+    # Set to False for stub/incomplete configs.  Production code paths must
+    # check this flag and refuse to process documents with stub languages.
+    ready_for_production: bool = True
 
     def __post_init__(self):
         # Default llama_lang_label to display_name if not set

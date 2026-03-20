@@ -206,9 +206,12 @@ class Translator:
         # Step 2 — protect proper nouns with spaCy NER → RFPN{n}RF
         protected, prop_map = self._extract_proper_nouns(protected)
 
-        # Step 3 — if nothing real left to translate, restore and return
+        # Step 3 — if nothing real left to translate, restore and return.
+        # Must pass `protected` (which contains the RFCT/RFCN/RFPN placeholders),
+        # not the original `text` (which has none), so _restore_placeholders
+        # can find and replace all the placeholder tokens.
         if self._is_preserve_only(protected):
-            return self._restore_placeholders(text, cite_map, court_map, prop_map)
+            return self._restore_placeholders(protected, cite_map, court_map, prop_map)
 
         # Step 4 — NLLB translation via CTranslate2
         try:

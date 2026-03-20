@@ -15,7 +15,7 @@ from courtaccess.forms.parse_glossary import Glossary
 from courtaccess.languages import get_language_config
 
 _GLOSSARY_DIR = Path(__file__).parent.parent.parent.parent / "data" / "glossaries"
-_ES_JSON      = _GLOSSARY_DIR / "glossary_es.json"
+_ES_JSON = _GLOSSARY_DIR / "glossary_es.json"
 _REAL_DATA_AVAILABLE = _ES_JSON.exists() and _ES_JSON.stat().st_size > 1000
 
 
@@ -28,30 +28,30 @@ def _portuguese_config():
 
 
 def _make_glossary_with_entries(entries: dict) -> Glossary:
-    g           = Glossary.__new__(Glossary)
-    g.config    = _spanish_config()
+    g = Glossary.__new__(Glossary)
+    g.config = _spanish_config()
     g.json_path = _ES_JSON
-    g.glossary  = entries
+    g.glossary = entries
     return g
 
 
 # ── Glossary.load() ───────────────────────────────────────────────────────────
 
-class TestGlossaryLoad:
 
+class TestGlossaryLoad:
     def test_load_raises_file_not_found_with_instructions(self, tmp_path):
-        g           = Glossary.__new__(Glossary)
-        g.config    = _spanish_config()
+        g = Glossary.__new__(Glossary)
+        g.config = _spanish_config()
         g.json_path = tmp_path / "nonexistent.json"
-        g.glossary  = {}
+        g.glossary = {}
         with pytest.raises(FileNotFoundError, match=r"parse_glossary\.py"):
             g.load()
 
     def test_load_raises_includes_language_code(self, tmp_path):
-        g           = Glossary.__new__(Glossary)
-        g.config    = _spanish_config()
+        g = Glossary.__new__(Glossary)
+        g.config = _spanish_config()
         g.json_path = tmp_path / "nonexistent.json"
-        g.glossary  = {}
+        g.glossary = {}
         with pytest.raises(FileNotFoundError, match="spanish"):
             g.load()
 
@@ -59,24 +59,18 @@ class TestGlossaryLoad:
         json_file = tmp_path / "glossary_es.json"
         with open(json_file, "w") as f:
             json.dump({"bail": "fianza"}, f)
-        g           = Glossary.__new__(Glossary)
-        g.config    = _spanish_config()
+        g = Glossary.__new__(Glossary)
+        g.config = _spanish_config()
         g.json_path = json_file
-        g.glossary  = {}
+        g.glossary = {}
         assert g.load() is g
 
-    @pytest.mark.skipif(
-        not _REAL_DATA_AVAILABLE,
-        reason="glossary_es.json not present"
-    )
+    @pytest.mark.skipif(not _REAL_DATA_AVAILABLE, reason="glossary_es.json not present")
     def test_load_real_glossary_has_738_terms(self):
         g = Glossary(_spanish_config()).load()
         assert len(g.glossary) == 738
 
-    @pytest.mark.skipif(
-        not _REAL_DATA_AVAILABLE,
-        reason="glossary_es.json not present"
-    )
+    @pytest.mark.skipif(not _REAL_DATA_AVAILABLE, reason="glossary_es.json not present")
     def test_load_real_glossary_is_flat_dict(self):
         g = Glossary(_spanish_config()).load()
         assert isinstance(g.glossary, dict)
@@ -84,41 +78,36 @@ class TestGlossaryLoad:
             assert isinstance(key, str)
             assert isinstance(val, str)
 
-    @pytest.mark.skipif(
-        not _REAL_DATA_AVAILABLE,
-        reason="glossary_es.json not present"
-    )
+    @pytest.mark.skipif(not _REAL_DATA_AVAILABLE, reason="glossary_es.json not present")
     def test_load_real_glossary_keys_are_lowercase(self):
         g = Glossary(_spanish_config()).load()
         for key in g.glossary:
             assert key == key.lower(), f"Key not lowercase: '{key}'"
 
-    @pytest.mark.skipif(
-        not _REAL_DATA_AVAILABLE,
-        reason="glossary_es.json not present"
-    )
+    @pytest.mark.skipif(not _REAL_DATA_AVAILABLE, reason="glossary_es.json not present")
     def test_load_real_glossary_contains_critical_terms(self):
         g = Glossary(_spanish_config()).load()
         critical = [
-            "arraignment", "bail", "defendant", "waiver",
-            "affidavit", "bench warrant",
-            "beyond a reasonable doubt", "plea",
-            "probation", "trial court",
+            "arraignment",
+            "bail",
+            "defendant",
+            "waiver",
+            "affidavit",
+            "bench warrant",
+            "beyond a reasonable doubt",
+            "plea",
+            "probation",
+            "trial court",
         ]
         missing = [t for t in critical if t not in g.glossary]
         assert not missing, f"Missing critical terms: {missing}"
 
-    @pytest.mark.skipif(
-        not _REAL_DATA_AVAILABLE,
-        reason="glossary_es.json not present"
-    )
+    @pytest.mark.skipif(not _REAL_DATA_AVAILABLE, reason="glossary_es.json not present")
     def test_load_real_glossary_legal_overrides_present(self):
         config = _spanish_config()
-        g      = Glossary(config).load()
+        g = Glossary(config).load()
         for term, translation in config.legal_overrides.items():
-            assert term.lower() in g.glossary, (
-                f"Override term '{term}' missing from glossary"
-            )
+            assert term.lower() in g.glossary, f"Override term '{term}' missing from glossary"
             assert g.glossary[term.lower()] == translation, (
                 f"Override term '{term}' has wrong translation: "
                 f"expected '{translation}', "
@@ -128,89 +117,73 @@ class TestGlossaryLoad:
 
 # ── Glossary.get_matching_terms() ─────────────────────────────────────────────
 
-class TestGetMatchingTerms:
 
+class TestGetMatchingTerms:
     def test_finds_single_term(self):
         g = _make_glossary_with_entries({"defendant": "acusado"})
-        assert g.get_matching_terms("The defendant pleads.") == {
-            "defendant": "acusado"
-        }
+        assert g.get_matching_terms("The defendant pleads.") == {"defendant": "acusado"}
 
     def test_returns_empty_when_no_match(self):
         g = _make_glossary_with_entries({"arraignment": "lectura de cargos"})
         assert g.get_matching_terms("The weather is nice.") == {}
 
     def test_longer_terms_matched_first(self):
-        g = _make_glossary_with_entries({
-            "right to counsel": "derecho a la asistencia letrada",
-            "right":            "derecho",
-        })
+        g = _make_glossary_with_entries(
+            {
+                "right to counsel": "derecho a la asistencia letrada",
+                "right": "derecho",
+            }
+        )
         result = g.get_matching_terms("The right to counsel is guaranteed.")
         assert "right to counsel" in result
         assert result["right to counsel"] == "derecho a la asistencia letrada"
 
     def test_max_terms_respected(self):
         entries = {f"term_{i}": f"valor_{i}" for i in range(20)}
-        g       = _make_glossary_with_entries(entries)
-        result  = g.get_matching_terms(" ".join(entries.keys()), max_terms=5)
+        g = _make_glossary_with_entries(entries)
+        result = g.get_matching_terms(" ".join(entries.keys()), max_terms=5)
         assert len(result) <= 5
 
     def test_case_insensitive_match(self):
         g = _make_glossary_with_entries({"defendant": "acusado"})
-        assert g.get_matching_terms("THE DEFENDANT PLEADS.") == {
-            "defendant": "acusado"
-        }
+        assert g.get_matching_terms("THE DEFENDANT PLEADS.") == {"defendant": "acusado"}
 
     def test_default_max_terms_is_8(self):
         entries = {f"word_{i}": f"palabra_{i}" for i in range(20)}
-        g       = _make_glossary_with_entries(entries)
-        result  = g.get_matching_terms(" ".join(entries.keys()))
+        g = _make_glossary_with_entries(entries)
+        result = g.get_matching_terms(" ".join(entries.keys()))
         assert len(result) <= 8
 
     def test_empty_glossary_returns_empty(self):
-        assert _make_glossary_with_entries({}).get_matching_terms(
-            "The defendant."
-        ) == {}
+        assert _make_glossary_with_entries({}).get_matching_terms("The defendant.") == {}
 
     def test_empty_text_returns_empty(self):
-        assert _make_glossary_with_entries(
-            {"defendant": "acusado"}
-        ).get_matching_terms("") == {}
+        assert _make_glossary_with_entries({"defendant": "acusado"}).get_matching_terms("") == {}
 
-    @pytest.mark.skipif(
-        not _REAL_DATA_AVAILABLE,
-        reason="glossary_es.json not present"
-    )
+    @pytest.mark.skipif(not _REAL_DATA_AVAILABLE, reason="glossary_es.json not present")
     def test_real_glossary_matches_defendant(self):
         g = Glossary(_spanish_config()).load()
-        result = g.get_matching_terms(
-            "The defendant waived their right to counsel."
-        )
+        result = g.get_matching_terms("The defendant waived their right to counsel.")
         assert "defendant" in result
         assert "right to counsel" in result
 
-    @pytest.mark.skipif(
-        not _REAL_DATA_AVAILABLE,
-        reason="glossary_es.json not present"
-    )
+    @pytest.mark.skipif(not _REAL_DATA_AVAILABLE, reason="glossary_es.json not present")
     def test_real_glossary_legal_overrides_matched(self):
         g = Glossary(_spanish_config()).load()
-        result = g.get_matching_terms(
-            "The Commonwealth proved beyond a reasonable doubt."
-        )
+        result = g.get_matching_terms("The Commonwealth proved beyond a reasonable doubt.")
         assert "beyond a reasonable doubt" in result
         assert result["beyond a reasonable doubt"] == "más allá de una duda razonable"
 
 
 # ── Glossary._should_skip() ───────────────────────────────────────────────────
 
-class TestShouldSkip:
 
+class TestShouldSkip:
     def _make_glossary(self) -> Glossary:
-        g           = Glossary.__new__(Glossary)
-        g.config    = _spanish_config()
+        g = Glossary.__new__(Glossary)
+        g.config = _spanish_config()
         g.json_path = _ES_JSON
-        g.glossary  = {}
+        g.glossary = {}
         return g
 
     def test_skips_above_top_margin(self):
@@ -226,9 +199,7 @@ class TestShouldSkip:
         assert self._make_glossary()._should_skip("A", y0=100.0)
 
     def test_skips_known_header(self):
-        assert self._make_glossary()._should_skip(
-            "glossary of legal terms", y0=100.0
-        )
+        assert self._make_glossary()._should_skip("glossary of legal terms", y0=100.0)
 
     def test_skips_revised_header(self):
         assert self._make_glossary()._should_skip("revised 2023", y0=100.0)
@@ -242,13 +213,13 @@ class TestShouldSkip:
 
 # ── Glossary.parse_pdf() ─────────────────────────────────────────────────────
 
-class TestParsePdf:
 
+class TestParsePdf:
     def test_raises_if_pdf_missing(self, tmp_path):
-        g           = Glossary.__new__(Glossary)
-        g.config    = _spanish_config()
+        g = Glossary.__new__(Glossary)
+        g.config = _spanish_config()
         g.json_path = tmp_path / "glossary_es.json"
-        g.glossary  = {}
+        g.glossary = {}
         with pytest.raises(FileNotFoundError):
             g.parse_pdf(str(tmp_path / "nonexistent.pdf"))
 
@@ -260,10 +231,10 @@ class TestParsePdf:
         doc.save(pdf_path)
         doc.close()
 
-        g           = Glossary.__new__(Glossary)
-        g.config    = _spanish_config()
+        g = Glossary.__new__(Glossary)
+        g.config = _spanish_config()
         g.json_path = tmp_path / "glossary_es.json"
-        g.glossary  = {}
+        g.glossary = {}
         assert g.parse_pdf(pdf_path) is g
 
     def test_saves_json_to_disk(self, tmp_path):
@@ -274,10 +245,10 @@ class TestParsePdf:
         doc.save(pdf_path)
         doc.close()
 
-        g           = Glossary.__new__(Glossary)
-        g.config    = _spanish_config()
+        g = Glossary.__new__(Glossary)
+        g.config = _spanish_config()
         g.json_path = tmp_path / "glossary_es.json"
-        g.glossary  = {}
+        g.glossary = {}
         g.parse_pdf(pdf_path)
         assert g.json_path.exists()
 
@@ -294,17 +265,15 @@ class TestParsePdf:
         doc.save(pdf_path)
         doc.close()
 
-        config      = _spanish_config()
-        g           = Glossary.__new__(Glossary)
-        g.config    = config
+        config = _spanish_config()
+        g = Glossary.__new__(Glossary)
+        g.config = config
         g.json_path = tmp_path / "glossary_es.json"
-        g.glossary  = {}
+        g.glossary = {}
         g.parse_pdf(pdf_path)
 
         for en_term, es_term in config.legal_overrides.items():
-            assert en_term.lower() in g.glossary, (
-                f"Override '{en_term}' missing after parse"
-            )
+            assert en_term.lower() in g.glossary, f"Override '{en_term}' missing after parse"
             assert g.glossary[en_term.lower()] == es_term
 
     def test_saved_json_is_valid_flat_dict(self, tmp_path):
@@ -315,10 +284,10 @@ class TestParsePdf:
         doc.save(pdf_path)
         doc.close()
 
-        g           = Glossary.__new__(Glossary)
-        g.config    = _spanish_config()
+        g = Glossary.__new__(Glossary)
+        g.config = _spanish_config()
         g.json_path = tmp_path / "glossary_es.json"
-        g.glossary  = {}
+        g.glossary = {}
         g.parse_pdf(pdf_path)
 
         with open(g.json_path, encoding="utf-8") as f:
