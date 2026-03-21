@@ -3,6 +3,7 @@
 #
 # Services:
 #   postgres          — shared DB for Airflow metadata + app data (dev only)
+#   redis             — translation cache for LegalReviewer (dev only)
 #   api               — FastAPI application server
 #   airflow-apiserver — Airflow UI + REST API (port 8080)
 #   airflow-scheduler — DAG scheduler
@@ -53,6 +54,9 @@ x-airflow-common:
     # Required: DVC needs to find .git across the Docker volume mount boundary.
     GIT_DISCOVERY_ACROSS_FILESYSTEM: '1'
 
+    # ── Redis (translation cache) ──
+    REDIS_URL: redis://redis:6379
+
     # ── Additional pip packages (dev only — prefer Dockerfile for production) ──
     _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-}
 
@@ -74,6 +78,8 @@ x-airflow-common:
     &airflow-common-depends-on
     postgres:
       condition: service_healthy
+    redis:
+      condition: service_healthy
 
 services:
 
@@ -84,10 +90,26 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-airflow}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
       POSTGRES_DB: ${POSTGRES_DB:-airflow}
+    ports:
+      - "5432:5432"
     volumes:
       - postgres-db-volume:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER:-airflow}"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: always
+
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       retries: 5
       start_period: 5s
@@ -110,11 +132,14 @@ services:
       SECRET_KEY: ${SECRET_KEY}
       APP_ENV: ${APP_ENV:-development}
       DEBUG: ${DEBUG:-true}
+      REDIS_URL: redis://redis:6379
     volumes:
       - ./courtaccess:/app/courtaccess   # live code reloading in dev
       - ./api:/app/api
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
 
@@ -242,3 +267,4 @@ services:
 
 volumes:
   postgres-db-volume:
+  redis-data:

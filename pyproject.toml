@@ -22,7 +22,10 @@ dependencies = [
     "faster-whisper>=1.0.0",
     "ctranslate2>=4.0.0",
     "transformers>=4.40.0",
-    "groq>=0.9.0",
+    "redis>=5.0.0",
+    "spacy>=3.7.0",
+    "openai>=1.30.0",
+    "google-auth>=2.29.0",
     # ── PDF / OCR ──
     "pymupdf>=1.23.0",
     "presidio-analyzer>=2.2.0",
@@ -94,6 +97,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = [
     "courtaccess/core/tests",
+    "courtaccess/languages/tests",
     "courtaccess/speech/tests",
     "courtaccess/forms/tests",
     "courtaccess/monitoring/tests",

@@ -26,16 +26,24 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://courtaccess:courtaccess@localhost:5432/courtaccess"
 
     # ── Google Cloud ──────────────────────────────────────────────────────────
-    gcs_bucket_uploads: str = "courtaccess-uploads"
-    gcs_bucket_translated: str = "courtaccess-translated"
-    gcs_bucket_forms: str = "courtaccess-forms"
-    gcs_bucket_models: str = "courtaccess-models"
+    gcs_bucket_uploads: str = "courtaccess-ai-uploads"
+    gcs_bucket_translated: str = "courtaccess-ai-translated"
+    gcs_bucket_forms: str = "courtaccess-ai-forms"
+    gcs_bucket_models: str = "courtaccess-ai-models"
     gcp_project_id: str = "courtaccess-ai"
     gcp_region: str = "us-east1"
 
     # ── API keys ──────────────────────────────────────────────────────────────
-    groq_api_key: str = ""
     secret_key: str = "change-me-in-production"  # noqa: S105
+
+    # ── Vertex AI (Llama 4 — primary legal review provider) ──────────────────
+    vertex_project_id: str = ""
+    vertex_location: str = "us-east5"
+    vertex_model_id: str = "meta/llama-4-maverick-17b-128e-instruct-maas"
+    gcp_service_account_json: str = ""
+
+    # ── Signed URLs ───────────────────────────────────────────────────────────
+    signed_url_expiry_seconds: int = 3600
 
     # ── Airflow ───────────────────────────────────────────────────────────────
     airflow_base_url: str = "http://airflow-webserver:8080"
@@ -45,9 +53,14 @@ class Settings(BaseSettings):
     # ── MLflow ────────────────────────────────────────────────────────────────
     mlflow_tracking_uri: str = "http://mlflow:5000"
 
+    # ── Redis (translation cache) ─────────────────────────────────────────────
+    redis_url: str = "redis://localhost:6379"
+
     # ── Model toggles (set to true in prod to use real models) ───────────────
+    use_real_classification: bool = False
     use_real_translation: bool = False
     use_real_legal_review: bool = False
+    use_vertex_legal_review: bool = False  # True = Vertex AI, False = Groq fallback
     use_real_ocr: bool = False
 
     # ── Model paths (inside container) ───────────────────────────────────────

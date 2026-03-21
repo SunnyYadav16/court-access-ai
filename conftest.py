@@ -5,11 +5,17 @@ Shared fixtures available to all test modules across the project:
   - mock_db_session   : async SQLAlchemy session mock
   - mock_gcs_client   : Google Cloud Storage client mock
   - mock_vertex_ai    : Vertex AI / Groq Llama response mock
+  - mock_redis        : Redis client mock (function-scoped)
 """
 
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+from courtaccess.core.legal_review import LegalReviewer
+from courtaccess.core.ocr_printed import OCREngine
+from courtaccess.core.translation import Translator
+from courtaccess.languages import get_language_config
 
 # ── Database ──────────────────────────────────────────────────────────────────
 
@@ -84,3 +90,76 @@ def mock_vertex_ai():
             }
         ],
     }
+
+
+# ── Redis ─────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def mock_redis():
+    """
+    Mock Redis client. Patches redis.Redis so no real instance is needed.
+    get() returns None by default (cache miss), set() and ping() succeed.
+
+    Function-scoped (default) so each test receives a fresh MagicMock with
+    clean call counts and default return values — prevents state leakage when
+    one test overrides mock_redis.get.return_value or asserts call counts.
+
+    Use in tests that exercise LegalReviewer with USE_REAL_LEGAL_REVIEW=true:
+
+        def test_cache_miss(mock_redis, reviewer_es, monkeypatch):
+            monkeypatch.setenv("USE_REAL_LEGAL_REVIEW", "true")
+            monkeypatch.setenv("REDIS_URL", "redis://localhost:6379")
+            with patch("redis.Redis.from_url", return_value=mock_redis):
+                result = reviewer_es.verify_batch(["the court"], ["el tribunal"])
+            mock_redis.get.assert_called_once()
+
+    To simulate a cache hit, override get() return value in the test:
+        mock_redis.get.return_value = b"el tribunal"
+    """
+    mock = MagicMock()
+    mock.get.return_value = None  # default: cache miss
+    mock.set.return_value = True
+    mock.ping.return_value = True
+    yield mock
+
+
+# ── Language configs ──────────────────────────────────────────────────────────
+
+
+@pytest.fixture(scope="session")
+def reviewer_es(spanish_config):
+    """Spanish LegalReviewer, empty glossary, stub mode."""
+    return LegalReviewer(spanish_config, glossary={})
+
+
+@pytest.fixture(scope="session")
+def reviewer_pt(portuguese_config):
+    """Portuguese LegalReviewer, empty glossary, stub mode."""
+    return LegalReviewer(portuguese_config, glossary={})
+
+
+@pytest.fixture(scope="session")
+def ocr_engine():
+    """OCREngine in stub mode (USE_REAL_OCR=false). Session-scoped."""
+    return OCREngine().load()
+
+
+@pytest.fixture(scope="session")
+def spanish_config():
+    return get_language_config("spanish")
+
+
+@pytest.fixture(scope="session")
+def portuguese_config():
+    return get_language_config("portuguese")
+
+
+@pytest.fixture(scope="session")
+def translator_es(spanish_config):
+    return Translator(spanish_config).load()
+
+
+@pytest.fixture(scope="session")
+def translator_pt(portuguese_config):
+    return Translator(portuguese_config).load()

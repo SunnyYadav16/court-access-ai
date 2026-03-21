@@ -28,9 +28,14 @@ import uuid
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from courtaccess.core.legal_review import review_legal_terms
+from courtaccess.core.legal_review import LegalReviewer
+
+# from courtaccess.core.legal_review import review_legal_terms
 from courtaccess.core.logger import get_logger
-from courtaccess.core.translation import translate_text
+from courtaccess.core.translation import Translator
+from courtaccess.languages import get_language_config
+
+# from courtaccess.core.translation import translate_text
 from courtaccess.speech.transcribe import transcribe_audio
 from courtaccess.speech.tts import synthesize_speech
 from courtaccess.speech.vad import detect_speech
@@ -82,6 +87,17 @@ class RealtimeSession:
             session_id=session_id,
             target_language=target_language,
         )
+        lang_map = {"spa_Latn": "spanish", "por_Latn": "portuguese"}
+        _lang = lang_map.get(target_language, "spanish")
+        _config = get_language_config(_lang)
+        if not _config.ready_for_production:
+            raise ValueError(
+                f"Language '{_lang}' is not ready for production use "
+                f"(stub config with placeholder values). "
+                f"Switch to a supported language or complete the language config first."
+            )
+        self._translator = Translator(_config).load()
+        self._reviewer = LegalReviewer(_config, glossary={}, verification_mode="audio")
         logger.info("Session %s created (target_language=%s).", session_id, target_language)
 
     def add_participant(self, participant: Participant) -> None:
@@ -130,15 +146,11 @@ class RealtimeSession:
             return {"transcript": "", "translation": "", "audio_bytes": b"", "confidence": 0.0, "legal_review": None}
 
         # Step 3: Translation
-        translation_result = translate_text(
-            text=transcript,
-            source_lang="eng_Latn",
-            target_lang=target_lang,
-        )
+        translation_result = self._translator.translate_text(transcript, target_lang)
         translated_text = translation_result["translated"]
 
         # Step 4: Legal review — fire async, don't block TTS
-        legal_task = asyncio.create_task(asyncio.to_thread(review_legal_terms, translated_text, target_lang))
+        legal_task = asyncio.create_task(asyncio.to_thread(self._reviewer.review_legal_terms, translated_text))
 
         # Step 5: TTS — synthesize translated audio immediately
         tts_result = synthesize_speech(translated_text, target_lang)

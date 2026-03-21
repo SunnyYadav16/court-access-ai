@@ -14,10 +14,7 @@ Changes from original:
 
 import pytest
 
-from courtaccess.core import legal_review as lr
-from courtaccess.core import ocr_printed as ocr
 from courtaccess.core import reconstruct_pdf as rp
-from courtaccess.core import translation as tt
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Helpers
@@ -85,30 +82,32 @@ def _sample_regions_translated(lang_tag: str) -> list[dict]:
 
 
 class TestOcrPrinted:
+    def setup_method(self):
+        from courtaccess.core.ocr_printed import OCREngine
+
+        self.engine = OCREngine().load()
+
     def test_returns_dict_with_regions_and_full_text(self, tmp_path):
         pdf = tmp_path / "test.pdf"
         _make_pdf(pdf)
-        result = ocr.extract_text_from_pdf(str(pdf))
+        result = self.engine.extract_text_from_pdf(str(pdf))
         assert "regions" in result
         assert "full_text" in result
 
     def test_regions_is_list(self, tmp_path):
         pdf = tmp_path / "test.pdf"
         _make_pdf(pdf)
-        result = ocr.extract_text_from_pdf(str(pdf))
-        assert isinstance(result["regions"], list)
+        assert isinstance(self.engine.extract_text_from_pdf(str(pdf))["regions"], list)
 
     def test_regions_not_empty_for_real_pdf(self, tmp_path):
         pdf = tmp_path / "test.pdf"
         _make_pdf(pdf)
-        result = ocr.extract_text_from_pdf(str(pdf))
-        assert len(result["regions"]) > 0
+        assert len(self.engine.extract_text_from_pdf(str(pdf))["regions"]) > 0
 
     def test_each_region_has_required_keys(self, tmp_path):
         pdf = tmp_path / "test.pdf"
         _make_pdf(pdf)
-        result = ocr.extract_text_from_pdf(str(pdf))
-        for region in result["regions"]:
+        for region in self.engine.extract_text_from_pdf(str(pdf))["regions"]:
             assert "text" in region
             assert "bbox" in region
             assert "confidence" in region
@@ -117,34 +116,31 @@ class TestOcrPrinted:
     def test_bbox_is_list_of_four_numbers(self, tmp_path):
         pdf = tmp_path / "test.pdf"
         _make_pdf(pdf)
-        result = ocr.extract_text_from_pdf(str(pdf))
-        for region in result["regions"]:
+        for region in self.engine.extract_text_from_pdf(str(pdf))["regions"]:
             assert isinstance(region["bbox"], list)
             assert len(region["bbox"]) == 4
 
     def test_confidence_in_valid_range(self, tmp_path):
         pdf = tmp_path / "test.pdf"
         _make_pdf(pdf)
-        result = ocr.extract_text_from_pdf(str(pdf))
-        for region in result["regions"]:
+        for region in self.engine.extract_text_from_pdf(str(pdf))["regions"]:
             assert 0.0 <= region["confidence"] <= 1.0
 
     def test_full_text_joins_all_region_texts(self, tmp_path):
         pdf = tmp_path / "test.pdf"
         _make_pdf(pdf)
-        result = ocr.extract_text_from_pdf(str(pdf))
+        result = self.engine.extract_text_from_pdf(str(pdf))
         expected = "\n".join(r["text"] for r in result["regions"])
         assert result["full_text"] == expected
 
     def test_raises_file_not_found_for_missing_pdf(self, tmp_path):
         with pytest.raises(FileNotFoundError):
-            ocr.extract_text_from_pdf(str(tmp_path / "nonexistent.pdf"))
+            self.engine.extract_text_from_pdf(str(tmp_path / "nonexistent.pdf"))
 
     def test_page_number_is_zero_indexed(self, tmp_path):
         pdf = tmp_path / "test.pdf"
         _make_pdf(pdf)
-        result = ocr.extract_text_from_pdf(str(pdf))
-        for region in result["regions"]:
+        for region in self.engine.extract_text_from_pdf(str(pdf))["regions"]:
             assert region["page"] == 0
 
 
@@ -154,42 +150,43 @@ class TestOcrPrinted:
 
 
 class TestTranslateText:
-    def test_returns_dict_with_three_keys(self):
-        result = tt.translate_text("Defendant:", "eng_Latn", "spa_Latn")
+    def test_returns_dict_with_three_keys(self, translator_es):
+        result = translator_es.translate_text("Defendant:", "spa_Latn")
         assert "original" in result
         assert "translated" in result
         assert "confidence" in result
 
-    def test_original_field_matches_input(self):
+    def test_original_field_matches_input(self, translator_es):
         text = "Notice of Appearance"
-        result = tt.translate_text(text, "eng_Latn", "spa_Latn")
-        assert result["original"] == text
+        assert translator_es.translate_text(text, "spa_Latn")["original"] == text
 
-    def test_stub_spanish_prefixes_es(self):
-        result = tt.translate_text("Defendant:", "eng_Latn", "spa_Latn")
+    def test_stub_spanish_prefixes_es(self, translator_es):
+        result = translator_es.translate_text("Defendant:", "spa_Latn")
         assert result["translated"].startswith("[ES]")
 
-    def test_stub_portuguese_prefixes_pt(self):
-        result = tt.translate_text("Defendant:", "eng_Latn", "por_Latn")
+    def test_stub_portuguese_prefixes_pt(self, translator_es):
+        # Same translator instance, different target_lang — stub uses
+        # target_lang directly for the prefix label
+        result = translator_es.translate_text("Defendant:", "por_Latn")
         assert result["translated"].startswith("[PT]")
 
-    def test_confidence_is_float_in_range(self):
-        result = tt.translate_text("Plaintiff:", "eng_Latn", "spa_Latn")
+    def test_confidence_is_float_in_range(self, translator_es):
+        result = translator_es.translate_text("Plaintiff:", "spa_Latn")
         assert isinstance(result["confidence"], float)
         assert 0.0 <= result["confidence"] <= 1.0
 
-    def test_empty_string_does_not_raise(self):
-        result = tt.translate_text("", "eng_Latn", "spa_Latn")
+    def test_empty_string_does_not_raise(self, translator_es):
+        result = translator_es.translate_text("", "spa_Latn")
         assert "translated" in result
 
-    def test_spanish_and_portuguese_produce_different_output(self):
-        es = tt.translate_text("Defendant:", "eng_Latn", "spa_Latn")
-        pt = tt.translate_text("Defendant:", "eng_Latn", "por_Latn")
+    def test_spanish_and_portuguese_produce_different_output(self, translator_es):
+        es = translator_es.translate_text("Defendant:", "spa_Latn")
+        pt = translator_es.translate_text("Defendant:", "por_Latn")
         assert es["translated"] != pt["translated"]
 
-    def test_same_input_same_output(self):
-        r1 = tt.translate_text("Defendant:", "eng_Latn", "spa_Latn")
-        r2 = tt.translate_text("Defendant:", "eng_Latn", "spa_Latn")
+    def test_same_input_same_output(self, translator_es):
+        r1 = translator_es.translate_text("Defendant:", "spa_Latn")
+        r2 = translator_es.translate_text("Defendant:", "spa_Latn")
         assert r1["translated"] == r2["translated"]
 
 
@@ -199,25 +196,26 @@ class TestTranslateText:
 
 
 class TestLegalReview:
-    def test_returns_dict_with_status_and_corrections(self):
-        result = lr.review_legal_terms("ORIGINAL: ...\nSPANISH: ...", "spa_Latn")
+    def test_returns_dict_with_status_and_corrections(self, reviewer_es):
+        result = reviewer_es.review_legal_terms("ORIGINAL: ...\nSPANISH: ...")
         assert "status" in result
         assert "corrections" in result
 
-    def test_stub_returns_ok_status(self):
-        assert lr.review_legal_terms("text", "spa_Latn")["status"] == "ok"
+    def test_stub_returns_ok_status(self, reviewer_es):
+        assert reviewer_es.review_legal_terms("text")["status"] == "ok"
 
-    def test_stub_returns_empty_corrections(self):
-        assert lr.review_legal_terms("text", "spa_Latn")["corrections"] == []
+    def test_stub_returns_empty_corrections(self, reviewer_es):
+        assert reviewer_es.review_legal_terms("text")["corrections"] == []
 
-    def test_works_for_portuguese(self):
-        assert lr.review_legal_terms("text", "por_Latn")["status"] == "ok"
+    def test_works_for_portuguese(self, reviewer_pt):
+        # Uses PT config reviewer — stub always returns ok regardless of lang
+        assert reviewer_pt.review_legal_terms("text")["status"] == "ok"
 
-    def test_empty_text_does_not_raise(self):
-        assert "status" in lr.review_legal_terms("", "spa_Latn")
+    def test_empty_text_does_not_raise(self, reviewer_es):
+        assert "status" in reviewer_es.review_legal_terms("")
 
-    def test_does_not_raise_on_long_text(self):
-        result = lr.review_legal_terms("Some legal text. " * 500, "spa_Latn")
+    def test_does_not_raise_on_long_text(self, reviewer_es):
+        result = reviewer_es.review_legal_terms("Some legal text. " * 500)
         assert result["status"] == "ok"
 
 

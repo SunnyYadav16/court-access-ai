@@ -28,8 +28,8 @@ Pipeline (one form per DAG run):
                        ▼
                log_summary
 
-MIGRATED from data_pipeline/dags/form_pretranslation_dag.py.
-All `from src.*` imports updated to `from courtaccess.*` package imports.
+Each task instantiates the classes it needs internally.
+Airflow runs each task in its own process — instances are not shared.
 """
 
 import json
@@ -42,10 +42,11 @@ from pathlib import Path
 from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 
-from courtaccess.core.legal_review import review_legal_terms
-from courtaccess.core.ocr_printed import extract_text_from_pdf
+from courtaccess.core.legal_review import LegalReviewer
+from courtaccess.core.ocr_printed import OCREngine
 from courtaccess.core.reconstruct_pdf import reconstruct_pdf
-from courtaccess.core.translation import translate_text
+from courtaccess.core.translation import Translator
+from courtaccess.languages import get_language_config
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +75,7 @@ DEFAULT_ARGS = {
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Catalog helpers
+# Catalog helpers — unchanged
 # ══════════════════════════════════════════════════════════════════════════════
 
 
@@ -92,7 +93,6 @@ def _save_catalog(catalog: list[dict]) -> None:
 
 
 def _find_entry(catalog: list[dict], form_id: str) -> tuple[int, dict]:
-    """Return (index, entry) or raise ValueError."""
     for i, entry in enumerate(catalog):
         if entry.get("form_id") == form_id:
             return i, entry
@@ -100,28 +100,53 @@ def _find_entry(catalog: list[dict], form_id: str) -> tuple[int, dict]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Legal review with retry
+# Helpers — use class instances passed in, not module-level functions
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def _legal_review_with_retry(text: str, lang: str) -> dict:
+def _translate_regions(
+    regions: list[dict],
+    target_lang: str,
+    translator: Translator,
+) -> list[dict]:
+    """Translate each OCR region using the provided Translator instance."""
+    out = []
+    for region in regions:
+        src = region.get("text", "").strip()
+        if not src:
+            out.append({**region, "translated_text": "", "translation_confidence": 1.0})
+            continue
+        result = translator.translate_text(src, target_lang)
+        out.append(
+            {
+                **region,
+                "translated_text": result["translated"],
+                "translation_confidence": result["confidence"],
+            }
+        )
+    return out
+
+
+def _legal_review_with_retry(
+    text: str,
+    reviewer: LegalReviewer,
+) -> dict:
     """
-    Call review_legal_terms() up to len(GROQ_RETRY_DELAYS) times.
-    On total failure, returns a 'skipped' result so the pipeline continues
-    and flags the form for mandatory human review (per spec Step 8.8).
+    Call reviewer.review_legal_terms() up to len(GROQ_RETRY_DELAYS) times.
+    On total failure returns a 'skipped' result so the pipeline continues
+    and flags the form for mandatory human review.
     """
     last_err = None
     for attempt, delay in enumerate(GROQ_RETRY_DELAYS, start=1):
         try:
-            result = review_legal_terms(text, lang)
+            result = reviewer.review_legal_terms(text)
             result["skipped"] = False
-            logger.info("Legal review (%s) succeeded on attempt %d.", lang, attempt)
+            logger.info("Legal review succeeded on attempt %d.", attempt)
             return result
         except Exception as exc:
             last_err = exc
             logger.warning(
-                "Legal review (%s) attempt %d/%d failed: %s. Retrying in %ds.",
-                lang,
+                "Legal review attempt %d/%d failed: %s. Retrying in %ds.",
                 attempt,
                 len(GROQ_RETRY_DELAYS),
                 exc,
@@ -131,26 +156,25 @@ def _legal_review_with_retry(text: str, lang: str) -> dict:
                 time.sleep(delay)
 
     logger.error(
-        "Legal review (%s) failed after all retries. "
-        "AUDIT: Legal review skipped due to Groq API failure. "
-        "Human review is mandatory before removing the review flag. "
+        "Legal review failed after all retries. "
+        "AUDIT: Legal review skipped — human review is mandatory. "
         "Last error: %s",
-        lang,
         last_err,
     )
-    return {"status": "skipped", "corrections": [], "skipped": True, "reason": str(last_err)}
+    return {
+        "status": "skipped",
+        "corrections": [],
+        "skipped": True,
+        "reason": str(last_err),
+    }
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Task 1 — load_form_entry
+# Task 1 — load_form_entry (unchanged)
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 def task_load_form_entry(**context) -> dict:
-    """
-    Read form_id from DAG trigger conf, locate the catalog entry, and
-    validate that the original PDF exists on disk.
-    """
     conf = context["dag_run"].conf or {}
     form_id = conf.get("form_id")
     if not form_id:
@@ -169,12 +193,12 @@ def task_load_form_entry(**context) -> dict:
     if not orig_path:
         raise ValueError(f"Catalog entry '{form_id}' missing file_path_original.")
     if not Path(orig_path).exists():
-        raise FileNotFoundError(f"Original PDF not found on disk: '{orig_path}'.")
+        raise FileNotFoundError(f"Original PDF not found: '{orig_path}'.")
 
     already_has_es = bool(latest.get("file_path_es"))
     already_has_pt = bool(latest.get("file_path_pt"))
     if already_has_es and already_has_pt:
-        logger.info("Form '%s' already has ES and PT translations. Skipping.", form_id)
+        logger.info("Form '%s' already translated. Skipping.", form_id)
         context["ti"].xcom_push(key="form_meta", value={"skip": True, "form_id": form_id})
         return {"skip": True, "form_id": form_id}
 
@@ -217,17 +241,22 @@ def task_load_form_entry(**context) -> dict:
 
 
 def task_ocr_extract_text(**context) -> dict:
-    """Extract text regions from the original PDF via courtaccess.core.ocr_printed."""
+    """Extract text regions via OCREngine. Instance created per task run."""
     ti = context["ti"]
     form_meta = ti.xcom_pull(task_ids="load_form_entry", key="form_meta")
+
     if form_meta.get("skip"):
         logger.info("Skipping OCR — form already has translations.")
         ti.xcom_push(key="ocr_result", value={"regions": [], "full_text": ""})
         return {}
 
-    logger.info("Running OCR on '%s'.", form_meta["original_path"])
-    result = extract_text_from_pdf(form_meta["original_path"])
-    logger.info("OCR complete: %d region(s), %d chars.", len(result["regions"]), len(result["full_text"]))
+    engine = OCREngine().load()
+    result = engine.extract_text_from_pdf(form_meta["original_path"])
+    logger.info(
+        "OCR complete: %d region(s), %d chars.",
+        len(result["regions"]),
+        len(result["full_text"]),
+    )
     ti.xcom_push(key="ocr_result", value=result)
     return result
 
@@ -237,43 +266,42 @@ def task_ocr_extract_text(**context) -> dict:
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def _translate_regions(regions: list[dict], target_lang: str) -> list[dict]:
-    """Translate each OCR region independently via courtaccess.core.translation."""
-    out = []
-    for region in regions:
-        src = region.get("text", "").strip()
-        if not src:
-            out.append({**region, "translated_text": "", "translation_confidence": 1.0})
-            continue
-        result = translate_text(src, LANG_EN, target_lang)
-        out.append({**region, "translated_text": result["translated"], "translation_confidence": result["confidence"]})
-    return out
-
-
 def task_translate_spanish(**context) -> dict:
+    """Translate OCR regions to Spanish. Translator instance created here."""
     ti = context["ti"]
     form_meta = ti.xcom_pull(task_ids="load_form_entry", key="form_meta")
     ocr_result = ti.xcom_pull(task_ids="ocr_extract_text", key="ocr_result")
+
     if form_meta.get("skip") or form_meta.get("already_has_es"):
         logger.info("Skipping Spanish translation — already exists.")
         ti.xcom_push(key="regions_es", value=[])
         return {}
-    regions_es = _translate_regions(ocr_result["regions"], LANG_ES)
-    logger.info("Spanish translation complete for %d region(s).", len(regions_es))
+
+    config = get_language_config("spanish")
+    translator = Translator(config).load()
+    regions_es = _translate_regions(ocr_result["regions"], LANG_ES, translator)
+
+    logger.info("Spanish translation complete: %d region(s).", len(regions_es))
     ti.xcom_push(key="regions_es", value=regions_es)
     return {"count": len(regions_es)}
 
 
 def task_translate_portuguese(**context) -> dict:
+    """Translate OCR regions to Portuguese. Translator instance created here."""
     ti = context["ti"]
     form_meta = ti.xcom_pull(task_ids="load_form_entry", key="form_meta")
     ocr_result = ti.xcom_pull(task_ids="ocr_extract_text", key="ocr_result")
+
     if form_meta.get("skip") or form_meta.get("already_has_pt"):
         logger.info("Skipping Portuguese translation — already exists.")
         ti.xcom_push(key="regions_pt", value=[])
         return {}
-    regions_pt = _translate_regions(ocr_result["regions"], LANG_PT)
-    logger.info("Portuguese translation complete for %d region(s).", len(regions_pt))
+
+    config = get_language_config("portuguese")
+    translator = Translator(config).load()
+    regions_pt = _translate_regions(ocr_result["regions"], LANG_PT, translator)
+
+    logger.info("Portuguese translation complete: %d region(s).", len(regions_pt))
     ti.xcom_push(key="regions_pt", value=regions_pt)
     return {"count": len(regions_pt)}
 
@@ -284,49 +312,74 @@ def task_translate_portuguese(**context) -> dict:
 
 
 def task_legal_review_spanish(**context) -> dict:
+    """Legal review for Spanish. LegalReviewer instance created here."""
     ti = context["ti"]
     form_meta = ti.xcom_pull(task_ids="load_form_entry", key="form_meta")
     ocr_result = ti.xcom_pull(task_ids="ocr_extract_text", key="ocr_result")
     regions_es = ti.xcom_pull(task_ids="translate_spanish", key="regions_es")
+
     if form_meta.get("skip") or form_meta.get("already_has_es"):
-        ti.xcom_push(key="legal_review_es", value={"status": "skipped_existing", "skipped": False})
+        ti.xcom_push(
+            key="legal_review_es",
+            value={"status": "skipped_existing", "skipped": False},
+        )
         return {}
+
+    config = get_language_config("spanish")
+    reviewer = LegalReviewer(config, glossary={})
     translated = "\n".join(r.get("translated_text", "") for r in (regions_es or []))
     review = _legal_review_with_retry(
         text=f"ORIGINAL:\n{ocr_result.get('full_text', '')}\n\nSPANISH:\n{translated}",
-        lang=LANG_ES,
+        reviewer=reviewer,
     )
+
     if review["skipped"]:
-        logger.warning("Spanish legal review SKIPPED — form flagged for mandatory human review.")
+        logger.warning("Spanish legal review SKIPPED — form flagged for human review.")
     else:
-        logger.info("Spanish legal review: %d correction(s).", len(review.get("corrections", [])))
+        logger.info(
+            "Spanish legal review: %d correction(s).",
+            len(review.get("corrections", [])),
+        )
     ti.xcom_push(key="legal_review_es", value=review)
     return review
 
 
 def task_legal_review_portuguese(**context) -> dict:
+    """Legal review for Portuguese. LegalReviewer instance created here."""
     ti = context["ti"]
     form_meta = ti.xcom_pull(task_ids="load_form_entry", key="form_meta")
     ocr_result = ti.xcom_pull(task_ids="ocr_extract_text", key="ocr_result")
     regions_pt = ti.xcom_pull(task_ids="translate_portuguese", key="regions_pt")
+
     if form_meta.get("skip") or form_meta.get("already_has_pt"):
-        ti.xcom_push(key="legal_review_pt", value={"status": "skipped_existing", "skipped": False})
+        ti.xcom_push(
+            key="legal_review_pt",
+            value={"status": "skipped_existing", "skipped": False},
+        )
         return {}
+
+    config = get_language_config("portuguese")
+    reviewer = LegalReviewer(config, glossary={})
     translated = "\n".join(r.get("translated_text", "") for r in (regions_pt or []))
     review = _legal_review_with_retry(
         text=f"ORIGINAL:\n{ocr_result.get('full_text', '')}\n\nPORTUGUESE:\n{translated}",
-        lang=LANG_PT,
+        reviewer=reviewer,
     )
+
     if review["skipped"]:
-        logger.warning("Portuguese legal review SKIPPED — form flagged for mandatory human review.")
+        logger.warning("Portuguese legal review SKIPPED — form flagged for human review.")
     else:
-        logger.info("Portuguese legal review: %d correction(s).", len(review.get("corrections", [])))
+        logger.info(
+            "Portuguese legal review: %d correction(s).",
+            len(review.get("corrections", [])),
+        )
     ti.xcom_push(key="legal_review_pt", value=review)
     return review
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Tasks 7 & 8 — reconstruct_pdf_spanish / reconstruct_pdf_portuguese
+# (unchanged — reconstruct_pdf is still a module-level function)
 # ══════════════════════════════════════════════════════════════════════════════
 
 
@@ -334,19 +387,27 @@ def task_reconstruct_pdf_spanish(**context) -> dict:
     ti = context["ti"]
     form_meta = ti.xcom_pull(task_ids="load_form_entry", key="form_meta")
     regions_es = ti.xcom_pull(task_ids="translate_spanish", key="regions_es")
+
     if form_meta.get("skip") or form_meta.get("already_has_es"):
         logger.info("Skipping Spanish PDF reconstruction — already exists.")
         ti.xcom_push(key="path_es", value=None)
         return {}
+
     out_path = form_meta["output_es"]
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     logger.info("Reconstructing Spanish PDF → '%s'.", out_path)
+
     try:
-        reconstruct_pdf(original_path=form_meta["original_path"], translated_regions=regions_es, output_path=out_path)
+        reconstruct_pdf(
+            original_path=form_meta["original_path"],
+            translated_regions=regions_es,
+            output_path=out_path,
+        )
     except ValueError as exc:
         logger.warning("Spanish PDF reconstruction skipped — not a valid PDF: %s.", exc)
         ti.xcom_push(key="path_es", value=None)
         return {"path_es": None, "skipped": True}
+
     logger.info("Spanish PDF saved.")
     ti.xcom_push(key="path_es", value=out_path)
     return {"path_es": out_path}
@@ -356,31 +417,38 @@ def task_reconstruct_pdf_portuguese(**context) -> dict:
     ti = context["ti"]
     form_meta = ti.xcom_pull(task_ids="load_form_entry", key="form_meta")
     regions_pt = ti.xcom_pull(task_ids="translate_portuguese", key="regions_pt")
+
     if form_meta.get("skip") or form_meta.get("already_has_pt"):
         logger.info("Skipping Portuguese PDF reconstruction — already exists.")
         ti.xcom_push(key="path_pt", value=None)
         return {}
+
     out_path = form_meta["output_pt"]
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     logger.info("Reconstructing Portuguese PDF → '%s'.", out_path)
+
     try:
-        reconstruct_pdf(original_path=form_meta["original_path"], translated_regions=regions_pt, output_path=out_path)
+        reconstruct_pdf(
+            original_path=form_meta["original_path"],
+            translated_regions=regions_pt,
+            output_path=out_path,
+        )
     except ValueError as exc:
         logger.warning("Portuguese PDF reconstruction skipped — not a valid PDF: %s.", exc)
         ti.xcom_push(key="path_pt", value=None)
         return {"path_pt": None, "skipped": True}
+
     logger.info("Portuguese PDF saved.")
     ti.xcom_push(key="path_pt", value=out_path)
     return {"path_pt": out_path}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Task 9 — store_and_update_catalog
+# Tasks 9-11 — store, dvc, summary (unchanged)
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 def task_store_and_update_catalog(**context) -> dict:
-    """Write translated PDF paths back into form_catalog.json."""
     ti = context["ti"]
     form_meta = ti.xcom_pull(task_ids="load_form_entry", key="form_meta")
     path_es = ti.xcom_pull(task_ids="reconstruct_pdf_spanish", key="path_es")
@@ -389,17 +457,17 @@ def task_store_and_update_catalog(**context) -> dict:
     review_pt = ti.xcom_pull(task_ids="legal_review_portuguese", key="legal_review_pt")
 
     if form_meta.get("skip"):
-        logger.info("Skipping catalog update — form was already fully translated.")
+        logger.info("Skipping catalog update — form already fully translated.")
         return {}
 
     form_id = form_meta["form_id"]
     now = datetime.utcnow().isoformat() + "Z"
-
     audit_notes = []
+
     if review_es and review_es.get("skipped"):
-        audit_notes.append("Legal review skipped due to Groq API failure (Spanish). Human review mandatory.")
+        audit_notes.append("Legal review skipped due to API failure (Spanish). Human review mandatory.")
     if review_pt and review_pt.get("skipped"):
-        audit_notes.append("Legal review skipped due to Groq API failure (Portuguese). Human review mandatory.")
+        audit_notes.append("Legal review skipped due to API failure (Portuguese). Human review mandatory.")
 
     catalog = _load_catalog()
     idx, entry = _find_entry(catalog, form_id)
@@ -416,6 +484,7 @@ def task_store_and_update_catalog(**context) -> dict:
         langs.append("es")
     if versions and versions[0].get("file_path_pt"):
         langs.append("pt")
+
     entry["languages_available"] = langs
     entry["needs_human_review"] = True
     entry["last_updated_at"] = now
@@ -428,7 +497,13 @@ def task_store_and_update_catalog(**context) -> dict:
     catalog[idx] = entry
     _save_catalog(catalog)
 
-    logger.info("Catalog updated for '%s': ES=%s, PT=%s, langs=%s.", form_id, path_es, path_pt, langs)
+    logger.info(
+        "Catalog updated for '%s': ES=%s, PT=%s, langs=%s.",
+        form_id,
+        path_es,
+        path_pt,
+        langs,
+    )
     for note in audit_notes:
         logger.warning("AUDIT: %s", note)
 
@@ -444,24 +519,18 @@ def task_store_and_update_catalog(**context) -> dict:
     return result
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Task 10 — dvc_version_data
-# ══════════════════════════════════════════════════════════════════════════════
-
-
 def task_dvc_version_data(**context) -> None:
-    """Version the updated catalog and new translated PDFs with DVC."""
-    import os
+    import os as _os
 
     ti = context["ti"]
     form_meta = ti.xcom_pull(task_ids="load_form_entry", key="form_meta")
     if form_meta.get("skip"):
-        logger.info("Skipping DVC versioning — no new files were produced.")
+        logger.info("Skipping DVC versioning — no new files produced.")
         return
 
     form_id = form_meta["form_id"]
     version = form_meta["version"]
-    env = os.environ.copy()
+    env = _os.environ.copy()
 
     def _run(cmd: list[str]) -> bool:
         try:
@@ -476,7 +545,12 @@ def task_dvc_version_data(**context) -> None:
             if res.returncode == 0:
                 logger.info("DVC OK: %s", " ".join(cmd))
                 return True
-            logger.warning("DVC failed (rc=%d): %s | stderr: %s", res.returncode, " ".join(cmd), res.stderr.strip())
+            logger.warning(
+                "DVC failed (rc=%d): %s | stderr: %s",
+                res.returncode,
+                " ".join(cmd),
+                res.stderr.strip(),
+            )
             return False
         except subprocess.TimeoutExpired:
             logger.warning("DVC timed out: %s", " ".join(cmd))
@@ -492,13 +566,7 @@ def task_dvc_version_data(**context) -> None:
         logger.info("DVC push complete." if pushed else "DVC push failed — tracked locally but not pushed.")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Task 11 — log_summary
-# ══════════════════════════════════════════════════════════════════════════════
-
-
 def task_log_summary(**context) -> None:
-    """Write final audit-style summary to Airflow log."""
     ti = context["ti"]
     form_meta = ti.xcom_pull(task_ids="load_form_entry", key="form_meta")
     ocr_result = ti.xcom_pull(task_ids="ocr_extract_text", key="ocr_result")
@@ -507,23 +575,28 @@ def task_log_summary(**context) -> None:
     store_result = ti.xcom_pull(task_ids="store_and_update_catalog", key="store_result")
 
     if form_meta and form_meta.get("skip"):
-        logger.info("══ Form Pre-Translation Summary ══\n  form_id : %s\n  result  : SKIPPED", form_meta.get("form_id"))
+        logger.info(
+            "══ Form Pre-Translation Summary ══\n  form_id : %s\n  result  : SKIPPED",
+            form_meta.get("form_id"),
+        )
         return
 
     regions = len(ocr_result.get("regions", [])) if ocr_result else 0
     es_skip = review_es.get("skipped", True) if review_es else True
     pt_skip = review_pt.get("skipped", True) if review_pt else True
-    es_corr = len(review_es.get("corrections", [])) if review_es and not es_skip else 0
-    pt_corr = len(review_pt.get("corrections", [])) if review_pt and not pt_skip else 0
+    es_corr = len(review_es.get("corrections", [])) if (review_es and not es_skip) else 0
+    pt_corr = len(review_pt.get("corrections", [])) if (review_pt and not pt_skip) else 0
 
     logger.info(
         "══ Form Pre-Translation Summary ══\n"
-        "  form_id           : %s\n  form_name         : %s\n  version           : %s\n"
-        "  is_mislabeled     : %s\n  OCR regions       : %d\n"
+        "  form_id           : %s\n  form_name         : %s\n"
+        "  version           : %s\n  is_mislabeled     : %s\n"
+        "  OCR regions       : %d\n"
         "  ES legal review   : %s (%d correction(s))\n"
         "  PT legal review   : %s (%d correction(s))\n"
         "  Spanish PDF       : %s\n  Portuguese PDF    : %s\n"
-        "  languages_avail   : %s\n  needs_human_review: True\n  completed_at      : %s",
+        "  languages_avail   : %s\n  needs_human_review: True\n"
+        "  completed_at      : %s",
         form_meta.get("form_id") if form_meta else "unknown",
         form_meta.get("form_name") if form_meta else "unknown",
         form_meta.get("version") if form_meta else "unknown",
@@ -544,7 +617,7 @@ def task_log_summary(**context) -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# DAG definition
+# DAG definition (unchanged)
 # ══════════════════════════════════════════════════════════════════════════════
 
 with DAG(
@@ -558,7 +631,7 @@ with DAG(
     start_date=datetime(2024, 1, 1),
     default_args=DEFAULT_ARGS,
     catchup=False,
-    tags=["courtaccess", "forms", "translation", "ocr", "stub"],
+    tags=["courtaccess", "forms", "translation", "ocr"],
 ) as dag:
     t1_load = PythonOperator(task_id="load_form_entry", python_callable=task_load_form_entry)
     t2_ocr = PythonOperator(task_id="ocr_extract_text", python_callable=task_ocr_extract_text)
@@ -578,5 +651,4 @@ with DAG(
     t4_pt >> t6_rev_pt
     t5_rev_es >> t7_rec_es
     t6_rev_pt >> t8_rec_pt
-    [t7_rec_es, t8_rec_pt] >> t9_store
-    t9_store >> t10_dvc >> t11_sum
+    [t7_rec_es, t8_rec_pt] >> t9_store >> t10_dvc >> t11_sum
