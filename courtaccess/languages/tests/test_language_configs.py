@@ -94,9 +94,9 @@ class TestSpanishConfig:
 
 class TestPortugueseConfig:
     """
-    Portuguese is a stub — tests verify structure only,
-    not translation values. Full tests added when Portuguese
-    Colab script is provided.
+    Portuguese language configuration tests.
+    Verifies structure parity with Spanish and correctness of
+    court name translations, form tokens, and legal overrides.
     """
 
     def setup_method(self):
@@ -129,19 +129,37 @@ class TestPortugueseConfig:
             set(es.keys()) - set(pt.keys())
         )
 
-    def test_is_stub(self):
-        # Confirms Portuguese is still a stub —
-        # remove this test when real values are added
-        assert "[PT STUB]" in list(self.config.court_name_translations.values()), (
-            "Portuguese stub marker missing — did you add real values?"
-        )
-        assert self.config.ready_for_production is False, (
-            "Portuguese should be marked ready_for_production=False until real translation values are provided."
-        )
+    def test_critical_court_translations(self):
+        ct = self.config.court_name_translations
+        assert ct["Massachusetts Trial Court"] == "Tribunal de Julgamento de Massachusetts"
+        assert ct["Land Court"] == "Tribunal de Terras"
+        assert ct["Superior Court"] == "Tribunal Superior"
+
+    def test_critical_legal_overrides(self):
+        lo = self.config.legal_overrides
+        assert lo["defendant"] == "réu"
+        assert lo["plaintiff"] == "autor"
+        assert lo["beyond a reasonable doubt"] == "culpa acima de qualquer suspeita razoável"
+        assert lo["counsel"] == "advogado"
+
+    def test_form_token_translations(self):
+        ft = self.config.form_token_translations
+        assert ft["DATE"] == "DATA"
+        assert ft["SIGNATURE"] == "ASSINATURA"
+        assert ft["SIGN"] == "ASSINAR"
+        assert len(ft) == 7
+
+    def test_court_names_longest_first_when_sorted(self):
+        keys = list(self.config.court_name_translations.keys())
+        sorted_keys = sorted(keys, key=len, reverse=True)
+        assert sorted_keys.index("Massachusetts Trial Court") < sorted_keys.index("Trial Court")
+        assert sorted_keys.index("Land Court Department") < sorted_keys.index("Land Court")
 
     def test_glossary_skip_lines_is_set(self):
-        # Portuguese stub — empty set is correct until PT script provided
         assert isinstance(self.config.glossary_skip_lines, set)
+        assert len(self.config.glossary_skip_lines) > 0
+        assert "glossary of legal" in self.config.glossary_skip_lines
+        assert "introduction" in self.config.glossary_skip_lines
 
 
 class TestBaseConfig:
