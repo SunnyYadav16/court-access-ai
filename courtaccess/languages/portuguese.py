@@ -2,7 +2,7 @@
 courtaccess/languages/portuguese.py
 
 Portuguese (Brazilian) language configuration.
-
+Values extracted from Cell 6 and Cell 7 of the original Colab script.
 """
 
 from courtaccess.languages.base import LanguageConfig
@@ -14,24 +14,26 @@ PORTUGUESE_CONFIG = LanguageConfig(
     nllb_target="por_Latn",
     glossary_path="data/glossaries/glossary_pt.json",
     llama_lang_label="Portuguese",
-    # Stub config — court names, legal overrides, and form tokens are
-    # placeholders. Set to True only after real values are supplied.
-    ready_for_production=False,
+    # ── Court name translations ───────────────────────────────────────────
+    # Sorted longest-first to prevent partial matches
+    # Source: Cell 6 COURT_NAME_TRANSLATIONS in Colab script
     court_name_translations={
         "Massachusetts Trial Court": "Tribunal de Julgamento de Massachusetts",
         "Land Court Department": "Departamento do Tribunal de Terras",
-        "Land Court": "Tribunal de Terras",
-        "Trial Court": "Tribunal de Julgamento",
+        "Supreme Judicial Court": "Supremo Tribunal Judicial",
         "Boston Municipal Court": "Tribunal Municipal de Boston",
         "District Court": "Tribunal Distrital",
         "Superior Court": "Tribunal Superior",
         "Appeals Court": "Tribunal de Recursos",
-        "Supreme Judicial Court": "Supremo Tribunal Judicial",
         "Housing Court": "Tribunal de Habitação",
         "Juvenile Court": "Tribunal de Menores",
         "Probate Court": "Tribunal de Sucessões",
+        "Trial Court": "Tribunal de Julgamento",
+        "Land Court": "Tribunal de Terras",
         "Lower Court": "Tribunal Inferior",
     },
+    # ── Legal term overrides ──────────────────────────────────────────────
+    # Source: Cell 7a MA_OVERRIDES_PT in Colab script
     legal_overrides={
         "commonwealth": "Commonwealth",
         "g.l. c.": "G.L. c.",
