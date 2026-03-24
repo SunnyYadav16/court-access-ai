@@ -25,7 +25,7 @@ const details = [
 export default function FormDetail({ onNav }: Props) {
   return (
     <div className="min-h-screen" style={{ background: "#F6F7F9" }}>
-      <TopBar user="maria.santos@gmail.com" role="public" onNav={onNav} />
+      <TopBar onNav={onNav} />
       <div className="max-w-lg mx-auto px-5 py-8">
         <button
           onClick={() => onNav(SCREENS.FORMS_LIBRARY)}

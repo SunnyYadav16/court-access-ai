@@ -24,7 +24,7 @@ const pendingForms = [
 export default function AdminForms({ onNav }: Props) {
   return (
     <div className="min-h-screen" style={{ background: "#F6F7F9" }}>
-      <TopBar user="admin@mass.gov" role="admin" onNav={onNav} />
+      <TopBar onNav={onNav} />
       <div className="max-w-3xl mx-auto px-5 py-6">
         <div className="flex items-center justify-between mb-5">
           <div>

@@ -18,7 +18,7 @@ const summary = [
 export default function DocResults({ onNav }: Props) {
   return (
     <div className="min-h-screen" style={{ background: "#F6F7F9" }}>
-      <TopBar user="maria.santos@gmail.com" role="public" onNav={onNav} />
+      <TopBar onNav={onNav} />
       <div className="max-w-xl mx-auto px-5 py-8">
 
         {/* Header */}

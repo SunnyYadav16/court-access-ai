@@ -40,6 +40,11 @@ export interface BackendUser {
   email: string;
   name: string;
   role: UserRole | null;
+  auth_provider?: string;
+  created_at?: string;
+  email_verified?: boolean;
+  mfa_enabled?: boolean;
+  last_login_at?: string;
 }
 
 interface AuthStoreState {

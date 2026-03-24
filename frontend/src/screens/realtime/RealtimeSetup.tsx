@@ -10,7 +10,7 @@ interface Props { onNav: (s: ScreenId) => void }
 export default function RealtimeSetup({ onNav }: Props) {
   return (
     <div className="min-h-screen" style={{ background: "#F6F7F9" }}>
-      <TopBar user="judge.thompson@mass.gov" role="court_official" onNav={onNav} />
+      <TopBar onNav={onNav} />
       <div className="max-w-lg mx-auto px-5 py-8">
         <h1 className="text-xl font-bold mb-6"
           style={{ fontFamily: "Palatino, Georgia, serif", color: "#1A2332" }}>
