@@ -9,7 +9,7 @@ interface Props { onNav: (s: ScreenId) => void }
 export default function InterpreterReview({ onNav }: Props) {
   return (
     <div className="min-h-screen" style={{ background: "#F6F7F9" }}>
-      <TopBar user="ana.garcia@interpreter.org" role="interpreter" onNav={onNav} />
+      <TopBar onNav={onNav} />
       <div className="max-w-3xl mx-auto px-5 py-6">
         <h1 className="text-xl font-bold mb-1"
           style={{ fontFamily: "Palatino, Georgia, serif", color: "#1A2332" }}>
