@@ -124,18 +124,41 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres/${POSTGRES_DB:-airflow}
+      # ── Application ──
+      APP_ENV: ${APP_ENV:-development}
+      DEBUG: ${DEBUG:-true}
+      SECRET_KEY: ${SECRET_KEY}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:8000}
+      # ── Database ──
+      POSTGRES_USER: ${POSTGRES_USER:-airflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
+      POSTGRES_DB: ${POSTGRES_DB:-airflow}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      # ── Google Cloud ──
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID}
+      GCP_REGION: ${GCP_REGION:-us-central1}
       GCS_BUCKET_UPLOADS: ${GCS_BUCKET_UPLOADS:-courtaccess-uploads}
       GCS_BUCKET_TRANSLATED: ${GCS_BUCKET_TRANSLATED:-courtaccess-translated}
       GCS_BUCKET_FORMS: ${GCS_BUCKET_FORMS:-courtaccess-forms}
       GCS_BUCKET_MODELS: ${GCS_BUCKET_MODELS:-courtaccess-ai-models}
-      SECRET_KEY: ${SECRET_KEY}
-      APP_ENV: ${APP_ENV:-development}
-      DEBUG: ${DEBUG:-true}
+      GCP_SERVICE_ACCOUNT_JSON: ${GCP_SERVICE_ACCOUNT_JSON:-}
+      # ── Auth (GCIP / Firebase) ──
+      GCIP_API_KEY: ${GCIP_API_KEY}
+      GCIP_AUTH_DOMAIN: ${GCIP_AUTH_DOMAIN}
+      GCIP_PROJECT_ID: ${GCIP_PROJECT_ID}
+      # ── Vertex AI ──
+      VERTEX_PROJECT: ${VERTEX_PROJECT:-${GCP_PROJECT_ID}}
+      VERTEX_LOCATION: ${VERTEX_LOCATION:-us-central1}
+      LEGAL_LLM_MODEL: ${LEGAL_LLM_MODEL:-meta/llama-4-scout-17b-16e-instruct-maas}
+      LEGAL_VERIFY_TIMEOUT: ${LEGAL_VERIFY_TIMEOUT:-30.0}
+      # ── Redis ──
       REDIS_URL: redis://redis:6379
-      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-}
-      # Git/DVC need this when host UID != container UID
+      # ── Git/DVC ──
       GIT_DISCOVERY_ACROSS_FILESYSTEM: '1'
+      # ── MLflow ──
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-}
+
     volumes:
       - ./courtaccess:/app/courtaccess   # live code reloading in dev
       - ./api:/app/api
