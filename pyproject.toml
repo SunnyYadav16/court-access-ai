@@ -38,7 +38,7 @@ dependencies = [
     "lxml>=5.1.0",
     "playwright>=1.40.0",
     # ── Data versioning ──
-    "dvc>=3.50.0",
+    "dvc[gs]>=3.50.0",
     # ── Utilities ──
     "numpy>=1.26.0",
     "pydantic>=2.7.0",
@@ -46,6 +46,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "firebase-admin>=6.9.0",
     "psycopg2-binary>=2.9.11",
+    "huggingface-hub>=1.7.1",
 ]
 
 [project.optional-dependencies]

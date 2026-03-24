@@ -1,32 +1,6 @@
-# DVC pointer file for Piper TTS Portuguese voice model
-# (used for text-to-speech output during real-time interpretation — target PT)
-#
-# Model: piper-tts pt_BR-faber-medium (Brazilian Portuguese, medium quality)
-# Size: ~50 MB (ONNX format)
-# Latency: ~35ms for 200-char input on CPU
-# Source: https://huggingface.co/rhasspy/piper-voices
-#
-# To fetch: dvc pull models/piper-tts-pt.dvc
-
 outs:
-- md5: 8f14e45fceea167a5a36dedd4bea2543  # placeholder — replace after first `dvc push`
-  size: 50000000
+- md5: 1430cec4e6309e58c135872955bb12bd.dir
+  size: 63206375
+  nfiles: 5
   hash: md5
   path: piper-tts-pt
-  cache: true
-  persist: false
-
-meta:
-  model_type: text_to_speech
-  architecture: Piper
-  variant: pt_BR-faber-medium
-  framework: onnxruntime
-  source_hub: rhasspy/piper-voices
-  license: MIT
-  courtaccess_path: /opt/models/piper-tts-pt
-  language: pt
-  locale: pt_BR
-  quality: medium
-  used_by:
-    - courtaccess/speech/synthesizer.py
-    - api/routes/realtime.py

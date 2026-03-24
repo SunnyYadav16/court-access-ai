@@ -1,32 +1,6 @@
-# DVC pointer file for spaCy NLP model used for PII detection
-# (identifies names, dates, SSNs, addresses before translation)
-#
-# Model: en_core_web_lg (spaCy English large)
-# Size: ~560 MB
-# NER F1 on OntoNotes: 0.86
-# Source: pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.7.1/en_core_web_lg-3.7.1.tar.gz
-#
-# NOTE: This DVC pointer tracks the locally cached model wheel.
-# In production containers, the model is pip-installed from the release URL.
-# To fetch: dvc pull models/spacy-en-core-web-lg.dvc
-
 outs:
-- md5: 45c48cce2e2d7fbdea1afc51c7c6ad26  # placeholder — replace after first `dvc push`
-  size: 562000000
+- md5: 7bb6c3766e2fc70bf1ba0318be28ef14.dir
+  size: 649033614
+  nfiles: 26
   hash: md5
   path: spacy-en-core-web-lg
-  cache: true
-  persist: false
-
-meta:
-  model_type: named_entity_recognition
-  architecture: spaCy_CNN_tagger
-  variant: en_core_web_lg-3.7.1
-  framework: spacy
-  license: MIT
-  courtaccess_path: /opt/models/spacy-en-core-web-lg
-  language: en
-  used_by:
-    - courtaccess/core/pii_detector.py
-    - dags/document_pipeline_dag.py
-  pii_entities_detected: [PERSON, DATE, ORG, GPE, CARDINAL, SSN, EMAIL]

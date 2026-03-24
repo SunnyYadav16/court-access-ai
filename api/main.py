@@ -30,12 +30,14 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import firebase_admin
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from api.routes import auth as auth_router
 from api.routes import documents as documents_router
@@ -44,6 +46,9 @@ from api.routes import realtime as realtime_router
 from api.schemas.schemas import ErrorDetail, HealthResponse
 from courtaccess.core.config import get_settings
 from courtaccess.core.logger import get_logger
+
+# Path to the built React frontend (only exists after `pnpm build` / in production image)
+_FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
 
 logger = get_logger(__name__)
 
@@ -142,6 +147,12 @@ def create_app() -> FastAPI:
     app.include_router(forms_router.router)
     app.include_router(realtime_router.router)
 
+    # ── Static frontend assets (/assets/*, /favicon.ico, etc.) ─────────────
+    # Only mounted when the production build exists (not in local `uvicorn --reload` dev)
+    if (_FRONTEND_DIST / "assets").exists():
+        app.mount("/assets", StaticFiles(directory=str(_FRONTEND_DIST / "assets")), name="assets")
+        logger.info("Serving frontend static assets from %s", _FRONTEND_DIST)
+
     # ── Meta endpoints ─────────────────────────────────────────────────────
     _register_meta_endpoints(app)
 
@@ -200,13 +211,32 @@ def _register_exception_handlers(app: FastAPI) -> None:
             ).model_dump(),
         )
 
+    # API path prefixes that should return JSON 404 (not fallthrough to React)
+    _api_prefixes = ("/api/", "/auth/", "/ws/", "/health", "/docs", "/redoc", "/openapi")
+
     @app.exception_handler(404)
-    async def not_found_handler(request: Request, exc) -> JSONResponse:
+    async def not_found_handler(request: Request, exc) -> Response:
+        path = request.url.path
+        # True API miss → JSON error
+        if any(path.startswith(p) for p in _api_prefixes):
+            return JSONResponse(
+                status_code=404,
+                content=ErrorDetail(
+                    code="not_found",
+                    message=f"The requested path '{path}' was not found",
+                ).model_dump(),
+            )
+        # Frontend route (e.g. /sessions, /documents) → serve index.html
+        # React Router handles the route on the client side.
+        index = _FRONTEND_DIST / "index.html"
+        if index.exists():
+            return FileResponse(str(index))
+        # Fallback when no frontend build exists (local dev without pnpm build)
         return JSONResponse(
             status_code=404,
             content=ErrorDetail(
                 code="not_found",
-                message=f"The requested path '{request.url.path}' was not found",
+                message=f"The requested path '{path}' was not found",
             ).model_dump(),
         )
 
@@ -218,8 +248,12 @@ def _register_exception_handlers(app: FastAPI) -> None:
 
 def _register_meta_endpoints(app: FastAPI) -> None:
     @app.get("/", tags=["meta"], include_in_schema=False)
-    async def root() -> dict:
-        return {"name": "CourtAccess AI API", "version": "0.1.0", "docs": "/docs"}
+    async def root() -> Response:
+        """Serve the React SPA root, falling back to JSON if no build exists."""
+        index = _FRONTEND_DIST / "index.html"
+        if index.exists():
+            return FileResponse(str(index))
+        return JSONResponse({"name": "CourtAccess AI API", "version": "0.1.0", "docs": "/docs"})
 
     @app.get(
         "/health",

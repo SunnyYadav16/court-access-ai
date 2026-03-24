@@ -1,31 +1,6 @@
-# DVC pointer file for the NLLB-200 distilled 1.3B multilingual translation model
-# (CTranslate2 quantized format for faster on-premise inference)
-#
-# Model: facebook/nllb-200-distilled-1.3B (CTranslate2 int8 quantized)
-# Size: ~600 MB (int8 quantized) vs ~5 GB (fp32)
-# Languages: 200+ languages including es_Latn, pt_Br
-# Source: https://huggingface.co/facebook/nllb-200-distilled-1.3B
-#
-# To fetch: dvc pull models/nllb-200-distilled-1.3B-ct2.dvc
-# To repro:  dvc repro dvc.yaml (runs download + quantization pipeline)
-
 outs:
-- md5: d41d8cd98f00b204e9800998ecf8427e  # placeholder — replace after first `dvc push`
-  size: 612000000
+- md5: 4072bcc2d09901b6e9d1eddbf365f678.dir
+  size: 2768178516
+  nfiles: 19
   hash: md5
   path: nllb-200-distilled-1.3B-ct2
-  cache: true
-  persist: false
-
-meta:
-  model_type: translation
-  architecture: NLLB-200
-  variant: distilled-1.3B
-  quantization: int8
-  framework: ctranslate2
-  source_hub: facebook/nllb-200-distilled-1.3B
-  license: CC-BY-NC-4.0
-  courtaccess_path: /opt/models/nllb-200-distilled-1.3B-ct2
-  used_by:
-    - courtaccess/translation/translator.py
-    - dags/document_pipeline_dag.py
