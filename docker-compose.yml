@@ -38,7 +38,7 @@ x-airflow-common:
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_SECRET_KEY}
 
     # ── Database ──
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres/${POSTGRES_DB:-airflow}
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
 
     # ── Scheduler ──
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
@@ -73,7 +73,7 @@ x-airflow-common:
     - ./.dvc:/opt/airflow/.dvc
     - ./dvc_storage:/opt/airflow/dvc_storage
 
-  user: "${AIRFLOW_UID:-50000}:0"
+  user: "${AIRFLOW_UID}:0"
   depends_on:
     &airflow-common-depends-on
     postgres:
@@ -87,15 +87,15 @@ services:
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-airflow}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
-      POSTGRES_DB: ${POSTGRES_DB:-airflow}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "5432:5432"
     volumes:
       - postgres-db-volume:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER:-airflow}"]
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}"]
       interval: 10s
       retries: 5
       start_period: 5s
@@ -125,33 +125,33 @@ services:
       - "8000:8000"
     environment:
       # ── Application ──
-      APP_ENV: ${APP_ENV:-development}
-      DEBUG: ${DEBUG:-true}
+      APP_ENV: ${APP_ENV}
+      DEBUG: ${DEBUG}
       SECRET_KEY: ${SECRET_KEY}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:8000}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
       # ── Database ──
-      POSTGRES_USER: ${POSTGRES_USER:-airflow}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
-      POSTGRES_DB: ${POSTGRES_DB:-airflow}
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
       # ── Google Cloud ──
       GCP_PROJECT_ID: ${GCP_PROJECT_ID}
-      GCP_REGION: ${GCP_REGION:-us-central1}
-      GCS_BUCKET_UPLOADS: ${GCS_BUCKET_UPLOADS:-courtaccess-uploads}
-      GCS_BUCKET_TRANSLATED: ${GCS_BUCKET_TRANSLATED:-courtaccess-translated}
-      GCS_BUCKET_FORMS: ${GCS_BUCKET_FORMS:-courtaccess-forms}
-      GCS_BUCKET_MODELS: ${GCS_BUCKET_MODELS:-courtaccess-ai-models}
+      GCP_REGION: ${GCP_REGION}
+      GCS_BUCKET_UPLOADS: ${GCS_BUCKET_UPLOADS}
+      GCS_BUCKET_TRANSLATED: ${GCS_BUCKET_TRANSLATED}
+      GCS_BUCKET_FORMS: ${GCS_BUCKET_FORMS}
+      GCS_BUCKET_MODELS: ${GCS_BUCKET_MODELS}
       GCP_SERVICE_ACCOUNT_JSON: ${GCP_SERVICE_ACCOUNT_JSON:-}
       # ── Auth (GCIP / Firebase) ──
       GCIP_API_KEY: ${GCIP_API_KEY}
       GCIP_AUTH_DOMAIN: ${GCIP_AUTH_DOMAIN}
       GCIP_PROJECT_ID: ${GCIP_PROJECT_ID}
       # ── Vertex AI ──
-      VERTEX_PROJECT: ${VERTEX_PROJECT:-${GCP_PROJECT_ID}}
-      VERTEX_LOCATION: ${VERTEX_LOCATION:-us-central1}
-      LEGAL_LLM_MODEL: ${LEGAL_LLM_MODEL:-meta/llama-4-scout-17b-16e-instruct-maas}
-      LEGAL_VERIFY_TIMEOUT: ${LEGAL_VERIFY_TIMEOUT:-30.0}
+      VERTEX_PROJECT: ${VERTEX_PROJECT}
+      VERTEX_LOCATION: ${VERTEX_LOCATION}
+      LEGAL_LLM_MODEL: ${LEGAL_LLM_MODEL}
+      LEGAL_VERIFY_TIMEOUT: ${LEGAL_VERIFY_TIMEOUT}
       # ── Redis ──
       REDIS_URL: redis://redis:6379
       # ── Git/DVC ──
@@ -248,7 +248,7 @@ services:
       - -c
       - |
         mkdir -p /opt/airflow/data/forms /opt/airflow/forms /opt/airflow/models /opt/airflow/dvc_storage /opt/airflow/logs
-        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/data /opt/airflow/forms /opt/airflow/models /opt/airflow/dvc_storage /opt/airflow/logs
+        chown -R "${AIRFLOW_UID}:0" /opt/airflow/data /opt/airflow/forms /opt/airflow/models /opt/airflow/dvc_storage /opt/airflow/logs
 
         # Git safe.directory — required because repo is owned by host user but
         # accessed by airflow user (UID 50000) inside the container.
@@ -263,7 +263,7 @@ services:
         fi
         dvc remote add -d local_storage /opt/airflow/dvc_storage 2>/dev/null || \
           dvc remote modify local_storage url /opt/airflow/dvc_storage
-        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/.dvc
+        chown -R "${AIRFLOW_UID}:0" /opt/airflow/.dvc
         echo "DVC remote configured: $(dvc remote list)"
 
         exec /entrypoint airflow version
@@ -271,8 +271,8 @@ services:
       <<: *airflow-common-env
       _AIRFLOW_DB_MIGRATE: 'true'
       _AIRFLOW_WWW_USER_CREATE: 'true'
-      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
-      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
+      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME}
+      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD}
     user: "0:0"
     volumes: *airflow-common-volumes
 
