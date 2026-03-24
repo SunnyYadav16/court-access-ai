@@ -7,6 +7,25 @@
 # GPU inference (Whisper, NLLB, PaddleOCR, Qwen) uses gpu.Dockerfile instead.
 # ══════════════════════════════════════════════════════════════════════════════
 
+# ── Stage 0: Build React frontend ────────────────────────────────────────────
+# node:22-slim ships with Node 22 as default — no nvm needed in the container.
+# pnpm build outputs to /frontend/dist/ which is then copied into the api stage.
+FROM node:22-slim AS frontend-build
+
+WORKDIR /frontend
+
+# Install pnpm globally
+RUN npm install -g pnpm
+
+# Copy lockfile + manifest first for layer caching
+COPY frontend/package.json frontend/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+
+# Copy full source and build
+COPY frontend/ ./
+RUN pnpm build
+# dist/ is now at /frontend/dist/
+
 # ── Shared base ───────────────────────────────────────────────────────────────
 FROM python:3.11-slim AS base
 
@@ -34,10 +53,23 @@ COPY courtaccess/ ./courtaccess/
 # Install courtaccess core dependencies (all ARM64-compatible)
 RUN pip install -e .
 
-# Copy API source
+# Install DVC with GCS support for model pulling at startup
+RUN pip install --no-cache-dir "dvc[gs]>=3.50.0"
+
+# Copy API source and entrypoint
 COPY api/ ./api/
+COPY db/ ./db/
+
+# Copy built frontend (from frontend-build stage) — served as static files by FastAPI
+COPY --from=frontend-build /frontend/dist ./frontend/dist
+
+COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 8000
+
+# Entrypoint: pulls models via DVC + registers in MLflow, then starts CMD
+ENTRYPOINT ["docker-entrypoint.sh"]
 
 # Using `fastapi run` (exec form) per FastAPI docs — ensures graceful shutdown
 # and correct lifespan event triggering in production.
@@ -70,8 +102,17 @@ COPY --chown=airflow:root courtaccess/ /opt/airflow/courtaccess/
 
 RUN pip install --no-cache-dir -e '/opt/airflow/[airflow]'
 
+# Upgrade DVC with GCS support (base dvc from pyproject.toml lacks [gs] extras)
+RUN pip install --no-cache-dir "dvc[gs]>=3.50.0"
+
 # Install Playwright's Chromium browser for the form scraper
 RUN playwright install chromium
 
-# Copy DAGs
+# Copy DAGs and entrypoint
 COPY --chown=airflow:root dags/ /opt/airflow/dags/
+COPY --chown=airflow:root scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+USER root
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+USER airflow
+
+ENTRYPOINT ["docker-entrypoint.sh"]

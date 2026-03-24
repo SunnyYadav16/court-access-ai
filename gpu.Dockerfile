@@ -47,6 +47,14 @@ RUN pip3 install --no-cache-dir \
     paddlepaddle-gpu \
     paddleocr>=2.7.0
 
-# Model weights are pulled at runtime via DVC, not baked into the image.
-# Mount /app/models as a volume or use an init container to run: dvc pull
+# Install DVC with GCS support for model pulling at startup
+RUN pip3 install --no-cache-dir "dvc[gs]>=3.50.0"
+
+# Copy entrypoint
+COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Model weights are pulled at startup via DVC (see entrypoint).
+# In GKE, an init container runs gsutil cp instead.
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["echo", "GPU inference container ready. Start the appropriate inference server."]

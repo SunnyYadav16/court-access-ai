@@ -1,32 +1,6 @@
-# DVC pointer file for Piper TTS Spanish voice model
-# (used for text-to-speech output during real-time interpretation — target ES)
-#
-# Model: piper-tts es_MX-claude-high (Mexican Spanish, high quality)
-# Size: ~65 MB (ONNX format)
-# Latency: ~40ms for 200-char input on CPU
-# Source: https://huggingface.co/rhasspy/piper-voices
-#
-# To fetch: dvc pull models/piper-tts-es.dvc
-
 outs:
-- md5: 1679091c5a880faf6fb5e6087eb1b2dc  # placeholder — replace after first `dvc push`
-  size: 65000000
+- md5: 0fbff23f31c878b83c69152a054fdfca.dir
+  size: 63127495
+  nfiles: 5
   hash: md5
   path: piper-tts-es
-  cache: true
-  persist: false
-
-meta:
-  model_type: text_to_speech
-  architecture: Piper
-  variant: es_MX-claude-high
-  framework: onnxruntime
-  source_hub: rhasspy/piper-voices
-  license: MIT
-  courtaccess_path: /opt/models/piper-tts-es
-  language: es
-  locale: es_MX
-  quality: high
-  used_by:
-    - courtaccess/speech/synthesizer.py
-    - api/routes/realtime.py

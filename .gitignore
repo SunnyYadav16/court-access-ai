@@ -80,6 +80,7 @@ ipython_config.py
 
 # ── Secrets & environment ─────────────────────────────────────────────────────
 .env
+.env.production
 .envrc
 !.env.example
 frontend/.env
