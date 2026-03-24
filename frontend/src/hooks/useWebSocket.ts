@@ -82,7 +82,7 @@ export function useWebSocket(
   const connect = useCallback(() => {
     if (!sessionId) return;
     const token = localStorage.getItem("access_token") ?? "";
-    const url = `${WS_BASE}/sessions/${sessionId}/ws?token=${token}`;
+    const url = `${WS_BASE}/api/sessions/${sessionId}/ws?token=${token}`;
     updateStatus(retriesRef.current > 0 ? "reconnecting" : "connecting");
 
     const ws = new WebSocket(url);
