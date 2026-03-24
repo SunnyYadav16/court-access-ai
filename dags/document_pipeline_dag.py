@@ -85,7 +85,7 @@ def task_classify_document(**context) -> dict:
     Classifies the document as a legal form (pass) or irrelevant (reject).
 
     Production: calls courtaccess.core.classify_document.classify()
-    which uses Groq/Llama on the first 3 pages.
+    which uses Vertex/Llama on the first 3 pages.
     """
     ti = context["ti"]
     meta = ti.xcom_pull(task_ids="validate_upload", key="upload_meta")
@@ -207,7 +207,7 @@ def task_translate_portuguese(**context) -> dict:
 def task_legal_review_es(**context) -> dict:
     """
     STUB — Task 8a.
-    Validates Spanish legal terminology via Groq/Llama. 3x retry with backoff.
+    Validates Spanish legal terminology via Vertex/Llama. 3x retry with backoff.
 
     Production: calls courtaccess.core.legal_review.review_legal_terms()
     """
@@ -223,7 +223,7 @@ def task_legal_review_es(**context) -> dict:
 def task_legal_review_pt(**context) -> dict:
     """
     STUB — Task 8b.
-    Validates Portuguese legal terminology via Groq/Llama. 3x retry with backoff.
+    Validates Portuguese legal terminology via Vertex/Llama. 3x retry with backoff.
 
     Production: calls courtaccess.core.legal_review.review_legal_terms()
     """

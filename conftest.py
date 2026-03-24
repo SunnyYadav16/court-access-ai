@@ -4,7 +4,7 @@ conftest.py — Root pytest configuration for court-access-ai.
 Shared fixtures available to all test modules across the project:
   - mock_db_session   : async SQLAlchemy session mock
   - mock_gcs_client   : Google Cloud Storage client mock
-  - mock_vertex_ai    : Vertex AI / Groq Llama response mock
+  - mock_vertex_ai    : Vertex AI Llama response mock
   - mock_redis        : Redis client mock (function-scoped)
 """
 
@@ -71,7 +71,7 @@ def mock_gcs_client():
 @pytest.fixture
 def mock_vertex_ai():
     """
-    Mock Vertex AI / Groq Llama response for legal review and document classification.
+    Mock Vertex AI Llama response for legal review and document classification.
     Used by courtaccess/core/tests/test_legal_review.py and test_classify_document.py.
 
     Shape matches the response schema in courtaccess/core/legal_review.py.

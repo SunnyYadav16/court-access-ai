@@ -213,7 +213,6 @@ Weekly scraper for the Massachusetts court system form catalog (`mass.gov/courts
 **Environment variables (see `.env.example`):**
 - `DATABASE_URL` — asyncpg connection string
 - `SECRET_KEY` — JWT signing key (≥32 random bytes)
-- `GROQ_API_KEY` — LLaMA 4 Scout API
 - `GCP_PROJECT_ID`, `GCS_BUCKET_NAME` — Cloud Storage
 - `AIRFLOW_CONN_*` — Airflow connection strings
 

@@ -31,8 +31,11 @@ FROM python:3.11-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    UV_NO_CACHE=1 \
+    UV_SYSTEM_PYTHON=1
+
+# Install uv (fast Python package manager — replaces pip)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 
 WORKDIR /app
 
@@ -46,15 +49,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ── API target ────────────────────────────────────────────────────────────────
 FROM base AS api
 
-# Copy package definition first for layer caching
-COPY pyproject.toml ./
+# Copy package definition + lockfile first for layer caching
+COPY pyproject.toml uv.lock ./
 COPY courtaccess/ ./courtaccess/
 
-# Install courtaccess core dependencies (all ARM64-compatible)
-RUN pip install -e .
+# Install all core dependencies from the locked file (no dev extras)
+RUN uv sync --frozen --no-dev
 
 # Install DVC with GCS support for model pulling at startup
-RUN pip install --no-cache-dir "dvc[gs]>=3.50.0"
+RUN uv pip install "dvc[gs]>=3.50.0"
 
 # Copy API source and entrypoint
 COPY api/ ./api/
@@ -97,13 +100,13 @@ USER airflow
 
 # Copy and install the courtaccess package so DAGs can import from it.
 # This is required — without it, every DAG fails with ModuleNotFoundError.
-COPY --chown=airflow:root pyproject.toml /opt/airflow/
+COPY --chown=airflow:root pyproject.toml uv.lock /opt/airflow/
 COPY --chown=airflow:root courtaccess/ /opt/airflow/courtaccess/
 
-RUN pip install --no-cache-dir -e '/opt/airflow/[airflow]'
+RUN uv pip install '/opt/airflow/[airflow]'
 
 # Upgrade DVC with GCS support (base dvc from pyproject.toml lacks [gs] extras)
-RUN pip install --no-cache-dir "dvc[gs]>=3.50.0"
+RUN uv pip install "dvc[gs]>=3.50.0"
 
 # Install Playwright's Chromium browser for the form scraper
 RUN playwright install chromium

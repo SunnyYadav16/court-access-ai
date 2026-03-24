@@ -2,7 +2,7 @@
 courtaccess/core/tests/test_pii_scrub.py
 
 Unit tests for courtaccess.core.pii_scrub.
-Tests the stub (Presidio) detection logic without the real Groq API.
+Tests the stub (Presidio) detection logic without the real Vertex API.
 """
 
 from unittest.mock import MagicMock, patch

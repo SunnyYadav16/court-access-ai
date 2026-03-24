@@ -60,8 +60,8 @@ LANG_EN = "eng_Latn"
 LANG_ES = "spa_Latn"
 LANG_PT = "por_Latn"
 
-# ── Groq/Llama retry settings ─────────────────────────────────────────────────
-GROQ_RETRY_DELAYS = [1, 3, 9]  # seconds — exponential backoff
+# ── Vertex/Llama retry settings ─────────────────────────────────────────────────
+Vertex_RETRY_DELAYS = [1, 3, 9]  # seconds — exponential backoff
 
 # ── DAG default args ──────────────────────────────────────────────────────────
 DEFAULT_ARGS = {
@@ -132,12 +132,12 @@ def _legal_review_with_retry(
     reviewer: LegalReviewer,
 ) -> dict:
     """
-    Call reviewer.review_legal_terms() up to len(GROQ_RETRY_DELAYS) times.
+    Call reviewer.review_legal_terms() up to len(Vertex_RETRY_DELAYS) times.
     On total failure returns a 'skipped' result so the pipeline continues
     and flags the form for mandatory human review.
     """
     last_err = None
-    for attempt, delay in enumerate(GROQ_RETRY_DELAYS, start=1):
+    for attempt, delay in enumerate(Vertex_RETRY_DELAYS, start=1):
         try:
             result = reviewer.review_legal_terms(text)
             result["skipped"] = False
@@ -148,11 +148,11 @@ def _legal_review_with_retry(
             logger.warning(
                 "Legal review attempt %d/%d failed: %s. Retrying in %ds.",
                 attempt,
-                len(GROQ_RETRY_DELAYS),
+                len(Vertex_RETRY_DELAYS),
                 exc,
                 delay,
             )
-            if attempt < len(GROQ_RETRY_DELAYS):
+            if attempt < len(Vertex_RETRY_DELAYS):
                 time.sleep(delay)
 
     logger.error(

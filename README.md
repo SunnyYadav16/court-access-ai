@@ -66,7 +66,7 @@ All models are pre-trained with no fine-tuning. The MLOps pipeline manages versi
 |-------|------|---------|
 | **Faster-Whisper Large V3** | Speech-to-text (ASR) | CTranslate2 INT8 quantization, ~60x realtime |
 | **NLLB-200 Distilled 1.3B** | Translation (English ↔ Spanish/Portuguese) | Meta's No Language Left Behind model |
-| **Llama 4 Scout** | Legal term validation + document classification | Via Groq API. Async for real-time, sync for documents |
+| **Llama 4 Maverick** | Legal term validation + document classification | Via Vertex API. Async for real-time, sync for documents |
 | **PaddleOCR v3** | Printed text extraction from PDFs | DBNet detection + SVTR recognition, >95% accuracy |
 | **Qwen2.5-VL** | Handwritten text extraction | Vision-language model, ~90% accuracy on handwriting |
 | **Silero VAD v4** | Voice activity detection | Filters silence before ASR to prevent hallucinations |
@@ -102,7 +102,7 @@ court-access-ai/
 │   │   ├── config.py             # Pydantic settings (env-driven)
 │   │   ├── logger.py             # Structured logging
 │   │   ├── translation.py        # NLLB-200 translation (stub → real)
-│   │   ├── legal_review.py       # Llama legal term validation (stub → Groq)
+│   │   ├── legal_review.py       # Llama legal term validation (stub → Vertex)
 │   │   ├── ocr_printed.py        # PaddleOCR v3 (stub → real)
 │   │   ├── ocr_handwritten.py    # Qwen2.5-VL (stub → real)
 │   │   ├── reconstruct_pdf.py    # PyMuPDF layout reconstruction
@@ -291,7 +291,7 @@ Processes **one form per DAG run**: OCR → translate ES + PT in parallel → le
 | 1 | `load_form_entry` | Loads catalog entry, validates original PDF exists, detects partial translations |
 | 2 | `ocr_extract_text` | Extracts text regions with bounding-box coordinates from the PDF |
 | 3–4 | `translate_spanish` / `translate_portuguese` | Translates OCR regions per language (skips if translation already exists from mass.gov) |
-| 5–6 | `legal_review_spanish` / `legal_review_portuguese` | Validates legal terms via Groq/Llama with 3× exponential-backoff retry (1s, 3s, 9s) |
+| 5–6 | `legal_review_spanish` / `legal_review_portuguese` | Validates legal terms via Vertex/Llama with 3× exponential-backoff retry (1s, 3s, 9s) |
 | 7–8 | `reconstruct_pdf_spanish` / `reconstruct_pdf_portuguese` | Rebuilds PDF with translated text using PyMuPDF |
 | 9 | `store_and_update_catalog` | Writes translated PDF paths into catalog, sets `needs_human_review = True` |
 | 10 | `dvc_version_data` | Tracks updated catalog + translated PDFs with DVC |
@@ -314,7 +314,7 @@ If legal review fails all retries, the pipeline continues but appends an audit n
 |--------|------|------------|
 | `courtaccess/core/ocr_printed.py` | PyMuPDF native text extraction | PaddleOCR v3 + Qwen2.5-VL |
 | `courtaccess/core/translation.py` | Prefixes text with language tag | NLLB-200 via CTranslate2 |
-| `courtaccess/core/legal_review.py` | Always returns OK | Groq API (Llama 4 Scout) |
+| `courtaccess/core/legal_review.py` | Always returns OK | Vertex API (Llama 4 Scout) |
 | `courtaccess/core/reconstruct_pdf.py` | PyMuPDF layout reconstruction | Same (already production-ready) |
 
 ### Running the Pipeline

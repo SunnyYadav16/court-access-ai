@@ -15,7 +15,8 @@ FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
+    UV_NO_CACHE=1 \
+    UV_SYSTEM_PYTHON=1 \
     DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -29,26 +30,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+
 # Make python3.11 the default python3
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
 
 WORKDIR /app
 
-# Install courtaccess package with GPU dependencies
-COPY pyproject.toml ./
+# Copy package definition + lockfile for caching
+COPY pyproject.toml uv.lock ./
 COPY courtaccess/ ./courtaccess/
 
 # torch with CUDA support — overrides the CPU torch from pyproject.toml
-RUN pip3 install --no-cache-dir torch==2.3.0 --index-url https://download.pytorch.org/whl/cu124
-RUN pip3 install --no-cache-dir -e .
-RUN pip3 install --no-cache-dir \
+RUN uv pip install torch==2.3.0 --index-url https://download.pytorch.org/whl/cu124
+RUN uv pip install -e .
+RUN uv pip install \
     ctranslate2>=4.0.0 \
     faster-whisper>=1.0.0 \
     paddlepaddle-gpu \
     paddleocr>=2.7.0
 
 # Install DVC with GCS support for model pulling at startup
-RUN pip3 install --no-cache-dir "dvc[gs]>=3.50.0"
+RUN uv pip install "dvc[gs]>=3.50.0"
 
 # Copy entrypoint
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
