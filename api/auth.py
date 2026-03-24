@@ -77,7 +77,7 @@ def verify_firebase_token(token: str) -> dict[str, Any]:
         # 2. Verifies the JWT signature
         # 3. Checks expiry (exp), audience (aud), issuer (iss)
         # 4. Returns decoded payload
-        decoded_token = firebase_auth.verify_id_token(token, check_revoked=True)
+        decoded_token = firebase_auth.verify_id_token(token, check_revoked=False)
         return decoded_token
 
     except firebase_auth.ExpiredIdTokenError as exc:
