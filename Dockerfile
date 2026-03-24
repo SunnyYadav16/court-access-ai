@@ -53,8 +53,10 @@ FROM base AS api
 COPY pyproject.toml uv.lock ./
 COPY courtaccess/ ./courtaccess/
 
-# Install all core dependencies from the locked file (no dev extras)
-RUN uv sync --frozen --no-dev
+# Install the project + all core dependencies into the system Python
+# (UV_SYSTEM_PYTHON=1 is set above), so CLI entry points like `fastapi`
+# are available on PATH at container runtime.
+RUN uv pip install .
 
 # Install DVC with GCS support for model pulling at startup
 RUN uv pip install "dvc[gs]>=3.50.0"
