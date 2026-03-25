@@ -40,24 +40,6 @@ x-airflow-common:
     # ── Database ──
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
 
-    # ── Strict Application Configs ──
-    SIGNED_URL_EXPIRY_SECONDS: ${SIGNED_URL_EXPIRY_SECONDS}
-    AIRFLOW_BASE_URL: ${AIRFLOW_BASE_URL}
-    AIRFLOW_USERNAME: ${AIRFLOW_USERNAME}
-    AIRFLOW_PASSWORD: ${AIRFLOW_PASSWORD}
-    MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
-    USE_REAL_CLASSIFICATION: ${USE_REAL_CLASSIFICATION}
-    USE_REAL_TRANSLATION: ${USE_REAL_TRANSLATION}
-    USE_REAL_LEGAL_REVIEW: ${USE_REAL_LEGAL_REVIEW}
-    USE_VERTEX_LEGAL_REVIEW: ${USE_VERTEX_LEGAL_REVIEW}
-    USE_REAL_OCR: ${USE_REAL_OCR}
-    NLLB_MODEL_PATH: ${NLLB_MODEL_PATH}
-    WHISPER_MODEL_PATH: ${WHISPER_MODEL_PATH}
-    PIPER_TTS_ES_PATH: ${PIPER_TTS_ES_PATH}
-    PIPER_TTS_PT_PATH: ${PIPER_TTS_PT_PATH}
-    ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
-    ALGORITHM: ${ALGORITHM}
-
     # ── Scheduler ──
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
 
@@ -91,7 +73,7 @@ x-airflow-common:
     - ./.dvc:/opt/airflow/.dvc
     - ./dvc_storage:/opt/airflow/dvc_storage
 
-  user: "${AIRFLOW_UID}:0"
+  user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     &airflow-common-depends-on
     postgres:
@@ -147,7 +129,8 @@ services:
       DEBUG: ${DEBUG}
       SECRET_KEY: ${SECRET_KEY}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
-      # ── Database ──
+      SIGNED_URL_EXPIRY_SECONDS: ${SIGNED_URL_EXPIRY_SECONDS}
+      # ── Database (POSTGRES_HOST/PORT resolved from env file) ──
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
@@ -160,24 +143,22 @@ services:
       GCS_BUCKET_TRANSLATED: ${GCS_BUCKET_TRANSLATED}
       GCS_BUCKET_FORMS: ${GCS_BUCKET_FORMS}
       GCS_BUCKET_MODELS: ${GCS_BUCKET_MODELS}
-      GCP_SERVICE_ACCOUNT_JSON: ${GCP_SERVICE_ACCOUNT_JSON:-}
+      GCP_SERVICE_ACCOUNT_JSON: ${GCP_SERVICE_ACCOUNT_JSON}
       # ── Auth (GCIP / Firebase) ──
       GCIP_API_KEY: ${GCIP_API_KEY}
       GCIP_AUTH_DOMAIN: ${GCIP_AUTH_DOMAIN}
       GCIP_PROJECT_ID: ${GCIP_PROJECT_ID}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
+      ALGORITHM: ${ALGORITHM}
       # ── Vertex AI ──
       VERTEX_PROJECT: ${VERTEX_PROJECT}
       VERTEX_LOCATION: ${VERTEX_LOCATION}
       LEGAL_LLM_MODEL: ${LEGAL_LLM_MODEL}
       LEGAL_VERIFY_TIMEOUT: ${LEGAL_VERIFY_TIMEOUT}
-      # ── Redis ──
-      REDIS_URL: ${REDIS_URL}
-      # ── Strict Application Configs ──
-      SIGNED_URL_EXPIRY_SECONDS: ${SIGNED_URL_EXPIRY_SECONDS}
-      AIRFLOW_BASE_URL: ${AIRFLOW_BASE_URL}
-      AIRFLOW_USERNAME: ${AIRFLOW_USERNAME}
-      AIRFLOW_PASSWORD: ${AIRFLOW_PASSWORD}
+      # ── Redis & MLflow ──
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
+      # ── Feature Flags & Model Paths ──
       USE_REAL_CLASSIFICATION: ${USE_REAL_CLASSIFICATION}
       USE_REAL_TRANSLATION: ${USE_REAL_TRANSLATION}
       USE_REAL_LEGAL_REVIEW: ${USE_REAL_LEGAL_REVIEW}
@@ -187,11 +168,12 @@ services:
       WHISPER_MODEL_PATH: ${WHISPER_MODEL_PATH}
       PIPER_TTS_ES_PATH: ${PIPER_TTS_ES_PATH}
       PIPER_TTS_PT_PATH: ${PIPER_TTS_PT_PATH}
-      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
-      ALGORITHM: ${ALGORITHM}
+      # ── Airflow (API Client) ──
+      AIRFLOW_BASE_URL: ${AIRFLOW_BASE_URL}
+      AIRFLOW_USERNAME: ${AIRFLOW_USERNAME}
+      AIRFLOW_PASSWORD: ${AIRFLOW_PASSWORD}
       # ── Git/DVC ──
       GIT_DISCOVERY_ACROSS_FILESYSTEM: '1'
-
 
     volumes:
       - ./courtaccess:/app/courtaccess   # live code reloading in dev
@@ -282,7 +264,7 @@ services:
       - -c
       - |
         mkdir -p /opt/airflow/data/forms /opt/airflow/forms /opt/airflow/models /opt/airflow/dvc_storage /opt/airflow/logs
-        chown -R "${AIRFLOW_UID}:0" /opt/airflow/data /opt/airflow/forms /opt/airflow/models /opt/airflow/dvc_storage /opt/airflow/logs
+        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/data /opt/airflow/forms /opt/airflow/models /opt/airflow/dvc_storage /opt/airflow/logs
 
         # Git safe.directory — required because repo is owned by host user but
         # accessed by airflow user (UID 50000) inside the container.
@@ -297,7 +279,7 @@ services:
         fi
         dvc remote add -d local_storage /opt/airflow/dvc_storage 2>/dev/null || \
           dvc remote modify local_storage url /opt/airflow/dvc_storage
-        chown -R "${AIRFLOW_UID}:0" /opt/airflow/.dvc
+        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/.dvc
         echo "DVC remote configured: $(dvc remote list)"
 
         exec /entrypoint airflow version
@@ -305,8 +287,8 @@ services:
       <<: *airflow-common-env
       _AIRFLOW_DB_MIGRATE: 'true'
       _AIRFLOW_WWW_USER_CREATE: 'true'
-      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME}
-      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD}
+      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
     user: "0:0"
     volumes: *airflow-common-volumes
 
