@@ -142,10 +142,10 @@ def create_app() -> FastAPI:
     _register_exception_handlers(app)
 
     # ── Routers ────────────────────────────────────────────────────────────
-    app.include_router(auth_router.router)
-    app.include_router(documents_router.router)
-    app.include_router(forms_router.router)
-    app.include_router(realtime_router.router)
+    app.include_router(auth_router.router, prefix="/api")
+    app.include_router(documents_router.router, prefix="/api")
+    app.include_router(forms_router.router, prefix="/api")
+    app.include_router(realtime_router.router, prefix="/api")
 
     # ── Static frontend assets (/assets/*, /favicon.ico, etc.) ─────────────
     # Only mounted when the production build exists (not in local `uvicorn --reload` dev)

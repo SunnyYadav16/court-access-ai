@@ -63,38 +63,38 @@ class Settings(BaseSettings):
     vertex_location: str
     legal_llm_model: str
     legal_verify_timeout: float
-    gcp_service_account_json: str = ""  # optional: inline SA JSON
+    gcp_service_account_json: str
 
     # ── Signed URLs ───────────────────────────────────────────────────────────
-    signed_url_expiry_seconds: int = 3600
+    signed_url_expiry_seconds: int
 
     # ── Airflow ───────────────────────────────────────────────────────────────
-    airflow_base_url: str = "http://airflow-webserver:8080"
-    airflow_username: str = "airflow"
-    airflow_password: str = "airflow"  # noqa: S105
+    airflow_base_url: str | None = None
+    airflow_username: str | None = None
+    airflow_password: str | None = None
 
     # ── MLflow ────────────────────────────────────────────────────────────────
-    mlflow_tracking_uri: str = "http://mlflow:5000"
+    mlflow_tracking_uri: str | None = None
 
     # ── Redis (translation cache) ─────────────────────────────────────────────
-    redis_url: str = "redis://localhost:6379"
+    redis_url: str
 
     # ── Model toggles (feature flags — safe to leave False locally) ───────────
-    use_real_classification: bool = False
-    use_real_translation: bool = False
-    use_real_legal_review: bool = False
-    use_vertex_legal_review: bool = False
-    use_real_ocr: bool = False
+    use_real_classification: bool
+    use_real_translation: bool
+    use_real_legal_review: bool
+    use_vertex_legal_review: bool
+    use_real_ocr: bool
 
     # ── Model paths (inside container) ───────────────────────────────────────
-    nllb_model_path: str = "/opt/models/nllb-200-distilled-1.3B-ct2"
-    whisper_model_path: str = "/opt/models/whisper-large-v3"
-    piper_tts_es_path: str = "/opt/models/piper-tts-es"
-    piper_tts_pt_path: str = "/opt/models/piper-tts-pt"
+    nllb_model_path: str | None = None
+    whisper_model_path: str | None = None
+    piper_tts_es_path: str | None = None
+    piper_tts_pt_path: str | None = None
 
     # ── Auth token ────────────────────────────────────────────────────────────
-    access_token_expire_minutes: int = 60
-    algorithm: str = "HS256"
+    access_token_expire_minutes: int
+    algorithm: str
 
 
 settings = Settings()

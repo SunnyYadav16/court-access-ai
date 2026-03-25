@@ -167,8 +167,8 @@ def register_models(project_root: str = ".") -> list[dict]:
         "model_name": "llama-4-maverick",
         "type": "api_endpoint",
         "provider": "vertex_ai",
-        "model_id": settings.vertex_model_id,
-        "project": settings.vertex_project_id,
+        "model_id": settings.legal_llm_model,
+        "project": settings.vertex_project,
         "location": settings.vertex_location,
         "description": "Llama 4 Maverick — legal review via Vertex AI API",
     }
@@ -181,8 +181,8 @@ def register_models(project_root: str = ".") -> list[dict]:
                         "model_name": "llama-4-maverick",
                         "type": "api_endpoint",
                         "provider": "vertex_ai",
-                        "model_id": settings.vertex_model_id,
-                        "vertex_project": settings.vertex_project_id,
+                        "model_id": settings.legal_llm_model,
+                        "vertex_project": settings.vertex_project,
                         "vertex_location": settings.vertex_location,
                     }
                 )
@@ -199,8 +199,8 @@ def register_models(project_root: str = ".") -> list[dict]:
         llama_info["reason"] = "mlflow_unavailable"
         logger.info(
             "[LOG-ONLY] Model 'llama-4-maverick': Vertex AI endpoint at %s/%s",
-            settings.vertex_project_id,
-            settings.vertex_model_id,
+            settings.vertex_project,
+            settings.legal_llm_model,
         )
 
     results.append(llama_info)
