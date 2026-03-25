@@ -69,12 +69,12 @@ class Settings(BaseSettings):
     signed_url_expiry_seconds: int
 
     # ── Airflow ───────────────────────────────────────────────────────────────
-    airflow_base_url: str
-    airflow_username: str
-    airflow_password: str
+    airflow_base_url: str | None = None
+    airflow_username: str | None = None
+    airflow_password: str | None = None
 
     # ── MLflow ────────────────────────────────────────────────────────────────
-    mlflow_tracking_uri: str
+    mlflow_tracking_uri: str | None = None
 
     # ── Redis (translation cache) ─────────────────────────────────────────────
     redis_url: str
@@ -87,10 +87,10 @@ class Settings(BaseSettings):
     use_real_ocr: bool
 
     # ── Model paths (inside container) ───────────────────────────────────────
-    nllb_model_path: str
-    whisper_model_path: str
-    piper_tts_es_path: str
-    piper_tts_pt_path: str
+    nllb_model_path: str | None = None
+    whisper_model_path: str | None = None
+    piper_tts_es_path: str | None = None
+    piper_tts_pt_path: str | None = None
 
     # ── Auth token ────────────────────────────────────────────────────────────
     access_token_expire_minutes: int
