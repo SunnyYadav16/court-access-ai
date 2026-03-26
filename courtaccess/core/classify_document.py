@@ -34,6 +34,7 @@ import json
 import logging
 
 from courtaccess.core.config import settings
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,12 @@ _USE_REAL = settings.use_real_classification
 _VERTEX_PROJECT = settings.vertex_project_id
 _VERTEX_LOCATION = settings.vertex_location
 _VERTEX_MODEL = settings.vertex_model_id
-_GCP_SA_JSON = settings.gcp_service_account_json
+_GCP_SA_JSON = settings.gcp_service_account_json or (
+    Path(settings.gcp_service_account_json_path).read_text()
+    if settings.gcp_service_account_json_path
+    and Path(settings.gcp_service_account_json_path).exists()
+    else ""
+)
 _MAX_PAGES = 3  # only classify first 3 pages
 
 

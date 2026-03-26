@@ -10,9 +10,11 @@ PRODUCTION UPGRADE:
 """
 
 import logging
+from pathlib import Path
 
 from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 logger = logging.getLogger(__name__)
 
@@ -59,17 +61,27 @@ class Settings(BaseSettings):
     gcip_project_id: str
 
     # ── Vertex AI (Llama 4 — primary legal review provider) ──────────────────
-    vertex_project: str
-    vertex_location: str
-    legal_llm_model: str
-    legal_verify_timeout: float
-    gcp_service_account_json: str = ""  # optional: inline SA JSON
+    vertex_project_id: str = ""
+    vertex_location: str = "us-east5"
+    vertex_model_id: str = "meta/llama-4-maverick-17b-128e-instruct-maas"
+    legal_verify_timeout: float = 30.0
+    gcp_service_account_json: str = ""
+    gcp_service_account_json_path: str = ""
 
+    @computed_field  # type: ignore[misc]
+    @property
+    def resolved_gcp_sa_json(self) -> str:
+        if self.gcp_service_account_json:
+            return self.gcp_service_account_json
+        if self.gcp_service_account_json_path:
+            return Path(self.gcp_service_account_json_path).read_text()
+        return ""   
+    
     # ── Signed URLs ───────────────────────────────────────────────────────────
     signed_url_expiry_seconds: int = 3600
 
     # ── Airflow ───────────────────────────────────────────────────────────────
-    airflow_base_url: str = "http://airflow-webserver:8080"
+    airflow_base_url: str = "http://airflow-apiserver:8080"  
     airflow_username: str = "airflow"
     airflow_password: str = "airflow"  # noqa: S105
 
@@ -96,7 +108,6 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60
     algorithm: str = "HS256"
 
-
 settings = Settings()
 
 
@@ -110,3 +121,4 @@ def get_settings() -> Settings:
     In non-FastAPI code just import `settings` directly.
     """
     return settings
+

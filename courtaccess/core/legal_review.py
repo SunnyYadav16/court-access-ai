@@ -28,6 +28,7 @@ import os
 import time
 
 from courtaccess.languages.base import LanguageConfig
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,10 @@ class LegalReviewer:
             "meta/llama-4-maverick-17b-128e-instruct-maas",
         )
         self._gcp_sa_json = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "")
+        if not self._gcp_sa_json:
+            _path = os.getenv("GCP_SERVICE_ACCOUNT_JSON_PATH", "")
+            if _path and Path(_path).exists():
+                self._gcp_sa_json = Path(_path).read_text()
 
         self._vertex_credentials = None
         self._cache_hits = 0

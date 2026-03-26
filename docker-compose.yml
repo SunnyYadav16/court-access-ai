@@ -24,6 +24,22 @@ x-airflow-common:
     target: airflow
   environment:
     &airflow-common-env
+    # ── Real model toggles ──
+    USE_REAL_TRANSLATION: 'true'
+    USE_REAL_CLASSIFICATION: 'true'
+    USE_REAL_LEGAL_REVIEW: 'true'
+    USE_VERTEX_LEGAL_REVIEW: 'true'
+    USE_REAL_OCR: 'true'
+
+    # ── Model paths ──
+    NLLB_MODEL_PATH: /opt/airflow/models/nllb-200-distilled-1.3B-ct2
+
+    # ── Vertex AI ──
+    VERTEX_PROJECT_ID: ${VERTEX_PROJECT_ID}
+    VERTEX_LOCATION: ${VERTEX_LOCATION:-us-east5}
+    GCP_SERVICE_ACCOUNT_JSON: ${GCP_SERVICE_ACCOUNT_JSON}
+    GCP_SERVICE_ACCOUNT_JSON_PATH: /opt/airflow/secrets/gcp-service-account.json
+
     # ── Core ──
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
@@ -59,6 +75,36 @@ x-airflow-common:
 
     # ── Additional pip packages (dev only — prefer Dockerfile for production) ──
     _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-}
+    DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres/${POSTGRES_DB:-airflow}
+    GOOGLE_APPLICATION_CREDENTIALS: /opt/airflow/secrets/gcp-service-account.json
+
+    # ── App (required by courtaccess/core/config.py Settings) ──
+    APP_ENV: ${APP_ENV:-development}
+    DEBUG: ${DEBUG:-true}
+    SECRET_KEY: ${SECRET_KEY:-change-me-in-dev}
+    ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000}
+
+    # ── Postgres ──
+    POSTGRES_USER: ${POSTGRES_USER:-airflow}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
+    POSTGRES_DB: ${POSTGRES_DB:-airflow}
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: 5432
+
+    # ── GCS ──
+    GCS_BUCKET_UPLOADS: ${GCS_BUCKET_UPLOADS:-courtaccess-ai-uploads}
+    GCS_BUCKET_TRANSLATED: ${GCS_BUCKET_TRANSLATED:-courtaccess-ai-translated}
+    GCS_BUCKET_FORMS: ${GCS_BUCKET_FORMS:-courtaccess-ai-forms}
+    GCS_BUCKET_MODELS: ${GCS_BUCKET_MODELS:-courtaccess-ai-models}
+
+    # ── GCP ──
+    GCP_PROJECT_ID: ${GCP_PROJECT_ID:-courtaccess-ai}
+    GCP_REGION: ${GCP_REGION:-us-east1}
+
+    # ── GCIP / Firebase (stub values fine for local dev) ──
+    GCIP_API_KEY: ${GCIP_API_KEY:-stub}
+    GCIP_AUTH_DOMAIN: ${GCIP_AUTH_DOMAIN:-stub.firebaseapp.com}
+    GCIP_PROJECT_ID: ${GCIP_PROJECT_ID:-stub}
 
   volumes:
     &airflow-common-volumes
@@ -72,6 +118,7 @@ x-airflow-common:
     - ./.git:/opt/airflow/.git
     - ./.dvc:/opt/airflow/.dvc
     - ./dvc_storage:/opt/airflow/dvc_storage
+    - ./secrets/gcp-service-account.json:/opt/airflow/secrets/gcp-service-account.json:ro
 
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
@@ -124,18 +171,53 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres/${POSTGRES_DB:-airflow}
-      GCS_BUCKET_UPLOADS: ${GCS_BUCKET_UPLOADS:-courtaccess-uploads}
-      GCS_BUCKET_TRANSLATED: ${GCS_BUCKET_TRANSLATED:-courtaccess-translated}
-      GCS_BUCKET_FORMS: ${GCS_BUCKET_FORMS:-courtaccess-forms}
-      GCS_BUCKET_MODELS: ${GCS_BUCKET_MODELS:-courtaccess-ai-models}
-      SECRET_KEY: ${SECRET_KEY}
+      # ── App ──
       APP_ENV: ${APP_ENV:-development}
       DEBUG: ${DEBUG:-true}
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-dev}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:8000}
+
+      # ── Postgres (individual fields — new config.py uses computed database_url) ──
+      POSTGRES_USER: ${POSTGRES_USER:-airflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
+      POSTGRES_DB: ${POSTGRES_DB:-airflow}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+
+      # ── GCS ──
+      GCS_BUCKET_UPLOADS: ${GCS_BUCKET_UPLOADS:-courtaccess-ai-uploads}
+      GCS_BUCKET_TRANSLATED: ${GCS_BUCKET_TRANSLATED:-courtaccess-ai-translated}
+      GCS_BUCKET_FORMS: ${GCS_BUCKET_FORMS:-courtaccess-ai-forms}
+      GCS_BUCKET_MODELS: ${GCS_BUCKET_MODELS:-courtaccess-ai-models}
+
+      # ── GCP ──
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-courtaccess-ai}
+      GCP_REGION: ${GCP_REGION:-us-east1}
+      GCP_SERVICE_ACCOUNT_JSON: ${GCP_SERVICE_ACCOUNT_JSON:-}
+
+      # ── GCIP / Firebase (required by config — stub values fine for local dev) ──
+      GCIP_API_KEY: ${GCIP_API_KEY:-stub}
+      GCIP_AUTH_DOMAIN: ${GCIP_AUTH_DOMAIN:-stub.firebaseapp.com}
+      GCIP_PROJECT_ID: ${GCIP_PROJECT_ID:-stub}
+
+      # ── Vertex AI ──
+      VERTEX_PROJECT_ID: ${VERTEX_PROJECT_ID:-}
+      VERTEX_LOCATION: ${VERTEX_LOCATION:-us-east5}
+
+      # ── Redis ──
       REDIS_URL: redis://redis:6379
+
+      # ── MLflow ──
       MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-}
-      # Git/DVC need this when host UID != container UID
+
+      # ── Airflow (for DAG trigger) ──
+      AIRFLOW_BASE_URL: http://airflow-apiserver:8080
+      AIRFLOW_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
+      AIRFLOW_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
+
+      # ── DVC / Git ──
       GIT_DISCOVERY_ACROSS_FILESYSTEM: '1'
+
     volumes:
       - ./courtaccess:/app/courtaccess   # live code reloading in dev
       - ./api:/app/api

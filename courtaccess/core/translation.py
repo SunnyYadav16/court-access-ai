@@ -475,11 +475,11 @@ class Translator:
         for text in texts:
             inputs = self._tokenizer(
                 text,
-                return_tensors="pt",
+                # return_tensors="pt",
                 truncation=True,
                 max_length=512,
             )
-            token_ids = inputs["input_ids"][0].tolist()
+            token_ids = inputs["input_ids"] #[0].tolist()
             tokens = self._tokenizer.convert_ids_to_tokens(token_ids)
 
             out = self._ct2_translator.translate_batch(
