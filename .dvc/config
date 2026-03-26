@@ -1,4 +1,6 @@
 [core]
-    remote = gcs
+    remote = local_storage
 ['remote "gcs"']
     url = gs://courtaccess-ai-models
+['remote "local_storage"']
+    url = /opt/airflow/dvc_storage
