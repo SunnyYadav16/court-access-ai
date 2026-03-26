@@ -44,18 +44,38 @@ x-airflow-common:
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
 
     # ── courtaccess package path ──
-    # Required: makes `from courtaccess.X import Y` work inside all DAGs.
-    # The package is installed via `pip install -e /opt/airflow/` in the
-    # Dockerfile airflow target, but PYTHONPATH is set as a safety net for
-    # local volume mounts where the install may not have run yet.
     PYTHONPATH: /opt/airflow
 
     # ── Git/DVC ──
-    # Required: DVC needs to find .git across the Docker volume mount boundary.
     GIT_DISCOVERY_ACROSS_FILESYSTEM: '1'
 
     # ── Redis (translation cache) ──
     REDIS_URL: redis://redis:6379
+
+    # ── Application ──
+    APP_ENV: ${APP_ENV}
+
+    # ── Database (sync psycopg2 — asyncpg is unusable in Airflow task processes) ──
+    DATABASE_URL: "postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}"
+
+    # ── Google Cloud / GCS ──
+    GCP_SERVICE_ACCOUNT_JSON: ${GCP_SERVICE_ACCOUNT_JSON}
+    GCS_BUCKET_UPLOADS: ${GCS_BUCKET_UPLOADS}
+    GCS_BUCKET_TRANSLATED: ${GCS_BUCKET_TRANSLATED}
+    SIGNED_URL_EXPIRY_SECONDS: ${SIGNED_URL_EXPIRY_SECONDS}
+
+    # ── Vertex AI ──
+    VERTEX_PROJECT_ID: ${VERTEX_PROJECT_ID}
+    VERTEX_LOCATION: ${VERTEX_LOCATION}
+    VERTEX_LEGAL_LLM_MODEL: ${VERTEX_LEGAL_LLM_MODEL}
+    LEGAL_VERIFY_TIMEOUT: ${LEGAL_VERIFY_TIMEOUT}
+
+    # ── Feature flags (controls stub vs real mode for every DAG task) ──
+    USE_REAL_CLASSIFICATION: ${USE_REAL_CLASSIFICATION}
+    USE_REAL_TRANSLATION: ${USE_REAL_TRANSLATION}
+    USE_REAL_LEGAL_REVIEW: ${USE_REAL_LEGAL_REVIEW}
+    USE_VERTEX_LEGAL_REVIEW: ${USE_VERTEX_LEGAL_REVIEW}
+    USE_REAL_OCR: ${USE_REAL_OCR}
 
     # ── Additional pip packages (dev only — prefer Dockerfile for production) ──
     _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-}
@@ -94,6 +114,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres-db-volume:/var/lib/postgresql/data
+      - ./db/init-airflow-db.sql:/docker-entrypoint-initdb.d/init-airflow-db.sql
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}"]
       interval: 10s
@@ -151,9 +172,9 @@ services:
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
       ALGORITHM: ${ALGORITHM}
       # ── Vertex AI ──
-      VERTEX_PROJECT: ${VERTEX_PROJECT}
+      VERTEX_PROJECT_ID: ${VERTEX_PROJECT_ID}
       VERTEX_LOCATION: ${VERTEX_LOCATION}
-      LEGAL_LLM_MODEL: ${LEGAL_LLM_MODEL}
+      VERTEX_LEGAL_LLM_MODEL: ${VERTEX_LEGAL_LLM_MODEL}
       LEGAL_VERIFY_TIMEOUT: ${LEGAL_VERIFY_TIMEOUT}
       # ── Redis & MLflow ──
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}

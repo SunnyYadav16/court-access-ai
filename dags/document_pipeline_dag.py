@@ -58,25 +58,26 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-_GCS_BUCKET_UPLOADS    = os.getenv("GCS_BUCKET_UPLOADS",    "courtaccess-ai-uploads")
+_GCS_BUCKET_UPLOADS = os.getenv("GCS_BUCKET_UPLOADS", "courtaccess-ai-uploads")
 _GCS_BUCKET_TRANSLATED = os.getenv("GCS_BUCKET_TRANSLATED", "courtaccess-ai-translated")
-_SIGNED_URL_EXPIRY     = int(os.getenv("SIGNED_URL_EXPIRY_SECONDS", "3600"))
+_SIGNED_URL_EXPIRY = int(os.getenv("SIGNED_URL_EXPIRY_SECONDS", "3600"))
 
 # Strip +asyncpg — Airflow tasks run in sync processes, asyncpg is unusable here
-_DB_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://courtaccess:courtaccess@postgres:5432/courtaccess",
-).replace("+asyncpg", "")
+_DB_URL = os.getenv("DATABASE_URL", "").replace("+asyncpg", "")
+if not _DB_URL:
+    raise RuntimeError(
+        "DATABASE_URL is not set in the Airflow environment. Add it to &airflow-common-env in docker-compose.yml."
+    )
 
 _NLLB_TARGET = {"es": "spa_Latn", "pt": "por_Latn"}
 
 DEFAULT_ARGS = {
-    "owner":            "courtaccess",
-    "depends_on_past":  False,
-    "retries":          1,
-    "retry_delay":      timedelta(seconds=60),
+    "owner": "courtaccess",
+    "depends_on_past": False,
+    "retries": 1,
+    "retry_delay": timedelta(seconds=60),
     "email_on_failure": False,
-    "email_on_retry":   False,
+    "email_on_retry": False,
 }
 
 
@@ -93,6 +94,7 @@ def _gcs_parse(uri: str) -> tuple[str, str]:
 
 def _gcs_download(uri: str, local: str) -> None:
     from google.cloud import storage
+
     b, bl = _gcs_parse(uri)
     storage.Client().bucket(b).blob(bl).download_to_filename(local)
     logger.info("GCS ↓ %s → %s", uri, local)
@@ -100,20 +102,33 @@ def _gcs_download(uri: str, local: str) -> None:
 
 def _gcs_upload(local: str, uri: str) -> None:
     from google.cloud import storage
+
     b, bl = _gcs_parse(uri)
     storage.Client().bucket(b).blob(bl).upload_from_filename(local)
     logger.info("GCS ↑ %s → %s", local, uri)
 
+
 def _gcs_signed_url(uri: str, expiry: int = _SIGNED_URL_EXPIRY) -> str:
+    import json
+    import os
+
     from google.cloud import storage
-    import json, os
     from google.oauth2 import service_account
+
     sa_json = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "")
     creds = service_account.Credentials.from_service_account_info(json.loads(sa_json)) if sa_json else None
     b, bl = _gcs_parse(uri)
-    return storage.Client(credentials=creds).bucket(b).blob(bl).generate_signed_url(
-        expiration=timedelta(seconds=expiry), method="GET", version="v4",
+    return (
+        storage.Client(credentials=creds)
+        .bucket(b)
+        .blob(bl)
+        .generate_signed_url(
+            expiration=timedelta(seconds=expiry),
+            method="GET",
+            version="v4",
+        )
     )
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DB helpers
@@ -125,6 +140,7 @@ def _gcs_signed_url(uri: str, expiry: int = _SIGNED_URL_EXPIRY) -> str:
 
 def _engine():
     import sqlalchemy as sa
+
     return sa.create_engine(_DB_URL, pool_pre_ping=True)
 
 
@@ -132,16 +148,11 @@ def _update_session(session_id: str, status: str, **fields) -> None:
     """UPDATE sessions — valid statuses: active | processing | completed | failed | ended"""
     try:
         import sqlalchemy as sa
+
         vals = {"status": status, **fields}
         with _engine().begin() as c:
-            c.execute(
-                sa.text(
-                    "UPDATE sessions SET "
-                    + ", ".join(f"{k} = :{k}" for k in vals)
-                    + " WHERE session_id = :session_id"
-                ),
-                {**vals, "session_id": session_id},
-            )
+            query = "UPDATE sessions SET " + ", ".join(f"{k} = :{k}" for k in vals) + " WHERE session_id = :session_id"  # noqa: S608
+            c.execute(sa.text(query), {**vals, "session_id": session_id})
     except Exception as exc:
         logger.error("[DB] update sessions failed (sid=%s): %s", session_id, exc)
 
@@ -150,29 +161,27 @@ def _update_request(request_id: str, **fields) -> None:
     """UPDATE translation_requests — valid statuses: processing | completed | failed | rejected"""
     try:
         import sqlalchemy as sa
+
         with _engine().begin() as c:
-            c.execute(
-                sa.text(
-                    "UPDATE translation_requests SET "
-                    + ", ".join(f"{k} = :{k}" for k in fields)
-                    + " WHERE request_id = :request_id"
-                ),
-                {**fields, "request_id": request_id},
-            )
+            # fmt: off
+            query = "UPDATE translation_requests SET " + ", ".join(f"{k} = :{k}" for k in fields) + " WHERE request_id = :request_id"  # noqa: S608
+            # fmt: on
+            c.execute(sa.text(query), {**fields, "request_id": request_id})
     except Exception as exc:
         logger.error("[DB] update translation_requests failed (rid=%s): %s", request_id, exc)
 
 
 def _write_step(
     session_id: str,
-    step_name:  str,
-    status:     str,      # running | success | failed | skipped
-    detail:     str = "",
-    metadata:   dict | None = None,
+    step_name: str,
+    status: str,  # running | success | failed | skipped
+    detail: str = "",
+    metadata: dict | None = None,
 ) -> None:
     """Upsert a row in pipeline_steps. Polled by the frontend progress screen."""
     try:
         import sqlalchemy as sa
+
         with _engine().begin() as c:
             c.execute(
                 sa.text("""
@@ -187,12 +196,12 @@ def _write_step(
                         updated_at = EXCLUDED.updated_at
                 """),
                 {
-                    "sid":    session_id,
-                    "step":   step_name,
+                    "sid": session_id,
+                    "step": step_name,
                     "status": status,
                     "detail": detail,
-                    "meta":   json.dumps(metadata or {}),
-                    "now":    datetime.now(tz=UTC),
+                    "meta": json.dumps(metadata or {}),
+                    "now": datetime.now(tz=UTC),
                 },
             )
     except Exception as exc:
@@ -203,6 +212,7 @@ def _write_audit(user_id: str, session_id: str, request_id: str, action: str, de
     """INSERT into audit_logs (immutable — no upsert)."""
     try:
         import sqlalchemy as sa
+
         with _engine().begin() as c:
             c.execute(
                 sa.text("""
@@ -213,13 +223,13 @@ def _write_audit(user_id: str, session_id: str, request_id: str, action: str, de
                         (:aid, :uid, :sid, :rid, :action, :details, :now)
                 """),
                 {
-                    "aid":     str(uuid.uuid4()),
-                    "uid":     user_id,
-                    "sid":     session_id,
-                    "rid":     request_id,
-                    "action":  action,
+                    "aid": str(uuid.uuid4()),
+                    "uid": user_id,
+                    "sid": session_id,
+                    "rid": request_id,
+                    "action": action,
                     "details": json.dumps(details),
-                    "now":     datetime.now(tz=UTC),
+                    "now": datetime.now(tz=UTC),
                 },
             )
     except Exception as exc:
@@ -254,6 +264,7 @@ def _load(path: str):
 
 def _lang_config(target_lang: str):
     from courtaccess.languages import get_language_config
+
     name = "spanish" if target_lang == "es" else "portuguese"
     return get_language_config(name)
 
@@ -265,11 +276,11 @@ def _lang_config(target_lang: str):
 
 
 def _on_dag_failure(context) -> None:
-    conf       = (context.get("dag_run") or {}).conf or {}
+    conf = (context.get("dag_run") or {}).conf or {}
     session_id = conf.get("session_id", "")
     request_id = conf.get("request_id", "")
-    task_id    = getattr(context.get("task_instance"), "task_id", "unknown")
-    msg        = f"Pipeline failed at '{task_id}': {context.get('exception', 'unknown error')}"
+    task_id = getattr(context.get("task_instance"), "task_id", "unknown")
+    msg = f"Pipeline failed at '{task_id}': {context.get('exception', 'unknown error')}"
 
     if session_id:
         _update_session(session_id, "failed")
@@ -290,28 +301,28 @@ def task_validate_upload(**context) -> dict:
     Download PDF from GCS, verify magic bytes, mark session as 'processing'.
     XCom → upload_meta (small dict, pushed directly)
     """
-    conf        = context["dag_run"].conf or {}
-    session_id  = conf.get("session_id",  str(uuid.uuid4()))
-    request_id  = conf.get("request_id",  str(uuid.uuid4()))
-    user_id     = conf.get("user_id",     "unknown")
-    gcs_path    = conf.get("gcs_input_path", "")
+    conf = context["dag_run"].conf or {}
+    session_id = conf.get("session_id", str(uuid.uuid4()))
+    request_id = conf.get("request_id", str(uuid.uuid4()))
+    user_id = conf.get("user_id", "unknown")
+    gcs_path = conf.get("gcs_input_path", "")
     target_lang = conf.get("target_lang", "es")
     nllb_target = conf.get("nllb_target", _NLLB_TARGET.get(target_lang, "spa_Latn"))
-    filename    = conf.get("filename",    "document.pdf")
-    start_time  = conf.get("start_time",  datetime.now(tz=UTC).isoformat())
+    filename = conf.get("filename", "document.pdf")
+    start_time = conf.get("start_time", datetime.now(tz=UTC).isoformat())
 
     _update_session(session_id, "processing")
     _write_step(session_id, "validate_upload", "running", "Downloading from GCS")
 
     # TODO-GKE-WORKDIR: replace with GCS-backed tmp for KubernetesExecutor
-    work_dir = f"/tmp/courtaccess/{context['dag_run'].run_id}"
+    work_dir = f"/tmp/courtaccess/{context['dag_run'].run_id}"  # noqa: S108 # nosec B108
     Path(work_dir).mkdir(parents=True, exist_ok=True)
     local_pdf = str(Path(work_dir) / filename)
 
     if gcs_path.startswith("gs://"):
         _gcs_download(gcs_path, local_pdf)
     else:
-        local_pdf = gcs_path   # dev/test: conf passes a local path directly
+        local_pdf = gcs_path  # dev/test: conf passes a local path directly
 
     if not Path(local_pdf).exists():
         msg = f"File not found at {local_pdf} after download"
@@ -331,22 +342,24 @@ def task_validate_upload(**context) -> dict:
 
     size_mb = round(Path(local_pdf).stat().st_size / 1_048_576, 2)
     _write_step(
-        session_id, "validate_upload", "success",
+        session_id,
+        "validate_upload",
+        "success",
         f"PDF validated · {size_mb} MB",
         {"size_mb": size_mb, "target_lang": target_lang},
     )
 
     meta = {
-        "session_id":    session_id,
-        "request_id":    request_id,
-        "user_id":       user_id,
-        "local_pdf":     local_pdf,
+        "session_id": session_id,
+        "request_id": request_id,
+        "user_id": user_id,
+        "local_pdf": local_pdf,
         "gcs_input_path": gcs_path,
-        "target_lang":   target_lang,
-        "nllb_target":   nllb_target,
-        "work_dir":      work_dir,
-        "filename":      filename,
-        "start_time":    start_time,
+        "target_lang": target_lang,
+        "nllb_target": nllb_target,
+        "work_dir": work_dir,
+        "filename": filename,
+        "start_time": start_time,
     }
     context["ti"].xcom_push(key="upload_meta", value=meta)
     return meta
@@ -366,8 +379,8 @@ def task_classify_document(**context) -> dict:
     """
     from courtaccess.core.classify_document import ClassificationError, classify_document
 
-    ti         = context["ti"]
-    meta       = ti.xcom_pull(task_ids="validate_upload", key="upload_meta")
+    ti = context["ti"]
+    meta = ti.xcom_pull(task_ids="validate_upload", key="upload_meta")
     session_id = meta["session_id"]
     request_id = meta["request_id"]
 
@@ -389,17 +402,16 @@ def task_classify_document(**context) -> dict:
     )
 
     if result["classification"] != "legal":
-        msg = (
-            f"Rejected: non-legal document "
-            f"(confidence={result['confidence']:.2f}, reason={result.get('reason', '')})"
-        )
+        msg = f"Rejected: non-legal document (confidence={result['confidence']:.2f}, reason={result.get('reason', '')})"
         _write_step(session_id, "classify_document", "failed", msg)
         _update_session(session_id, "failed")
         _update_request(request_id, status="rejected", error_message=msg)
         raise AirflowFailException(msg)
 
     _write_step(
-        session_id, "classify_document", "success",
+        session_id,
+        "classify_document",
+        "success",
         f"LEGAL · confidence={result['confidence']:.2f} · {result.get('reason', '')}",
         result,
     )
@@ -427,43 +439,45 @@ def task_ocr_printed_text(**context) -> dict:
     """
     from courtaccess.core.ocr_printed import OCREngine
 
-    ti         = context["ti"]
-    meta       = ti.xcom_pull(task_ids="validate_upload", key="upload_meta")
+    ti = context["ti"]
+    meta = ti.xcom_pull(task_ids="validate_upload", key="upload_meta")
     session_id = meta["session_id"]
 
     _write_step(session_id, "ocr_printed_text", "running", "Extracting text regions")
 
-    engine  = OCREngine().load()
-    result  = engine.extract_text_from_pdf(meta["local_pdf"])
+    engine = OCREngine().load()
+    result = engine.extract_text_from_pdf(meta["local_pdf"])
     regions = result["regions"]
 
-    total        = len(regions)
+    total = len(regions)
     translatable = sum(1 for r in regions if not r.get("preserve", False))
-    preserved    = total - translatable
-    avg_conf     = sum(r.get("confidence", 1.0) for r in regions) / max(total, 1)
+    preserved = total - translatable
+    avg_conf = sum(r.get("confidence", 1.0) for r in regions) / max(total, 1)
     engine_label = "PaddleOCR" if os.getenv("USE_REAL_OCR", "false").lower() == "true" else "PyMuPDF"
 
     _write_step(
-        session_id, "ocr_printed_text", "success",
+        session_id,
+        "ocr_printed_text",
+        "success",
         f"{engine_label}: {total} regions · {translatable} translatable · avg {avg_conf:.2f} conf",
         {
-            "total_regions":    total,
-            "translatable":     translatable,
-            "preserved":        preserved,
-            "avg_confidence":   round(avg_conf, 3),
-            "engine":           engine_label,
+            "total_regions": total,
+            "translatable": translatable,
+            "preserved": preserved,
+            "avg_confidence": round(avg_conf, 3),
+            "engine": engine_label,
         },
     )
 
     regions_path = _dump(meta["work_dir"], "regions", regions)
     summary = {
-        "total_regions":  total,
-        "translatable":   translatable,
+        "total_regions": total,
+        "translatable": translatable,
         "avg_confidence": round(avg_conf, 3),
-        "full_text":      result["full_text"],
+        "full_text": result["full_text"],
     }
     ti.xcom_push(key="regions_path", value=regions_path)
-    ti.xcom_push(key="ocr_summary",  value=summary)
+    ti.xcom_push(key="ocr_summary", value=summary)
     return summary
 
 
@@ -489,36 +503,38 @@ def task_translate(**context) -> dict:
     """
     from courtaccess.core.translation import Translator
 
-    ti          = context["ti"]
-    meta        = ti.xcom_pull(task_ids="validate_upload",  key="upload_meta")
-    regions_path= ti.xcom_pull(task_ids="ocr_printed_text", key="regions_path")
-    session_id  = meta["session_id"]
+    ti = context["ti"]
+    meta = ti.xcom_pull(task_ids="validate_upload", key="upload_meta")
+    regions_path = ti.xcom_pull(task_ids="ocr_printed_text", key="regions_path")
+    session_id = meta["session_id"]
     target_lang = meta["target_lang"]
     nllb_target = meta["nllb_target"]
-    lang_label  = "Spanish" if target_lang == "es" else "Portuguese"
+    lang_label = "Spanish" if target_lang == "es" else "Portuguese"
 
-    regions      = _load(regions_path)
+    regions = _load(regions_path)
     translatable = [r for r in regions if not r.get("preserve", False) and r.get("text", "").strip()]
 
     _write_step(
-        session_id, "translate", "running",
+        session_id,
+        "translate",
+        "running",
         f"NLLB-200: translating {len(translatable)} regions to {lang_label}",
         {"total_regions": len(translatable), "target_lang": target_lang},
     )
 
-    config     = _lang_config(target_lang)
+    config = _lang_config(target_lang)
     translator = Translator(config).load()
-    texts      = [r["text"] for r in translatable]
+    texts = [r["text"] for r in translatable]
 
-    t0           = time.time()
-    nllb_out     = translator.batch_translate(texts, nllb_target)
-    elapsed      = round(time.time() - t0, 1)
+    t0 = time.time()
+    nllb_out = translator.batch_translate(texts, nllb_target)
+    elapsed = round(time.time() - t0, 1)
 
     # Count regions where NLLB actually changed the text (same logic as test script)
-    nllb_changed = sum(1 for o, n in zip(texts, nllb_out) if o != n)
+    nllb_changed = sum(1 for o, n in zip(texts, nllb_out, strict=False) if o != n)
 
     # Build lookup: original text → translated text
-    text_to_trans = dict(zip(texts, nllb_out))
+    text_to_trans = dict(zip(texts, nllb_out, strict=False))
 
     # Enrich every region with translated_text
     translated_regions = []
@@ -526,21 +542,25 @@ def task_translate(**context) -> dict:
         if region.get("preserve", False) or not region.get("text", "").strip():
             translated_regions.append({**region, "translated_text": region.get("text", "")})
         else:
-            translated_regions.append({
-                **region,
-                "translated_text": text_to_trans.get(region["text"], region["text"]),
-            })
+            translated_regions.append(
+                {
+                    **region,
+                    "translated_text": text_to_trans.get(region["text"], region["text"]),
+                }
+            )
 
     _write_step(
-        session_id, "translate", "success",
+        session_id,
+        "translate",
+        "success",
         f"NLLB-200: {nllb_changed}/{len(translatable)} regions changed in {elapsed}s",
         {"regions_changed": nllb_changed, "total_sent": len(translatable), "elapsed_seconds": elapsed},
     )
 
-    path    = _dump(meta["work_dir"], "translated_regions", translated_regions)
+    path = _dump(meta["work_dir"], "translated_regions", translated_regions)
     summary = {"regions_translated": nllb_changed, "total_sent": len(translatable), "elapsed_seconds": elapsed}
     ti.xcom_push(key="translated_regions_path", value=path)
-    ti.xcom_push(key="translate_summary",       value=summary)
+    ti.xcom_push(key="translate_summary", value=summary)
     return summary
 
 
@@ -566,41 +586,44 @@ def task_legal_review(**context) -> dict:
     """
     from courtaccess.core.legal_review import LegalReviewer
 
-    ti                      = context["ti"]
-    meta                    = ti.xcom_pull(task_ids="validate_upload", key="upload_meta")
-    translated_regions_path = ti.xcom_pull(task_ids="translate",       key="translated_regions_path")
-    session_id              = meta["session_id"]
-    target_lang             = meta["target_lang"]
-    lang_label              = "Spanish" if target_lang == "es" else "Portuguese"
+    ti = context["ti"]
+    meta = ti.xcom_pull(task_ids="validate_upload", key="upload_meta")
+    translated_regions_path = ti.xcom_pull(task_ids="translate", key="translated_regions_path")
+    session_id = meta["session_id"]
+    target_lang = meta["target_lang"]
+    lang_label = "Spanish" if target_lang == "es" else "Portuguese"
 
     translated_regions = _load(translated_regions_path)
 
     # Only non-preserved regions go to Llama — matches test script
-    reviewable  = [r for r in translated_regions if not r.get("preserve", False)]
-    orig_texts  = [r.get("text", "")            for r in reviewable]
+    reviewable = [r for r in translated_regions if not r.get("preserve", False)]
+    orig_texts = [r.get("text", "") for r in reviewable]
     trans_texts = [r.get("translated_text", "") for r in reviewable]
 
     _write_step(
-        session_id, "legal_review", "running",
+        session_id,
+        "legal_review",
+        "running",
         f"Llama: verifying {len(reviewable)} spans in {lang_label}",
     )
 
-    config   = _lang_config(target_lang)
+    config = _lang_config(target_lang)
     import json
     from pathlib import Path
+
     _glossary_path = Path("/opt/airflow") / config.glossary_path
     _glossary = json.loads(_glossary_path.read_text()) if _glossary_path.exists() else {}
     reviewer = LegalReviewer(config, glossary=_glossary, verification_mode="document")
-    
-    t0             = time.time()
-    verified_texts = reviewer.verify_batch(orig_texts, trans_texts, batch_size=16)
-    elapsed        = round(time.time() - t0, 1)
 
-    corrections   = sum(1 for t, v in zip(trans_texts, verified_texts) if t != v)
-    not_verified  = sum(1 for v in verified_texts if v.startswith("[NOT VERIFIED"))
+    t0 = time.time()
+    verified_texts = reviewer.verify_batch(orig_texts, trans_texts, batch_size=16)
+    elapsed = round(time.time() - t0, 1)
+
+    corrections = sum(1 for t, v in zip(trans_texts, verified_texts, strict=False) if t != v)
+    not_verified = sum(1 for v in verified_texts if v.startswith("[NOT VERIFIED"))
 
     # Merge verified texts back into the full region list
-    verified_iter    = iter(verified_texts)
+    verified_iter = iter(verified_texts)
     verified_regions = []
     for region in translated_regions:
         if region.get("preserve", False):
@@ -609,25 +632,27 @@ def task_legal_review(**context) -> dict:
             verified_regions.append({**region, "translated_text": next(verified_iter)})
 
     _write_step(
-        session_id, "legal_review", "success",
+        session_id,
+        "legal_review",
+        "success",
         f"Llama: {corrections} correction(s) on {len(reviewable)} spans in {elapsed}s"
         + (f" · {not_verified} NOT VERIFIED (Vertex unavailable)" if not_verified else ""),
         {
             "corrections_count": corrections,
-            "spans_reviewed":    len(reviewable),
-            "not_verified":      not_verified,
-            "elapsed_seconds":   elapsed,
+            "spans_reviewed": len(reviewable),
+            "not_verified": not_verified,
+            "elapsed_seconds": elapsed,
         },
     )
 
-    path    = _dump(meta["work_dir"], "verified_regions", verified_regions)
+    path = _dump(meta["work_dir"], "verified_regions", verified_regions)
     summary = {
-        "status":            "ok",
+        "status": "ok",
         "corrections_count": corrections,
-        "not_verified":      not_verified,
+        "not_verified": not_verified,
     }
     ti.xcom_push(key="verified_regions_path", value=path)
-    ti.xcom_push(key="legal_summary",         value=summary)
+    ti.xcom_push(key="legal_summary", value=summary)
     return summary
 
 
@@ -651,14 +676,14 @@ def task_reconstruct_pdf(**context) -> dict:
     """
     from courtaccess.core.reconstruct_pdf import reconstruct_pdf
 
-    ti                    = context["ti"]
-    meta                  = ti.xcom_pull(task_ids="validate_upload", key="upload_meta")
-    verified_regions_path = ti.xcom_pull(task_ids="legal_review",    key="verified_regions_path")
-    session_id            = meta["session_id"]
-    target_lang           = meta["target_lang"]
+    ti = context["ti"]
+    meta = ti.xcom_pull(task_ids="validate_upload", key="upload_meta")
+    verified_regions_path = ti.xcom_pull(task_ids="legal_review", key="verified_regions_path")
+    session_id = meta["session_id"]
+    target_lang = meta["target_lang"]
 
     verified_regions = _load(verified_regions_path)
-    output_path      = str(Path(meta["work_dir"]) / f"output_{target_lang}.pdf")
+    output_path = str(Path(meta["work_dir"]) / f"output_{target_lang}.pdf")
 
     _write_step(session_id, "reconstruct_pdf", "running", "Rebuilding PDF with translated text")
 
@@ -667,15 +692,16 @@ def task_reconstruct_pdf(**context) -> dict:
         translated_regions=verified_regions,
         output_path=output_path,
     )
-    
+
     # Copy output to mounted data dir for inspection (dev only)
-    import shutil as _shutil
     if os.getenv("APP_ENV", "development") == "development":
         shutil.copy2(output_path, f"/opt/airflow/data/output_{target_lang}.pdf")
 
     size_mb = round(Path(output_path).stat().st_size / 1_048_576, 2)
     _write_step(
-        session_id, "reconstruct_pdf", "success",
+        session_id,
+        "reconstruct_pdf",
+        "success",
         f"PDF rebuilt · {size_mb} MB",
         {"output_size_mb": size_mb},
     )
@@ -699,11 +725,11 @@ def task_upload_to_gcs(**context) -> dict:
 
     XCom → gcs_result
     """
-    ti          = context["ti"]
-    meta        = ti.xcom_pull(task_ids="validate_upload", key="upload_meta")
+    ti = context["ti"]
+    meta = ti.xcom_pull(task_ids="validate_upload", key="upload_meta")
     output_path = ti.xcom_pull(task_ids="reconstruct_pdf", key="output_path")
-    session_id  = meta["session_id"]
-    request_id  = meta["request_id"]
+    session_id = meta["session_id"]
+    request_id = meta["request_id"]
     target_lang = meta["target_lang"]
 
     gcs_uri = f"gs://{_GCS_BUCKET_TRANSLATED}/{session_id}/output_{target_lang}.pdf"
@@ -722,14 +748,16 @@ def task_upload_to_gcs(**context) -> dict:
         signed_url_expires_at=expires_at,
     )
     _write_step(
-        session_id, "upload_to_gcs", "success",
+        session_id,
+        "upload_to_gcs",
+        "success",
         f"Uploaded · signed URL expires in {_SIGNED_URL_EXPIRY // 60} min",
         {"gcs_uri": gcs_uri},
     )
 
     result = {
-        "gcs_uri":               gcs_uri,
-        "signed_url":            signed_url,
+        "gcs_uri": gcs_uri,
+        "signed_url": signed_url,
         "signed_url_expires_at": expires_at.isoformat(),
     }
     ti.xcom_push(key="gcs_result", value=result)
@@ -756,16 +784,16 @@ def task_finalize(**context) -> dict:
         processing_time_seconds → wall clock from start_time in conf
         completed_at            → now()
     """
-    ti            = context["ti"]
-    meta          = ti.xcom_pull(task_ids="validate_upload",  key="upload_meta")
-    ocr_summary   = ti.xcom_pull(task_ids="ocr_printed_text", key="ocr_summary")   or {}
-    legal_summary = ti.xcom_pull(task_ids="legal_review",     key="legal_summary") or {}
-    session_id    = meta["session_id"]
-    request_id    = meta["request_id"]
+    ti = context["ti"]
+    meta = ti.xcom_pull(task_ids="validate_upload", key="upload_meta")
+    ocr_summary = ti.xcom_pull(task_ids="ocr_printed_text", key="ocr_summary") or {}
+    legal_summary = ti.xcom_pull(task_ids="legal_review", key="legal_summary") or {}
+    session_id = meta["session_id"]
+    request_id = meta["request_id"]
 
     now = datetime.now(tz=UTC)
     try:
-        start           = datetime.fromisoformat(meta.get("start_time", now.isoformat()))
+        start = datetime.fromisoformat(meta.get("start_time", now.isoformat()))
         processing_secs = round((now - start).total_seconds(), 1)
     except (ValueError, TypeError):
         processing_secs = None
@@ -789,20 +817,22 @@ def task_finalize(**context) -> dict:
     )
     return {"finalized": True, "processing_time_seconds": processing_secs}
 
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Task 9 — log_summary
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def task_log_summary(**context) -> None:
     """
     Write audit log entry, clean up local work directory.
     """
-    ti            = context["ti"]
-    meta          = ti.xcom_pull(task_ids="validate_upload",  key="upload_meta")    or {}
-    legal_summary = ti.xcom_pull(task_ids="legal_review",     key="legal_summary")  or {}
-    gcs           = ti.xcom_pull(task_ids="upload_to_gcs",    key="gcs_result")     or {}
-    ocr_summary   = ti.xcom_pull(task_ids="ocr_printed_text", key="ocr_summary")    or {}
-    session_id    = meta.get("session_id", "unknown")
+    ti = context["ti"]
+    meta = ti.xcom_pull(task_ids="validate_upload", key="upload_meta") or {}
+    legal_summary = ti.xcom_pull(task_ids="legal_review", key="legal_summary") or {}
+    gcs = ti.xcom_pull(task_ids="upload_to_gcs", key="gcs_result") or {}
+    ocr_summary = ti.xcom_pull(task_ids="ocr_printed_text", key="ocr_summary") or {}
+    session_id = meta.get("session_id", "unknown")
 
     logger.info(
         "══ Document Pipeline Summary ══\n"
@@ -823,7 +853,9 @@ def task_log_summary(**context) -> None:
     )
 
     _write_step(
-        session_id, "log_summary", "success",
+        session_id,
+        "log_summary",
+        "success",
         f"Pipeline complete — {meta.get('target_lang', '').upper()} translation ready",
     )
     _write_audit(
@@ -832,11 +864,11 @@ def task_log_summary(**context) -> None:
         request_id=meta.get("request_id", ""),
         action="document_pipeline_completed",
         details={
-            "target_lang":       meta.get("target_lang"),
-            "total_regions":     ocr_summary.get("total_regions", 0),
-            "avg_confidence":    ocr_summary.get("avg_confidence", 0.0),
+            "target_lang": meta.get("target_lang"),
+            "total_regions": ocr_summary.get("total_regions", 0),
+            "avg_confidence": ocr_summary.get("avg_confidence", 0.0),
             "llama_corrections": legal_summary.get("corrections_count", 0),
-            "gcs_uri":           gcs.get("gcs_uri", ""),
+            "gcs_uri": gcs.get("gcs_uri", ""),
         },
     )
 
@@ -867,15 +899,14 @@ with DAG(
     render_template_as_native_obj=True,
     tags=["courtaccess", "documents", "ocr", "translation", "legal-review"],
 ) as dag:
+    t1 = PythonOperator(task_id="validate_upload", python_callable=task_validate_upload)
+    t2 = PythonOperator(task_id="classify_document", python_callable=task_classify_document)
+    t3 = PythonOperator(task_id="ocr_printed_text", python_callable=task_ocr_printed_text)
+    t4 = PythonOperator(task_id="translate", python_callable=task_translate)
+    t5 = PythonOperator(task_id="legal_review", python_callable=task_legal_review)
+    t6 = PythonOperator(task_id="reconstruct_pdf", python_callable=task_reconstruct_pdf)
+    t7 = PythonOperator(task_id="upload_to_gcs", python_callable=task_upload_to_gcs)
+    t8 = PythonOperator(task_id="finalize", python_callable=task_finalize)
+    t9 = PythonOperator(task_id="log_summary", python_callable=task_log_summary)
 
-    t1 = PythonOperator(task_id="validate_upload",    python_callable=task_validate_upload)
-    t2 = PythonOperator(task_id="classify_document",  python_callable=task_classify_document)
-    t3 = PythonOperator(task_id="ocr_printed_text",   python_callable=task_ocr_printed_text)
-    t4 = PythonOperator(task_id="translate",          python_callable=task_translate)
-    t5 = PythonOperator(task_id="legal_review",       python_callable=task_legal_review)
-    t6 = PythonOperator(task_id="reconstruct_pdf",    python_callable=task_reconstruct_pdf)
-    t7 = PythonOperator(task_id="upload_to_gcs",      python_callable=task_upload_to_gcs)
-    t8 = PythonOperator(task_id="finalize",           python_callable=task_finalize)
-    t9 = PythonOperator(task_id="log_summary",        python_callable=task_log_summary)
-
-    t1 >> t2 >> t3 >> t4 >> t5 >> t6 >> t7 >> t8 >> t9
+    t1 >> t2 >> t3 >> t4 >> t5 >> t6 >> t8 >> t9

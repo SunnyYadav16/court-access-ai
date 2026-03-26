@@ -32,22 +32,16 @@ RAISES:
 
 import json
 import logging
-
-from courtaccess.core.config import settings
+import os
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_USE_REAL = settings.use_real_classification
-_VERTEX_PROJECT = settings.vertex_project_id
-_VERTEX_LOCATION = settings.vertex_location
-_VERTEX_MODEL = settings.vertex_model_id
-_GCP_SA_JSON = settings.gcp_service_account_json or (
-    Path(settings.gcp_service_account_json_path).read_text()
-    if settings.gcp_service_account_json_path
-    and Path(settings.gcp_service_account_json_path).exists()
-    else ""
-)
+_USE_REAL = os.getenv("USE_REAL_CLASSIFICATION", "false").lower() == "true"
+_VERTEX_PROJECT_ID = os.getenv("VERTEX_PROJECT_ID", "")
+_VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", "")
+_VERTEX_MODEL = os.getenv("VERTEX_LEGAL_LLM_MODEL", "")
+_GCP_SA_JSON = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "")
 _MAX_PAGES = 3  # only classify first 3 pages
 
 
@@ -75,12 +69,11 @@ def classify_document(pdf_path: str) -> dict:
     Raises:
         FileNotFoundError: if pdf_path does not exist.
     """
-    from pathlib import Path
 
     if not Path(pdf_path).exists():
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
-    if _USE_REAL and _VERTEX_PROJECT and _GCP_SA_JSON:
+    if _USE_REAL and _VERTEX_PROJECT_ID and _GCP_SA_JSON:
         return _real_classify(pdf_path)
     return _stub_classify(pdf_path)
 
@@ -117,7 +110,7 @@ def _get_vertex_client():
     return OpenAI(
         base_url=(
             f"https://{_VERTEX_LOCATION}-aiplatform.googleapis.com/v1"
-            f"/projects/{_VERTEX_PROJECT}"
+            f"/projects/{_VERTEX_PROJECT_ID}"
             f"/locations/{_VERTEX_LOCATION}/endpoints/openapi"
         ),
         api_key=credentials.token,

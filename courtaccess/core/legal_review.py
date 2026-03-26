@@ -28,7 +28,6 @@ import os
 import time
 
 from courtaccess.languages.base import LanguageConfig
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -66,17 +65,10 @@ class LegalReviewer:
         self._use_real = os.getenv("USE_REAL_LEGAL_REVIEW", "false").lower() == "true"
         self._use_vertex = os.getenv("USE_VERTEX_LEGAL_REVIEW", "false").lower() == "true"
 
-        self._vertex_project = os.getenv("VERTEX_PROJECT_ID", "")
-        self._vertex_location = os.getenv("VERTEX_LOCATION", "us-east5")
-        self._vertex_model = os.getenv(
-            "VERTEX_MODEL_ID",
-            "meta/llama-4-maverick-17b-128e-instruct-maas",
-        )
+        self._vertex_project_id = os.getenv("VERTEX_PROJECT_ID", "")
+        self._vertex_location = os.getenv("VERTEX_LOCATION", "")
+        self.vertex_legal_llm_model = os.getenv("VERTEX_LEGAL_LLM_MODEL", "")
         self._gcp_sa_json = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "")
-        if not self._gcp_sa_json:
-            _path = os.getenv("GCP_SERVICE_ACCOUNT_JSON_PATH", "")
-            if _path and Path(_path).exists():
-                self._gcp_sa_json = Path(_path).read_text()
 
         self._vertex_credentials = None
         self._cache_hits = 0
@@ -107,7 +99,7 @@ class LegalReviewer:
         if not original_spans:
             return translated_spans
 
-        if not (self._use_real and self._use_vertex and self._vertex_project):
+        if not (self._use_real and self._use_vertex and self._vertex_project_id):
             return translated_spans
 
         if self.verification_mode == "document":
@@ -142,7 +134,7 @@ class LegalReviewer:
         Review a single translated text for legal accuracy.
         Returns output contract dict: {status, corrections}
         """
-        if not (self._use_real and self._use_vertex and self._vertex_project):
+        if not (self._use_real and self._use_vertex and self._vertex_project_id):
             return self._stub_review(text)
         return self._vertex_review(text)
 
@@ -429,7 +421,7 @@ class LegalReviewer:
         return OpenAI(
             base_url=(
                 f"https://{self._vertex_location}-aiplatform.googleapis.com/v1"
-                f"/projects/{self._vertex_project}"
+                f"/projects/{self._vertex_project_id}"
                 f"/locations/{self._vertex_location}/endpoints/openapi"
             ),
             api_key=self._vertex_credentials.token,

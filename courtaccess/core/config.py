@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     )
 
     # ── Application ───────────────────────────────────────────────────────────
-    app_env: str  # development | staging | production
+    app_env: str  # development | production
     debug: bool
     secret_key: str
     allowed_origins: str
@@ -59,9 +59,9 @@ class Settings(BaseSettings):
     gcip_project_id: str
 
     # ── Vertex AI (Llama 4 — primary legal review provider) ──────────────────
-    vertex_project: str
+    vertex_project_id: str
     vertex_location: str
-    legal_llm_model: str
+    vertex_legal_llm_model: str
     legal_verify_timeout: float
     gcp_service_account_json: str
 
