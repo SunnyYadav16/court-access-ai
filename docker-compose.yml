@@ -24,22 +24,6 @@ x-airflow-common:
     target: airflow
   environment:
     &airflow-common-env
-    # ── Real model toggles ──
-    USE_REAL_TRANSLATION: 'true'
-    USE_REAL_CLASSIFICATION: 'true'
-    USE_REAL_LEGAL_REVIEW: 'true'
-    USE_VERTEX_LEGAL_REVIEW: 'true'
-    USE_REAL_OCR: 'true'
-
-    # ── Model paths ──
-    NLLB_MODEL_PATH: /opt/airflow/models/nllb-200-distilled-1.3B-ct2
-
-    # ── Vertex AI ──
-    VERTEX_PROJECT_ID: ${VERTEX_PROJECT_ID}
-    VERTEX_LOCATION: ${VERTEX_LOCATION:-us-east5}
-    GCP_SERVICE_ACCOUNT_JSON: ${GCP_SERVICE_ACCOUNT_JSON}
-    GCP_SERVICE_ACCOUNT_JSON_PATH: /opt/airflow/secrets/gcp-service-account.json
-
     # ── Core ──
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
@@ -54,7 +38,7 @@ x-airflow-common:
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_SECRET_KEY}
 
     # ── Database ──
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres/${POSTGRES_DB:-airflow}
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${AIRFLOW_DB}
 
     # ── Scheduler ──
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
@@ -75,36 +59,6 @@ x-airflow-common:
 
     # ── Additional pip packages (dev only — prefer Dockerfile for production) ──
     _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-}
-    DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres/${POSTGRES_DB:-airflow}
-    GOOGLE_APPLICATION_CREDENTIALS: /opt/airflow/secrets/gcp-service-account.json
-
-    # ── App (required by courtaccess/core/config.py Settings) ──
-    APP_ENV: ${APP_ENV:-development}
-    DEBUG: ${DEBUG:-true}
-    SECRET_KEY: ${SECRET_KEY:-change-me-in-dev}
-    ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000}
-
-    # ── Postgres ──
-    POSTGRES_USER: ${POSTGRES_USER:-airflow}
-    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
-    POSTGRES_DB: ${POSTGRES_DB:-airflow}
-    POSTGRES_HOST: postgres
-    POSTGRES_PORT: 5432
-
-    # ── GCS ──
-    GCS_BUCKET_UPLOADS: ${GCS_BUCKET_UPLOADS:-courtaccess-ai-uploads}
-    GCS_BUCKET_TRANSLATED: ${GCS_BUCKET_TRANSLATED:-courtaccess-ai-translated}
-    GCS_BUCKET_FORMS: ${GCS_BUCKET_FORMS:-courtaccess-ai-forms}
-    GCS_BUCKET_MODELS: ${GCS_BUCKET_MODELS:-courtaccess-ai-models}
-
-    # ── GCP ──
-    GCP_PROJECT_ID: ${GCP_PROJECT_ID:-courtaccess-ai}
-    GCP_REGION: ${GCP_REGION:-us-east1}
-
-    # ── GCIP / Firebase (stub values fine for local dev) ──
-    GCIP_API_KEY: ${GCIP_API_KEY:-stub}
-    GCIP_AUTH_DOMAIN: ${GCIP_AUTH_DOMAIN:-stub.firebaseapp.com}
-    GCIP_PROJECT_ID: ${GCIP_PROJECT_ID:-stub}
 
   volumes:
     &airflow-common-volumes
@@ -118,7 +72,6 @@ x-airflow-common:
     - ./.git:/opt/airflow/.git
     - ./.dvc:/opt/airflow/.dvc
     - ./dvc_storage:/opt/airflow/dvc_storage
-    - ./secrets/gcp-service-account.json:/opt/airflow/secrets/gcp-service-account.json:ro
 
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
@@ -134,15 +87,15 @@ services:
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-airflow}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
-      POSTGRES_DB: ${POSTGRES_DB:-airflow}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "5432:5432"
     volumes:
       - postgres-db-volume:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER:-airflow}"]
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}"]
       interval: 10s
       retries: 5
       start_period: 5s
@@ -171,51 +124,55 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # ── App ──
-      APP_ENV: ${APP_ENV:-development}
-      DEBUG: ${DEBUG:-true}
-      SECRET_KEY: ${SECRET_KEY:-change-me-in-dev}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:8000}
-
-      # ── Postgres (individual fields — new config.py uses computed database_url) ──
-      POSTGRES_USER: ${POSTGRES_USER:-airflow}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
-      POSTGRES_DB: ${POSTGRES_DB:-airflow}
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-
-      # ── GCS ──
-      GCS_BUCKET_UPLOADS: ${GCS_BUCKET_UPLOADS:-courtaccess-ai-uploads}
-      GCS_BUCKET_TRANSLATED: ${GCS_BUCKET_TRANSLATED:-courtaccess-ai-translated}
-      GCS_BUCKET_FORMS: ${GCS_BUCKET_FORMS:-courtaccess-ai-forms}
-      GCS_BUCKET_MODELS: ${GCS_BUCKET_MODELS:-courtaccess-ai-models}
-
-      # ── GCP ──
-      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-courtaccess-ai}
-      GCP_REGION: ${GCP_REGION:-us-east1}
-      GCP_SERVICE_ACCOUNT_JSON: ${GCP_SERVICE_ACCOUNT_JSON:-}
-
-      # ── GCIP / Firebase (required by config — stub values fine for local dev) ──
-      GCIP_API_KEY: ${GCIP_API_KEY:-stub}
-      GCIP_AUTH_DOMAIN: ${GCIP_AUTH_DOMAIN:-stub.firebaseapp.com}
-      GCIP_PROJECT_ID: ${GCIP_PROJECT_ID:-stub}
-
+      # ── Application ──
+      APP_ENV: ${APP_ENV}
+      DEBUG: ${DEBUG}
+      SECRET_KEY: ${SECRET_KEY}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
+      SIGNED_URL_EXPIRY_SECONDS: ${SIGNED_URL_EXPIRY_SECONDS}
+      # ── Database (POSTGRES_HOST/PORT resolved from env file) ──
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      # ── Google Cloud ──
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID}
+      GCP_REGION: ${GCP_REGION}
+      GCS_BUCKET_UPLOADS: ${GCS_BUCKET_UPLOADS}
+      GCS_BUCKET_TRANSLATED: ${GCS_BUCKET_TRANSLATED}
+      GCS_BUCKET_FORMS: ${GCS_BUCKET_FORMS}
+      GCS_BUCKET_MODELS: ${GCS_BUCKET_MODELS}
+      GCP_SERVICE_ACCOUNT_JSON: ${GCP_SERVICE_ACCOUNT_JSON}
+      # ── Auth (GCIP / Firebase) ──
+      GCIP_API_KEY: ${GCIP_API_KEY}
+      GCIP_AUTH_DOMAIN: ${GCIP_AUTH_DOMAIN}
+      GCIP_PROJECT_ID: ${GCIP_PROJECT_ID}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
+      ALGORITHM: ${ALGORITHM}
       # ── Vertex AI ──
-      VERTEX_PROJECT_ID: ${VERTEX_PROJECT_ID:-}
-      VERTEX_LOCATION: ${VERTEX_LOCATION:-us-east5}
-
-      # ── Redis ──
-      REDIS_URL: redis://redis:6379
-
-      # ── MLflow ──
-      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-}
-
-      # ── Airflow (for DAG trigger) ──
-      AIRFLOW_BASE_URL: http://airflow-apiserver:8080
-      AIRFLOW_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
-      AIRFLOW_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
-
-      # ── DVC / Git ──
+      VERTEX_PROJECT: ${VERTEX_PROJECT}
+      VERTEX_LOCATION: ${VERTEX_LOCATION}
+      LEGAL_LLM_MODEL: ${LEGAL_LLM_MODEL}
+      LEGAL_VERIFY_TIMEOUT: ${LEGAL_VERIFY_TIMEOUT}
+      # ── Redis & MLflow ──
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
+      # ── Feature Flags & Model Paths ──
+      USE_REAL_CLASSIFICATION: ${USE_REAL_CLASSIFICATION}
+      USE_REAL_TRANSLATION: ${USE_REAL_TRANSLATION}
+      USE_REAL_LEGAL_REVIEW: ${USE_REAL_LEGAL_REVIEW}
+      USE_VERTEX_LEGAL_REVIEW: ${USE_VERTEX_LEGAL_REVIEW}
+      USE_REAL_OCR: ${USE_REAL_OCR}
+      NLLB_MODEL_PATH: ${NLLB_MODEL_PATH}
+      WHISPER_MODEL_PATH: ${WHISPER_MODEL_PATH}
+      PIPER_TTS_ES_PATH: ${PIPER_TTS_ES_PATH}
+      PIPER_TTS_PT_PATH: ${PIPER_TTS_PT_PATH}
+      # ── Airflow (API Client) ──
+      AIRFLOW_BASE_URL: ${AIRFLOW_BASE_URL}
+      AIRFLOW_USERNAME: ${AIRFLOW_USERNAME}
+      AIRFLOW_PASSWORD: ${AIRFLOW_PASSWORD}
+      # ── Git/DVC ──
       GIT_DISCOVERY_ACROSS_FILESYSTEM: '1'
 
     volumes:
