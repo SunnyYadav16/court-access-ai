@@ -90,7 +90,7 @@ def _real_transcribe(audio_bytes: bytes, language: str) -> dict:
         import numpy as np
         from faster_whisper import WhisperModel
 
-        model_path = os.getenv("WHISPER_MODEL_PATH", "/opt/models/whisper-large-v3")
+        model_path = os.getenv("WHISPER_MODEL_PATH", "/opt/airflow/models/whisper-large-v3")
         model = WhisperModel(
             model_path,
             device="cuda",

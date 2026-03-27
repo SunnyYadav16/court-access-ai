@@ -104,6 +104,7 @@ USER airflow
 # This is required — without it, every DAG fails with ModuleNotFoundError.
 COPY --chown=airflow:root pyproject.toml uv.lock /opt/airflow/
 COPY --chown=airflow:root courtaccess/ /opt/airflow/courtaccess/
+COPY --chown=airflow:root db/ /opt/airflow/db/
 
 RUN uv pip install '/opt/airflow/[airflow]'
 

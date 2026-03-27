@@ -41,9 +41,11 @@ from api.schemas.schemas import (
     PipelineStepResponse,
     TranslationStatusResponse,
 )
+from courtaccess.core import gcs
 from courtaccess.core.config import get_settings
 from db.models import PipelineStep, TranslationRequest
 from db.models import Session as SessionModel
+from db.queries.audit import write_audit
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -67,59 +69,6 @@ _STATUS_MAP = {
 
 # Role IDs allowed to access other users' documents
 _ELEVATED_ROLES = {2, 3, 4}  # court_official, interpreter, admin
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# GCS helper — runs blocking upload in a thread so the event loop is not stalled
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-def _gcs_upload_sync(bucket_name: str, blob_name: str, data: bytes) -> None:
-    from google.cloud import storage
-
-    storage.Client().bucket(bucket_name).blob(blob_name).upload_from_string(data, content_type="application/pdf")
-
-
-def _gcs_delete_sync(bucket_name: str, blob_name: str) -> None:
-    from google.cloud import storage
-
-    try:
-        storage.Client().bucket(bucket_name).blob(blob_name).delete()
-    except Exception as exc:
-        logger.warning("GCS delete failed (%s/%s): %s", bucket_name, blob_name, exc)
-
-
-def _gcs_parse(uri: str) -> tuple[str, str]:
-    without = uri[5:]
-    bucket, _, blob = without.partition("/")
-    return bucket, blob
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Audit log helper
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-async def _write_audit(
-    db: DBSession,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
-    request_id: uuid.UUID | None,
-    action: str,
-    details: dict,
-) -> None:
-    from db.models import AuditLog
-
-    log = AuditLog(
-        audit_id=uuid.uuid4(),
-        user_id=user_id,
-        session_id=session_id,
-        request_id=request_id,
-        action_type=action,
-        details=details,
-    )
-    db.add(log)
-    # caller is responsible for commit
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -192,10 +141,11 @@ async def upload_document(
 
     try:
         await asyncio.to_thread(
-            _gcs_upload_sync,
+            gcs.upload_bytes,
             settings.gcs_bucket_uploads,
             blob_name,
             contents,
+            "application/pdf",
         )
     except Exception as exc:
         logger.error("GCS upload failed: %s", exc)
@@ -230,18 +180,18 @@ async def upload_document(
     db.add(request_obj)
 
     # ── Audit log ────────────────────────────────────────────────────────────
-    await _write_audit(
+    await write_audit(
         db,
         user.user_id,
-        session_id,
-        request_id,
-        action="document_upload",
+        action_type="document_upload",
         details={
             "filename": file.filename,
             "target_language": lang,
             "gcs_path": gcs_path,
             "file_size_bytes": len(contents),
         },
+        session_id=session_id,
+        request_id=request_id,
     )
 
     await db.commit()
@@ -509,22 +459,22 @@ async def delete_document(
     # Run both deletes concurrently in threads — don't block on either
     gcs_tasks = []
     if session_obj.input_file_gcs_path:
-        b, bl = _gcs_parse(session_obj.input_file_gcs_path)
-        gcs_tasks.append(asyncio.to_thread(_gcs_delete_sync, b, bl))
+        b, bl = gcs.parse_gcs_uri(session_obj.input_file_gcs_path)
+        gcs_tasks.append(asyncio.to_thread(gcs.delete_blob, b, bl))
     if req_obj.output_file_gcs_path:
-        b, bl = _gcs_parse(req_obj.output_file_gcs_path)
-        gcs_tasks.append(asyncio.to_thread(_gcs_delete_sync, b, bl))
+        b, bl = gcs.parse_gcs_uri(req_obj.output_file_gcs_path)
+        gcs_tasks.append(asyncio.to_thread(gcs.delete_blob, b, bl))
     if gcs_tasks:
         await asyncio.gather(*gcs_tasks, return_exceptions=True)
 
     # ── Audit log before deletion ────────────────────────────────────────────
-    await _write_audit(
+    await write_audit(
         db,
         user.user_id,
-        session_id,
-        req_obj.request_id,
-        action="document_delete",
+        action_type="document_delete",
         details={"deleted_by": str(user.user_id), "session_status": session_obj.status},
+        session_id=session_id,
+        request_id=req_obj.request_id,
     )
 
     # ── Delete session (cascades to translation_requests + pipeline_steps) ───

@@ -76,14 +76,25 @@ x-airflow-common:
     USE_REAL_LEGAL_REVIEW: ${USE_REAL_LEGAL_REVIEW}
     USE_VERTEX_LEGAL_REVIEW: ${USE_VERTEX_LEGAL_REVIEW}
     USE_REAL_OCR: ${USE_REAL_OCR}
+    NLLB_MODEL_PATH: /opt/airflow/models/nllb-200-distilled-1.3B-ct2
+    WHISPER_MODEL_PATH: /opt/airflow/models/whisper-large-v3
+    PIPER_TTS_ES_PATH: /opt/airflow/models/piper-tts-es
+    PIPER_TTS_PT_PATH: /opt/airflow/models/piper-tts-pt
 
     # ── Additional pip packages (dev only — prefer Dockerfile for production) ──
     _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-}
+
+    # ── Firebase ──
+    GOOGLE_APPLICATION_CREDENTIALS: '/opt/airflow/${GOOGLE_APPLICATION_CREDENTIALS}'
+
+  env_file:
+    - .env
 
   volumes:
     &airflow-common-volumes
     - ./dags:/opt/airflow/dags
     - ./courtaccess:/opt/airflow/courtaccess    # live code changes in dev
+    - ./db:/opt/airflow/db                      # Added missing db module
     - ./logs:/opt/airflow/logs
     - ./data:/opt/airflow/data
     - ./forms:/opt/airflow/forms
@@ -92,6 +103,7 @@ x-airflow-common:
     - ./.git:/opt/airflow/.git
     - ./.dvc:/opt/airflow/.dvc
     - ./dvc_storage:/opt/airflow/dvc_storage
+    - ./.config:/opt/airflow/.config:ro
 
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
@@ -177,7 +189,7 @@ services:
       VERTEX_LEGAL_LLM_MODEL: ${VERTEX_LEGAL_LLM_MODEL}
       LEGAL_VERIFY_TIMEOUT: ${LEGAL_VERIFY_TIMEOUT}
       # ── Redis & MLflow ──
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      REDIS_URL: ${REDIS_URL}
       MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
       # ── Feature Flags & Model Paths ──
       USE_REAL_CLASSIFICATION: ${USE_REAL_CLASSIFICATION}
@@ -185,16 +197,19 @@ services:
       USE_REAL_LEGAL_REVIEW: ${USE_REAL_LEGAL_REVIEW}
       USE_VERTEX_LEGAL_REVIEW: ${USE_VERTEX_LEGAL_REVIEW}
       USE_REAL_OCR: ${USE_REAL_OCR}
-      NLLB_MODEL_PATH: ${NLLB_MODEL_PATH}
-      WHISPER_MODEL_PATH: ${WHISPER_MODEL_PATH}
-      PIPER_TTS_ES_PATH: ${PIPER_TTS_ES_PATH}
-      PIPER_TTS_PT_PATH: ${PIPER_TTS_PT_PATH}
+      NLLB_MODEL_PATH: /app/models/nllb-200-distilled-1.3B-ct2
+      WHISPER_MODEL_PATH: /app/models/whisper-large-v3
+      PIPER_TTS_ES_PATH: /app/models/piper-tts-es
+      PIPER_TTS_PT_PATH: /app/models/piper-tts-pt
+
       # ── Airflow (API Client) ──
       AIRFLOW_BASE_URL: ${AIRFLOW_BASE_URL}
       AIRFLOW_USERNAME: ${AIRFLOW_USERNAME}
       AIRFLOW_PASSWORD: ${AIRFLOW_PASSWORD}
       # ── Git/DVC ──
       GIT_DISCOVERY_ACROSS_FILESYSTEM: '1'
+
+      GOOGLE_APPLICATION_CREDENTIALS: '/app/${GOOGLE_APPLICATION_CREDENTIALS}'
 
     volumes:
       - ./courtaccess:/app/courtaccess   # live code reloading in dev
@@ -204,6 +219,7 @@ services:
       - ./.git:/app/.git                 # DVC needs git history
       - ./.dvc:/app/.dvc                 # DVC remote config
       - ./data:/app/data                 # glossaries, schemas
+      - ./.config:/app/.config:ro
     depends_on:
       postgres:
         condition: service_healthy

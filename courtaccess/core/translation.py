@@ -141,7 +141,7 @@ class Translator:
         if self._use_real:
             model_path = os.getenv(
                 "NLLB_MODEL_PATH",
-                "/opt/models/nllb-200-distilled-1.3B-ct2",
+                "/opt/airflow/models/nllb-200-distilled-1.3B-ct2",
             )
 
             t1 = time.time()
@@ -479,7 +479,7 @@ class Translator:
                 truncation=True,
                 max_length=512,
             )
-            token_ids = inputs["input_ids"] #[0].tolist()
+            token_ids = inputs["input_ids"]  # [0].tolist()
             tokens = self._tokenizer.convert_ids_to_tokens(token_ids)
 
             out = self._ct2_translator.translate_batch(

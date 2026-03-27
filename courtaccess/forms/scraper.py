@@ -33,7 +33,6 @@ JSON schema per form:
 
 import hashlib
 import io
-import json
 import logging
 import time
 import uuid
@@ -59,7 +58,6 @@ logger = logging.getLogger(__name__)
 
 DAGS_DIR = Path(__file__).resolve().parent.parent
 PROJECT_DIR = DAGS_DIR.parent
-CATALOG_PATH = DAGS_DIR / "data" / "form_catalog.json"
 FORMS_DIR = PROJECT_DIR / "forms"
 
 # ── Batch download settings ───────────────────────────────────────────────────
@@ -98,28 +96,6 @@ COURT_FORM_PAGES = [
     # {"division": "Criminal Records Forms", "url": "https://www.mass.gov/lists/court-forms-for-criminal-records"},
     # {"division": "Trial Court eFiling Forms", "url": "https://www.mass.gov/lists/trial-court-efiling-forms"},
 ]
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Catalog helpers  (swap these two functions to migrate to Cloud SQL later)
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-def _load_catalog() -> list[dict]:
-    """Return the full catalog as a list of form-dicts."""
-    if not CATALOG_PATH.exists():
-        logger.info("Catalog file not found — starting with empty catalog.")
-        return []
-    with open(CATALOG_PATH, encoding="utf-8") as fh:
-        return json.load(fh)
-
-
-def _save_catalog(catalog: list[dict]) -> None:
-    """Persist the catalog back to disk."""
-    CATALOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(CATALOG_PATH, "w", encoding="utf-8") as fh:
-        json.dump(catalog, fh, indent=2, ensure_ascii=False)
-    logger.debug("Catalog saved to %s", CATALOG_PATH)
 
 
 def _now() -> str:
@@ -177,60 +153,6 @@ def _is_docx(data: bytes) -> bool:
             return any(n.startswith("word/") for n in names)
     except Exception:
         return False
-
-
-def _convert_docx_to_pdf(docx_bytes: bytes) -> bytes:
-    """
-    Convert DOCX bytes to PDF bytes using python-docx + reportlab.
-
-    Approach:
-      1. Parse the DOCX with python-docx to extract text paragraphs
-      2. Render the text into a PDF using reportlab
-      3. Return the PDF as bytes
-
-    Note: This is a text-faithful conversion — complex layouts, images,
-    and tables may not render perfectly. For the purposes of this pipeline
-    (feeding into OCR + translation), text fidelity is what matters.
-    """
-    try:
-        import docx
-        from reportlab.lib.pagesizes import letter
-        from reportlab.lib.styles import getSampleStyleSheet
-        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
-
-        # Parse DOCX
-        doc = docx.Document(io.BytesIO(docx_bytes))
-
-        # Build PDF
-        pdf_buffer = io.BytesIO()
-        pdf_doc = SimpleDocTemplate(pdf_buffer, pagesize=letter)
-        styles = getSampleStyleSheet()
-        story = []
-
-        for para in doc.paragraphs:
-            text = para.text.strip()
-            if not text:
-                story.append(Spacer(1, 6))
-                continue
-            # Use Heading1 style for headings, Normal for body text
-            style = styles["Heading1"] if para.style.name.startswith("Heading") else styles["Normal"]
-            # Escape special XML characters that reportlab can't handle
-            text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            story.append(Paragraph(text, style))
-            story.append(Spacer(1, 4))
-
-        # Handle empty documents
-        if not story:
-            story.append(Paragraph("(empty document)", styles["Normal"]))
-
-        pdf_doc.build(story)
-        pdf_bytes = pdf_buffer.getvalue()
-        logger.debug("DOCX → PDF conversion successful (%d bytes)", len(pdf_bytes))
-        return pdf_bytes
-
-    except Exception as exc:
-        logger.warning("DOCX → PDF conversion failed: %s", exc)
-        raise
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -768,13 +690,15 @@ def _handle_no_change(entry):
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def run_scrape() -> dict:
+def run_scrape(*, existing_catalog: list[dict] | None = None) -> dict:
     """
     Main function. Scrapes all court form pages, classifies every PDF
     into one of 5 scenarios, and updates the catalog.
     Returns a summary dict with counts and the pretranslation queue.
     """
-    catalog = _load_catalog()
+    # The DAG provides the existing catalog (usually from DB) so the scraper
+    # can detect scenarios B - E without reading local JSON.
+    catalog: list[dict] = list(existing_catalog or [])
     scraped_urls = set()
 
     counts = {"new": 0, "updated": 0, "deleted": 0, "renamed": 0, "no_change": 0}
@@ -888,9 +812,6 @@ def run_scrape() -> dict:
             _handle_deleted_form(entry)
             counts["deleted"] += 1
 
-    # ── 4. Persist ────────────────────────────────────────────────────────────
-    _save_catalog(catalog)
-
     total = sum(counts.values())
     logger.info(
         "Weekly form scrape completed. %d forms checked. %d new, %d updated, %d archived, %d renamed, %d no-change.",
@@ -905,4 +826,5 @@ def run_scrape() -> dict:
     return {
         "counts": counts,
         "pretranslation_queue": pretranslation_queue,
+        "forms": catalog,
     }

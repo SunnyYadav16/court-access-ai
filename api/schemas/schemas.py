@@ -384,6 +384,9 @@ class FormVersionResponse(BaseModel):
     file_path_original: str
     file_path_es: str | None
     file_path_pt: str | None
+    signed_url_original: str | None = None
+    signed_url_es: str | None = None
+    signed_url_pt: str | None = None
     file_type_es: str | None
     file_type_pt: str | None
     created_at: datetime

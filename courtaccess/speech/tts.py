@@ -30,8 +30,8 @@ logger = get_logger(__name__)
 
 _USE_REAL = os.getenv("USE_REAL_TTS", "false").lower() == "true"
 _LANGUAGE_TO_MODEL = {
-    "spa_Latn": os.getenv("PIPER_TTS_ES_PATH", "/opt/models/piper-tts-es"),
-    "por_Latn": os.getenv("PIPER_TTS_PT_PATH", "/opt/models/piper-tts-pt"),
+    "spa_Latn": os.getenv("PIPER_TTS_ES_PATH", "/opt/airflow/models/piper-tts-es"),
+    "por_Latn": os.getenv("PIPER_TTS_PT_PATH", "/opt/airflow/models/piper-tts-pt"),
 }
 _SAMPLE_RATE = 16000
 

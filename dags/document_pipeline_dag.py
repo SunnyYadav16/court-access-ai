@@ -54,6 +54,8 @@ from airflow import DAG
 from airflow.exceptions import AirflowFailException
 from airflow.providers.standard.operators.python import PythonOperator
 
+from courtaccess.core import gcs
+
 logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -61,6 +63,7 @@ logger = logging.getLogger(__name__)
 _GCS_BUCKET_UPLOADS = os.getenv("GCS_BUCKET_UPLOADS", "courtaccess-ai-uploads")
 _GCS_BUCKET_TRANSLATED = os.getenv("GCS_BUCKET_TRANSLATED", "courtaccess-ai-translated")
 _SIGNED_URL_EXPIRY = int(os.getenv("SIGNED_URL_EXPIRY_SECONDS", "3600"))
+_GCP_SA_JSON = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "")
 
 # Strip +asyncpg — Airflow tasks run in sync processes, asyncpg is unusable here
 _DB_URL = os.getenv("DATABASE_URL", "").replace("+asyncpg", "")
@@ -79,55 +82,6 @@ DEFAULT_ARGS = {
     "email_on_failure": False,
     "email_on_retry": False,
 }
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# GCS helpers
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-def _gcs_parse(uri: str) -> tuple[str, str]:
-    without = uri[5:]
-    bucket, _, blob = without.partition("/")
-    return bucket, blob
-
-
-def _gcs_download(uri: str, local: str) -> None:
-    from google.cloud import storage
-
-    b, bl = _gcs_parse(uri)
-    storage.Client().bucket(b).blob(bl).download_to_filename(local)
-    logger.info("GCS ↓ %s → %s", uri, local)
-
-
-def _gcs_upload(local: str, uri: str) -> None:
-    from google.cloud import storage
-
-    b, bl = _gcs_parse(uri)
-    storage.Client().bucket(b).blob(bl).upload_from_filename(local)
-    logger.info("GCS ↑ %s → %s", local, uri)
-
-
-def _gcs_signed_url(uri: str, expiry: int = _SIGNED_URL_EXPIRY) -> str:
-    import json
-    import os
-
-    from google.cloud import storage
-    from google.oauth2 import service_account
-
-    sa_json = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "")
-    creds = service_account.Credentials.from_service_account_info(json.loads(sa_json)) if sa_json else None
-    b, bl = _gcs_parse(uri)
-    return (
-        storage.Client(credentials=creds)
-        .bucket(b)
-        .blob(bl)
-        .generate_signed_url(
-            expiration=timedelta(seconds=expiry),
-            method="GET",
-            version="v4",
-        )
-    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -320,7 +274,8 @@ def task_validate_upload(**context) -> dict:
     local_pdf = str(Path(work_dir) / filename)
 
     if gcs_path.startswith("gs://"):
-        _gcs_download(gcs_path, local_pdf)
+        b, bl = gcs.parse_gcs_uri(gcs_path)
+        gcs.download_file(b, bl, local_pdf)
     else:
         local_pdf = gcs_path  # dev/test: conf passes a local path directly
 
@@ -732,18 +687,19 @@ def task_upload_to_gcs(**context) -> dict:
     request_id = meta["request_id"]
     target_lang = meta["target_lang"]
 
-    gcs_uri = f"gs://{_GCS_BUCKET_TRANSLATED}/{session_id}/output_{target_lang}.pdf"
+    gcs_uri_str = f"gs://{_GCS_BUCKET_TRANSLATED}/{session_id}/output_{target_lang}.pdf"
 
-    _write_step(session_id, "upload_to_gcs", "running", f"Uploading to {gcs_uri}")
-    _gcs_upload(output_path, gcs_uri)
+    _write_step(session_id, "upload_to_gcs", "running", f"Uploading to {gcs_uri_str}")
+    b, bl = gcs.parse_gcs_uri(gcs_uri_str)
+    gcs.upload_file(output_path, b, bl)
 
-    signed_url = _gcs_signed_url(gcs_uri, _SIGNED_URL_EXPIRY)
+    signed_url = gcs.generate_signed_url(b, bl, _SIGNED_URL_EXPIRY, _GCP_SA_JSON)
     expires_at = datetime.now(tz=UTC) + timedelta(seconds=_SIGNED_URL_EXPIRY)
 
     # Write URL immediately — don't wait for finalize
     _update_request(
         request_id,
-        output_file_gcs_path=gcs_uri,
+        output_file_gcs_path=gcs_uri_str,
         signed_url=signed_url,
         signed_url_expires_at=expires_at,
     )
@@ -752,11 +708,11 @@ def task_upload_to_gcs(**context) -> dict:
         "upload_to_gcs",
         "success",
         f"Uploaded · signed URL expires in {_SIGNED_URL_EXPIRY // 60} min",
-        {"gcs_uri": gcs_uri},
+        {"gcs_uri": gcs_uri_str},
     )
 
     result = {
-        "gcs_uri": gcs_uri,
+        "gcs_uri": gcs_uri_str,
         "signed_url": signed_url,
         "signed_url_expires_at": expires_at.isoformat(),
     }
@@ -909,4 +865,4 @@ with DAG(
     t8 = PythonOperator(task_id="finalize", python_callable=task_finalize)
     t9 = PythonOperator(task_id="log_summary", python_callable=task_log_summary)
 
-    t1 >> t2 >> t3 >> t4 >> t5 >> t6 >> t8 >> t9
+    t1 >> t2 >> t3 >> t4 >> t5 >> t6 >> t7 >> t8 >> t9

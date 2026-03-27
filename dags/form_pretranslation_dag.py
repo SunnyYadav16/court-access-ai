@@ -32,28 +32,34 @@ Each task instantiates the classes it needs internally.
 Airflow runs each task in its own process — instances are not shared.
 """
 
-import json
 import logging
+import os
 import subprocess
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
 from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
+from sqlalchemy.orm import Session
 
+from courtaccess.core import gcs
 from courtaccess.core.legal_review import LegalReviewer
 from courtaccess.core.ocr_printed import OCREngine
 from courtaccess.core.reconstruct_pdf import reconstruct_pdf
 from courtaccess.core.translation import Translator
 from courtaccess.languages import get_language_config
+from db.database import get_sync_engine
+from db.queries import forms as form_queries
+from db.queries.audit import write_audit_sync
 
 logger = logging.getLogger(__name__)
 
 # ── Paths (inside Docker container) ──────────────────────────────────────────
-CATALOG_PATH = "/opt/airflow/courtaccess/data/form_catalog.json"
-FORMS_DIR = "/opt/airflow/forms"
 PROJECT_ROOT = "/opt/airflow"
+_GCS_BUCKET_FORMS = os.getenv("GCS_BUCKET_FORMS", "courtaccess-ai-forms")
+AIRFLOW_SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000001"
 
 # ── NLLB-200 language codes ───────────────────────────────────────────────────
 LANG_EN = "eng_Latn"
@@ -72,31 +78,6 @@ DEFAULT_ARGS = {
     "email_on_failure": False,
     "email_on_retry": False,
 }
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Catalog helpers — unchanged
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-def _load_catalog() -> list[dict]:
-    p = Path(CATALOG_PATH)
-    if not p.exists():
-        raise FileNotFoundError(f"Catalog not found at {CATALOG_PATH}")
-    with open(p, encoding="utf-8") as f:
-        return json.load(f)
-
-
-def _save_catalog(catalog: list[dict]) -> None:
-    with open(CATALOG_PATH, "w", encoding="utf-8") as f:
-        json.dump(catalog, f, indent=2, ensure_ascii=False)
-
-
-def _find_entry(catalog: list[dict], form_id: str) -> tuple[int, dict]:
-    for i, entry in enumerate(catalog):
-        if entry.get("form_id") == form_id:
-            return i, entry
-    raise ValueError(f"form_id '{form_id}' not found in catalog.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -180,47 +161,60 @@ def task_load_form_entry(**context) -> dict:
     if not form_id:
         raise ValueError("DAG triggered without 'form_id' in conf. Expected conf={'form_id': '<uuid>'}.")
 
-    logger.info("Loading catalog entry for form_id='%s'.", form_id)
-    catalog = _load_catalog()
-    _, entry = _find_entry(catalog, form_id)
+    logger.info("Loading DB entry for form_id='%s'.", form_id)
 
-    versions = entry.get("versions", [])
-    if not versions:
-        raise ValueError(f"Catalog entry '{form_id}' has no version records.")
-    latest = versions[0]
+    engine = get_sync_engine()
+    with Session(engine) as session:
+        form = form_queries.get_form_by_id_sync(session, uuid.UUID(str(form_id)))
+        if form is None:
+            raise ValueError(f"form_id '{form_id}' not found in DB.")
 
-    orig_path = latest.get("file_path_original")
-    if not orig_path:
-        raise ValueError(f"Catalog entry '{form_id}' missing file_path_original.")
-    if not Path(orig_path).exists():
-        raise FileNotFoundError(f"Original PDF not found: '{orig_path}'.")
+        versions = sorted(list(form.versions), key=lambda v: v.version, reverse=True)
+        if not versions:
+            raise ValueError(f"DB form '{form_id}' has no version records.")
+        latest = versions[0]
 
-    already_has_es = bool(latest.get("file_path_es"))
-    already_has_pt = bool(latest.get("file_path_pt"))
-    if already_has_es and already_has_pt:
-        logger.info("Form '%s' already translated. Skipping.", form_id)
-        context["ti"].xcom_push(key="form_meta", value={"skip": True, "form_id": form_id})
-        return {"skip": True, "form_id": form_id}
+        orig_uri = latest.file_path_original
+        if not orig_uri:
+            raise ValueError(f"DB form '{form_id}' missing file_path_original.")
+        if not str(orig_uri).startswith("gs://"):
+            raise ValueError(f"Expected GCS URI for file_path_original, got: {orig_uri}")
 
-    orig_p = Path(orig_path)
-    slug_stem = orig_p.stem
-    out_dir = orig_p.parent
+        already_has_es = bool(latest.file_path_es)
+        already_has_pt = bool(latest.file_path_pt)
 
-    form_meta = {
-        "form_id": form_id,
-        "form_name": entry.get("form_name", ""),
-        "form_slug": entry.get("form_slug", ""),
-        "version": latest.get("version", 1),
-        "original_path": orig_path,
-        "output_es": str(out_dir / f"{slug_stem}_es.pdf"),
-        "output_pt": str(out_dir / f"{slug_stem}_pt.pdf"),
-        "skip": False,
-        "already_has_es": already_has_es,
-        "already_has_pt": already_has_pt,
-        "existing_es_path": latest.get("file_path_es"),
-        "existing_pt_path": latest.get("file_path_pt"),
-        "is_mislabeled": "mislabeled" in str(entry.get("preprocessing_flags", [])),
-    }
+        if already_has_es and already_has_pt:
+            logger.info("Form '%s' already translated. Skipping.", form_id)
+            context["ti"].xcom_push(key="form_meta", value={"skip": True, "form_id": form_id})
+            return {"skip": True, "form_id": form_id}
+
+        dag_run_id = (context.get("dag_run") or {}).run_id
+        work_dir = Path(f"/tmp/courtaccess/form_pretranslation/{dag_run_id}")  # noqa: S108  # nosec B108
+        work_dir.mkdir(parents=True, exist_ok=True)
+        local_orig = str(work_dir / "original.pdf")
+
+        b, bl = gcs.parse_gcs_uri(str(orig_uri))
+        gcs.download_file(b, bl, local_orig, correlation_id=form_id)
+
+        slug_stem = form.form_slug or "form"
+        out_dir = Path(local_orig).parent
+
+        form_meta = {
+            "form_id": form_id,
+            "form_name": form.form_name,
+            "form_slug": form.form_slug,
+            "version": latest.version,
+            "original_gcs_uri": str(orig_uri),
+            "original_path": local_orig,
+            "output_es": str(out_dir / f"{slug_stem}_es.pdf"),
+            "output_pt": str(out_dir / f"{slug_stem}_pt.pdf"),
+            "skip": False,
+            "already_has_es": already_has_es,
+            "already_has_pt": already_has_pt,
+            "existing_es_path": latest.file_path_es,
+            "existing_pt_path": latest.file_path_pt,
+            "is_mislabeled": "mislabeled" in str(form.preprocessing_flags or []),
+        }
 
     logger.info(
         "Form loaded: '%s' (v%d) | original='%s' | output_es='%s' | output_pt='%s' | mislabeled=%s",
@@ -469,49 +463,93 @@ def task_store_and_update_catalog(**context) -> dict:
     if review_pt and review_pt.get("skipped"):
         audit_notes.append("Legal review skipped due to API failure (Portuguese). Human review mandatory.")
 
-    catalog = _load_catalog()
-    idx, entry = _find_entry(catalog, form_id)
-    versions = entry.get("versions", [])
+    engine = get_sync_engine()
+    form_uuid = uuid.UUID(str(form_id))
+    es_uri = None
+    pt_uri = None
 
-    if versions:
+    with Session(engine) as session:
+        form = form_queries.get_form_by_id_sync(session, form_uuid)
+        if form is None:
+            raise ValueError(f"form_id '{form_id}' not found in DB during store.")
+
+        versions = sorted(list(form.versions), key=lambda v: v.version, reverse=True)
+        if not versions:
+            raise ValueError(f"DB form '{form_id}' has no version records during store.")
+        latest = versions[0]
+
+        slug = form.form_slug or "form"
+        vnum = latest.version
+
+        # Upload translated PDFs to GCS (if produced)
         if path_es:
-            versions[0]["file_path_es"] = path_es
+            blob_es = f"forms/{form_id}/v{vnum}/{slug}_es.pdf"
+            gcs.upload_file(path_es, _GCS_BUCKET_FORMS, blob_es, correlation_id=form_id)
+            es_uri = f"gs://{_GCS_BUCKET_FORMS}/{blob_es}"
+
         if path_pt:
-            versions[0]["file_path_pt"] = path_pt
+            blob_pt = f"forms/{form_id}/v{vnum}/{slug}_pt.pdf"
+            gcs.upload_file(path_pt, _GCS_BUCKET_FORMS, blob_pt, correlation_id=form_id)
+            pt_uri = f"gs://{_GCS_BUCKET_FORMS}/{blob_pt}"
 
-    langs = []
-    if versions and versions[0].get("file_path_es"):
-        langs.append("es")
-    if versions and versions[0].get("file_path_pt"):
-        langs.append("pt")
+        # Update DB version row with translated URIs
+        form_queries.update_form_version_translations_sync(
+            session,
+            form_id=form_uuid,
+            version=vnum,
+            file_path_es=es_uri or latest.file_path_es,
+            file_path_pt=pt_uri or latest.file_path_pt,
+            file_type_es="pdf" if es_uri else latest.file_type_es,
+            file_type_pt="pdf" if pt_uri else latest.file_type_pt,
+        )
 
-    entry["languages_available"] = langs
-    entry["needs_human_review"] = True
-    entry["last_updated_at"] = now
+        # Update catalog fields: needs_human_review + preprocessing_flags
+        preprocessing_flags = list(form.preprocessing_flags or [])
+        if (
+            (review_es and review_es.get("skipped")) or (review_pt and review_pt.get("skipped"))
+        ) and "legal_review_skipped" not in preprocessing_flags:
+            preprocessing_flags.append("legal_review_skipped")
 
-    if audit_notes:
-        existing = entry.get("audit_notes", [])
-        existing.extend(audit_notes)
-        entry["audit_notes"] = existing
+        form_queries.update_form_catalog_fields_sync(
+            session,
+            form_uuid,
+            needs_human_review=True,
+            preprocessing_flags=preprocessing_flags,
+        )
 
-    catalog[idx] = entry
-    _save_catalog(catalog)
+        session.commit()
 
     logger.info(
-        "Catalog updated for '%s': ES=%s, PT=%s, langs=%s.",
+        "DB updated for '%s': ES=%s, PT=%s.",
         form_id,
-        path_es,
-        path_pt,
-        langs,
+        es_uri or form_meta.get("existing_es_path"),
+        pt_uri or form_meta.get("existing_pt_path"),
     )
     for note in audit_notes:
         logger.warning("AUDIT: %s", note)
 
+    # Audit log (system user) — never block pipeline on failure.
+    try:
+        with get_sync_engine().begin() as conn:
+            write_audit_sync(
+                conn,
+                user_id=AIRFLOW_SYSTEM_USER_ID,
+                action_type="form_pretranslation_completed",
+                details={
+                    "form_id": str(form_id),
+                    "version": form_meta.get("version"),
+                    "es_uri": es_uri,
+                    "pt_uri": pt_uri,
+                    "audit_notes": audit_notes,
+                },
+            )
+    except Exception as exc:
+        logger.warning("Audit write failed for form_pretranslation_completed: %s", exc)
+
     result = {
         "form_id": form_id,
-        "path_es": path_es,
-        "path_pt": path_pt,
-        "langs": langs,
+        "es_uri": es_uri,
+        "pt_uri": pt_uri,
         "updated_at": now,
         "audit_notes": audit_notes,
     }
