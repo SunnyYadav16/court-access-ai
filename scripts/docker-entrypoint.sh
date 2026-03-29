@@ -104,4 +104,5 @@ if [[ -f "/entrypoint" && "${1:-}" =~ ^(scheduler|api-server|triggerer|dag-proce
 fi
 
 log "Starting: $*"
+alembic --config db/migrations/alembic.ini upgrade head
 exec "$@"

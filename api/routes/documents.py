@@ -4,43 +4,71 @@ api/routes/documents.py
 REST endpoints for user-uploaded document translation.
 
 Endpoints:
-  POST   /documents/upload         — Upload a PDF, trigger document_pipeline_dag
-  GET    /documents/{document_id}  — Poll translation status + get signed URLs
-  GET    /documents/               — List current user's documents (paginated)
-  DELETE /documents/{document_id}  — Delete a document and its translations
+  POST   /documents/upload                  — Upload PDF, trigger DAG
+  GET    /documents/{session_id}            — Poll translation status
+  GET    /documents/{session_id}/steps      — Poll per-task progress (progress screen)
+  GET    /documents/                        — List current user's document sessions
+  DELETE /documents/{session_id}            — Delete session + GCS objects
 
-All endpoints require authentication. Users can only access their own documents
-unless they have the 'court_official' or 'admin' role.
+All endpoints require authentication.
+Users can only access their own sessions unless they have
+the 'court_official', 'interpreter', or 'admin' role.
+
+DB tables used:
+  sessions             — one row per document upload (type='document')
+  translation_requests — one row per language run within a session
+  pipeline_steps       — one row per DAG task, upserted during processing
+  audit_logs           — written on upload and delete
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
+import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from sqlalchemy import desc, func, select
 
 from api.dependencies import CurrentUser, DBSession, require_verified_email
 from api.schemas.schemas import (
     DocumentListResponse,
     DocumentResponse,
     DocumentStatus,
-    Language,
+    PipelineStepResponse,
     TranslationStatusResponse,
 )
+from courtaccess.core import gcs
+from courtaccess.core.config import get_settings
+from db.models import PipelineStep, TranslationRequest
+from db.models import Session as SessionModel
+from db.queries.audit import write_audit
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
-# ── In-memory document store (replace with DB + GCS in production) ────────────
-_documents: dict[str, dict] = {}
-
 # ── Constants ─────────────────────────────────────────────────────────────────
-_MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
-_ALLOWED_CONTENT_TYPES = {"application/pdf"}
+
+_MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+_ALLOWED_TYPES = {"application/pdf"}
+_NLLB_TARGET = {"es": "spa_Latn", "pt": "por_Latn"}
+_NLLB_TO_SHORT = {"spa_Latn": "es", "por_Latn": "pt"}
+
+# Maps translation_requests.status → DocumentStatus shown to frontend
+_STATUS_MAP = {
+    "processing": DocumentStatus.PROCESSING,
+    "completed": DocumentStatus.TRANSLATED,
+    "failed": DocumentStatus.ERROR,
+    "rejected": DocumentStatus.REJECTED,
+}
+
+# Role IDs allowed to access other users' documents
+_ELEVATED_ROLES = {2, 3, 4}  # court_official, interpreter, admin
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -53,164 +81,271 @@ _ALLOWED_CONTENT_TYPES = {"application/pdf"}
     response_model=DocumentResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Upload a document for translation",
-    description=(
-        "Upload a PDF document (≤50 MB). Returns a document_id for status polling. "
-        "Translation runs asynchronously via Airflow document_pipeline_dag."
-    ),
 )
 async def upload_document(
-    user: Annotated[CurrentUser, Depends(require_verified_email)],  # Requires verified email
+    user: Annotated[CurrentUser, Depends(require_verified_email)],
     db: DBSession,
-    file: UploadFile = File(..., description="PDF file to translate"),  # noqa: B008
-    target_languages: str = Form(
-        default="es,pt",
-        description="Comma-separated language codes: 'es', 'pt', or 'es,pt'",
+    file: UploadFile = File(...),  # noqa: B008
+    target_language: str = Form(
+        default="es",
+        description="Language code to translate into: 'es' or 'pt'",
     ),
     notes: str | None = Form(default=None, max_length=500),
 ) -> DocumentResponse:
     """
-    Accept a PDF upload, validate it, and enqueue document_pipeline_dag.
+    Validate PDF, upload to GCS, insert session + translation_request rows,
+    trigger document_pipeline_dag. Returns session_id for polling.
 
-    Validation steps:
-      1. File must be PDF (content-type header)
-      2. File must be ≤50 MB
-      3. File must have a PDF magic-bytes signature (%PDF-)
-
-    TODO (production):
-      - Upload raw bytes to GCS bucket (GCS_BUCKET_UPLOADS)
-      - Persist document record to db via db/models.py TranslationRequest
-      - Trigger Airflow document_pipeline_dag via Airflow REST API
-      - Return real GCS upload path
+    One language per upload — the frontend offers the second language
+    on the results page via a second upload call.
     """
-    # ── Content-type check ───────────────────────────────────────────────────
-    if file.content_type not in _ALLOWED_CONTENT_TYPES:
+    # ── Validate file ────────────────────────────────────────────────────────
+    if file.content_type not in _ALLOWED_TYPES:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=f"Only PDF files are accepted. Got: '{file.content_type}'",
+            detail=f"Only PDF files accepted. Got: '{file.content_type}'",
         )
 
-    # ── Size check ───────────────────────────────────────────────────────────
     contents = await file.read()
-    if len(contents) > _MAX_FILE_SIZE_BYTES:
+
+    if len(contents) > _MAX_FILE_SIZE:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File exceeds 50 MB limit ({len(contents) / 1_048_576:.1f} MB received)",
+            detail=f"File exceeds 50 MB ({len(contents) / 1_048_576:.1f} MB received)",
         )
 
-    # ── Magic bytes check ────────────────────────────────────────────────────
     if not contents.startswith(b"%PDF-"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="File does not appear to be a valid PDF (missing %PDF- header)",
         )
 
-    # ── Parse languages ──────────────────────────────────────────────────────
-    langs = []
-    for code in target_languages.split(","):
-        code = code.strip().lower()
-        try:
-            langs.append(Language(code))
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Unsupported language code: '{code}'. Must be 'es' or 'pt'.",
-            ) from exc
-    if not langs:
-        langs = [Language.SPANISH, Language.PORTUGUESE]
+    # ── Validate language ────────────────────────────────────────────────────
+    lang = target_language.strip().lower()
+    if lang not in _NLLB_TARGET:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unsupported language: '{lang}'. Must be 'es' or 'pt'.",
+        )
+    nllb_target = _NLLB_TARGET[lang]
 
-    # ── Persist (STUB) ───────────────────────────────────────────────────────
-    doc_id = uuid.uuid4()
+    # ── IDs and timestamps ───────────────────────────────────────────────────
+    session_id = uuid.uuid4()
+    request_id = uuid.uuid4()
     now = datetime.now(tz=UTC)
-    upload_path = f"/opt/airflow/uploads/{doc_id}/{file.filename}"
+    start_time = now.isoformat()
 
-    _documents[str(doc_id)] = {
-        "document_id": doc_id,
-        "user_id": user.user_id,
-        "status": DocumentStatus.PENDING,
-        "upload_path": upload_path,
-        "created_at": now,
-        "completed_at": None,
-        "target_languages": [lang.value for lang in langs],
-        "notes": notes,
-        "translation_urls": {},
-        "legal_review_status": {},
-        "pii_findings_count": 0,
-        "needs_human_review": True,
-        "error_message": None,
-    }
+    # ── Upload to GCS ────────────────────────────────────────────────────────
+    blob_name = f"{session_id}/{file.filename}"
+    gcs_path = f"gs://{settings.gcs_bucket_uploads}/{blob_name}"
 
-    logger.info(
-        "Document uploaded: doc_id=%s user_id=%s size=%d bytes file=%s langs=%s",
-        doc_id,
+    try:
+        await asyncio.to_thread(
+            gcs.upload_bytes,
+            settings.gcs_bucket_uploads,
+            blob_name,
+            contents,
+            "application/pdf",
+        )
+    except Exception as exc:
+        logger.error("GCS upload failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to upload file to storage. Please try again.",
+        ) from exc
+
+    # ── Insert session row ───────────────────────────────────────────────────
+    # status='active' is the only valid starting value per the CHECK constraint:
+    # ('active', 'processing', 'completed', 'failed', 'ended')
+    session_obj = SessionModel(
+        session_id=session_id,
+        user_id=user.user_id,
+        type="document",
+        target_language=nllb_target,
+        input_file_gcs_path=gcs_path,
+        status="active",
+        created_at=now,
+    )
+    db.add(session_obj)
+
+    # ── Insert translation_request row ───────────────────────────────────────
+    # The DAG only UPDATEs this row — it never INSERTs.
+    request_obj = TranslationRequest(
+        request_id=request_id,
+        session_id=session_id,
+        target_language=nllb_target,
+        status="processing",
+        created_at=now,
+    )
+    db.add(request_obj)
+
+    # ── Audit log ────────────────────────────────────────────────────────────
+    await write_audit(
+        db,
         user.user_id,
-        len(contents),
-        file.filename,
-        langs,
+        action_type="document_upload",
+        details={
+            "filename": file.filename,
+            "target_language": lang,
+            "gcs_path": gcs_path,
+            "file_size_bytes": len(contents),
+        },
+        session_id=session_id,
+        request_id=request_id,
     )
 
-    # TODO: Trigger Airflow DAG via REST
-    # await _trigger_airflow_dag("document_pipeline_dag", {
-    #     "document_id": str(doc_id),
-    #     "user_id": str(user.user_id),
-    #     "upload_path": upload_path,
-    #     "target_langs": [l.value for l in langs],
-    # })
+    await db.commit()
+
+    # ── Trigger Airflow DAG ──────────────────────────────────────────────────
+    # Fire-and-forget with a short timeout. The DB rows are already committed,
+    # so even if the trigger call fails the user can retry via the Airflow UI
+    # or a re-trigger endpoint. We log the error but don't fail the upload.
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"{settings.airflow_base_url}/api/v2/dags/document_pipeline_dag/dagRuns",
+                auth=(settings.airflow_username, settings.airflow_password),
+                json={
+                    "conf": {
+                        "session_id": str(session_id),
+                        "request_id": str(request_id),
+                        "user_id": str(user.user_id),
+                        "gcs_input_path": gcs_path,
+                        "target_lang": lang,
+                        "nllb_target": nllb_target,
+                        "filename": file.filename,
+                        "start_time": start_time,
+                    }
+                },
+            )
+            resp.raise_for_status()
+            logger.info(
+                "DAG triggered: session=%s lang=%s dag_run_id=%s",
+                session_id,
+                lang,
+                resp.json().get("dag_run_id"),
+            )
+    except Exception as exc:
+        # Log but don't fail — the translation_request row is already in the DB
+        # with status='processing'. An admin can re-trigger from the Airflow UI.
+        logger.error("Airflow trigger failed for session=%s: %s", session_id, exc)
 
     return DocumentResponse(
-        document_id=doc_id,
-        status=DocumentStatus.PENDING,
-        upload_path=upload_path,
+        session_id=session_id,
+        request_id=request_id,
+        status=DocumentStatus.PROCESSING,
+        gcs_input_path=gcs_path,
+        target_language=lang,
         created_at=now,
         estimated_completion_seconds=300,
     )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# GET /documents/{document_id}
+# GET /documents/{session_id}
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 @router.get(
-    "/{document_id}",
+    "/{session_id}",
     response_model=TranslationStatusResponse,
-    summary="Get translation status",
+    summary="Poll translation status",
     description=(
-        "Poll the translation status for a document. "
-        "When status is 'translated', translation_urls contains signed GCS URLs "
+        "Poll the translation status for a document session. "
+        "When status is 'translated', signed_url contains a GCS download URL "
         "valid for 1 hour."
     ),
 )
 async def get_document_status(
-    document_id: uuid.UUID,
+    session_id: uuid.UUID,
     user: CurrentUser,
     db: DBSession,
 ) -> TranslationStatusResponse:
-    """
-    Return the current processing status and translation output URLs.
+    # ── Fetch session + latest translation_request ───────────────────────────
+    result = await db.execute(
+        select(SessionModel, TranslationRequest)
+        .join(TranslationRequest, TranslationRequest.session_id == SessionModel.session_id)
+        .where(SessionModel.session_id == session_id)
+        .order_by(desc(TranslationRequest.created_at))
+        .limit(1)
+    )
+    row = result.first()
 
-    TODO (production):
-      - Query Airflow REST API for DAG run status
-      - Look up document in db/models.py
-      - Generate signed GCS URLs for completed translations
-    """
-    doc = _documents.get(str(document_id))
-    if not doc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
-    if doc["user_id"] != user.user_id and user.role_id not in (4, 2, 3):  # admin, court_official, interpreter
+    session_obj, req_obj = row
+
+    # ── Access control ───────────────────────────────────────────────────────
+    if session_obj.user_id != user.user_id and user.role_id not in _ELEVATED_ROLES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
+    # ── Map DB status → DocumentStatus ──────────────────────────────────────
+    # sessions.status drives PENDING/PROCESSING state.
+    # translation_requests.status drives terminal states.
+    if session_obj.status == "active":
+        doc_status = DocumentStatus.PENDING
+    else:
+        doc_status = _STATUS_MAP.get(req_obj.status, DocumentStatus.PROCESSING)
+
     return TranslationStatusResponse(
-        document_id=doc["document_id"],
-        status=doc["status"],
-        created_at=doc["created_at"],
-        completed_at=doc["completed_at"],
-        pii_findings_count=doc["pii_findings_count"],
-        translation_urls=doc["translation_urls"],
-        legal_review_status=doc["legal_review_status"],
-        needs_human_review=doc["needs_human_review"],
-        error_message=doc["error_message"],
+        session_id=session_obj.session_id,
+        status=doc_status,
+        target_language=_NLLB_TO_SHORT.get(session_obj.target_language, session_obj.target_language),
+        created_at=session_obj.created_at,
+        completed_at=session_obj.completed_at,
+        signed_url=req_obj.signed_url,
+        signed_url_expires_at=req_obj.signed_url_expires_at,
+        gcs_output_path=req_obj.output_file_gcs_path,
+        avg_confidence_score=req_obj.avg_confidence_score,
+        llama_corrections_count=req_obj.llama_corrections_count or 0,
+        processing_time_seconds=req_obj.processing_time_seconds,
+        error_message=req_obj.error_message,
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /documents/{session_id}/steps
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@router.get(
+    "/{session_id}/steps",
+    response_model=list[PipelineStepResponse],
+    summary="Get per-task pipeline progress",
+    description=(
+        "Returns one row per DAG task for the progress screen. Poll every 2-3 seconds while status is 'processing'."
+    ),
+)
+async def get_pipeline_steps(
+    session_id: uuid.UUID,
+    user: CurrentUser,
+    db: DBSession,
+) -> list[PipelineStepResponse]:
+    # ── Verify session ownership ─────────────────────────────────────────────
+    result = await db.execute(select(SessionModel.user_id).where(SessionModel.session_id == session_id))
+    row = result.first()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    if row.user_id != user.user_id and user.role_id not in _ELEVATED_ROLES:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    # ── Fetch steps ordered by update time ───────────────────────────────────
+    result = await db.execute(
+        select(PipelineStep).where(PipelineStep.session_id == session_id).order_by(PipelineStep.updated_at)
+    )
+    steps = result.scalars().all()
+
+    return [
+        PipelineStepResponse(
+            step_name=s.step_name,
+            status=s.status,
+            detail=s.detail,
+            metadata=s.step_metadata or {},
+            updated_at=s.updated_at,
+        )
+        for s in steps
+    ]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -221,8 +356,7 @@ async def get_document_status(
 @router.get(
     "/",
     response_model=DocumentListResponse,
-    summary="List user's documents",
-    description="Return a paginated list of all documents uploaded by the current user.",
+    summary="List user's document sessions",
 )
 async def list_documents(
     user: CurrentUser,
@@ -230,92 +364,121 @@ async def list_documents(
     page: int = 1,
     page_size: int = 20,
 ) -> DocumentListResponse:
-    """
-    Paginated list of documents for the authenticated user.
-
-    TODO (production):
-      - Replace in-memory dict with DB query (order by created_at DESC)
-      - Admin/court_official can filter by user_id query param
-    """
     if page < 1:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="page must be ≥ 1")
     if not 1 <= page_size <= 100:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="page_size must be 1-100")
 
-    user_docs = [d for d in _documents.values() if d["user_id"] == user.user_id]
-    user_docs.sort(key=lambda d: d["created_at"], reverse=True)
+    # ── Total count ──────────────────────────────────────────────────────────
+    count_result = await db.execute(
+        select(func.count())
+        .select_from(SessionModel)
+        .where(SessionModel.user_id == user.user_id, SessionModel.type == "document")
+    )
+    total = count_result.scalar_one()
 
-    start = (page - 1) * page_size
-    page_items = user_docs[start : start + page_size]
+    # ── Paginated rows ───────────────────────────────────────────────────────
+    result = await db.execute(
+        select(SessionModel, TranslationRequest)
+        .join(TranslationRequest, TranslationRequest.session_id == SessionModel.session_id)
+        .where(SessionModel.user_id == user.user_id, SessionModel.type == "document")
+        .order_by(desc(SessionModel.created_at))
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    rows = result.all()
 
     items = [
         TranslationStatusResponse(
-            document_id=d["document_id"],
-            status=d["status"],
-            created_at=d["created_at"],
-            completed_at=d["completed_at"],
-            pii_findings_count=d["pii_findings_count"],
-            translation_urls=d["translation_urls"],
-            legal_review_status=d["legal_review_status"],
-            needs_human_review=d["needs_human_review"],
-            error_message=d["error_message"],
+            session_id=s.session_id,
+            status=(
+                DocumentStatus.PENDING if s.status == "active" else _STATUS_MAP.get(r.status, DocumentStatus.PROCESSING)
+            ),
+            target_language=_NLLB_TO_SHORT.get(s.target_language, s.target_language),
+            created_at=s.created_at,
+            completed_at=s.completed_at,
+            signed_url=r.signed_url,
+            signed_url_expires_at=r.signed_url_expires_at,
+            gcs_output_path=r.output_file_gcs_path,
+            avg_confidence_score=r.avg_confidence_score,
+            llama_corrections_count=r.llama_corrections_count or 0,
+            processing_time_seconds=r.processing_time_seconds,
+            error_message=r.error_message,
         )
-        for d in page_items
+        for s, r in rows
     ]
 
-    return DocumentListResponse(
-        items=items,
-        total=len(user_docs),
-        page=page,
-        page_size=page_size,
-    )
+    return DocumentListResponse(items=items, total=total, page=page, page_size=page_size)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# DELETE /documents/{document_id}
+# DELETE /documents/{session_id}
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 @router.delete(
-    "/{document_id}",
+    "/{session_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete a document",
+    summary="Delete a document session",
     description=(
-        "Delete a document and all its translations. "
-        "GCS objects are also deleted. Cannot delete documents with status 'processing'."
+        "Delete the session, its translation_request, pipeline_steps, "
+        "and GCS objects. Cannot delete while status is 'processing'."
     ),
 )
 async def delete_document(
-    document_id: uuid.UUID,
+    session_id: uuid.UUID,
     user: CurrentUser,
     db: DBSession,
 ) -> None:
-    """
-    Soft-delete or hard-delete a document (per retention policy).
+    # ── Fetch session + request ──────────────────────────────────────────────
+    result = await db.execute(
+        select(SessionModel, TranslationRequest)
+        .join(TranslationRequest, TranslationRequest.session_id == SessionModel.session_id)
+        .where(SessionModel.session_id == session_id)
+        .limit(1)
+    )
+    row = result.first()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
-    Business rules:
-      - Users may only delete their own documents.
-      - Admins may delete any document.
-      - Documents with status 'processing' cannot be deleted (must cancel DAG first).
+    session_obj, req_obj = row
 
-    TODO (production):
-      - Delete GCS objects for upload_path, translation_urls
-      - Mark document as deleted in DB (soft-delete with deleted_at timestamp)
-      - Cancel running Airflow DAG run if status == processing
-    """
-    doc = _documents.get(str(document_id))
-    if not doc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-
-    if doc["user_id"] != user.user_id and user.role_id != 4:  # admin
+    # ── Access control ───────────────────────────────────────────────────────
+    if session_obj.user_id != user.user_id and user.role_id != 4:  # admin only
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    if doc["status"] == DocumentStatus.PROCESSING:
+    # ── Block deletion while DAG is running ──────────────────────────────────
+    if session_obj.status == "processing":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Cannot delete a document that is currently being processed. "
-            "Wait for completion or contact an admin.",
+            detail="Cannot delete a session that is currently processing. "
+            "Wait for completion or contact an admin to cancel the DAG run.",
         )
 
-    del _documents[str(document_id)]
-    logger.info("Document deleted: doc_id=%s by user_id=%s", document_id, user.user_id)
+    # ── Delete GCS objects ───────────────────────────────────────────────────
+    # Run both deletes concurrently in threads — don't block on either
+    gcs_tasks = []
+    if session_obj.input_file_gcs_path:
+        b, bl = gcs.parse_gcs_uri(session_obj.input_file_gcs_path)
+        gcs_tasks.append(asyncio.to_thread(gcs.delete_blob, b, bl))
+    if req_obj.output_file_gcs_path:
+        b, bl = gcs.parse_gcs_uri(req_obj.output_file_gcs_path)
+        gcs_tasks.append(asyncio.to_thread(gcs.delete_blob, b, bl))
+    if gcs_tasks:
+        await asyncio.gather(*gcs_tasks, return_exceptions=True)
+
+    # ── Audit log before deletion ────────────────────────────────────────────
+    await write_audit(
+        db,
+        user.user_id,
+        action_type="document_delete",
+        details={"deleted_by": str(user.user_id), "session_status": session_obj.status},
+        session_id=session_id,
+        request_id=req_obj.request_id,
+    )
+
+    # ── Delete session (cascades to translation_requests + pipeline_steps) ───
+    await db.delete(session_obj)
+    await db.commit()
+
+    logger.info("Session deleted: session_id=%s by user_id=%s", session_id, user.user_id)

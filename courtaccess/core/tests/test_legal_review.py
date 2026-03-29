@@ -42,7 +42,7 @@ def _make_real_reviewer(
     redis_url: str = "redis://localhost:6379",
 ) -> LegalReviewer:
     """
-    Reviewer with USE_REAL_LEGAL_REVIEW + USE_VERTEX_LEGAL_REVIEW
+    Reviewer with USE_VERTEX_LEGAL_REVIEW
     set via monkeypatching env vars. Used by Redis and retry tests
     so they exercise the real code paths without real credentials.
     """

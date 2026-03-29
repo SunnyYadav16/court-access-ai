@@ -64,27 +64,16 @@ target_metadata = Base.metadata
 # Offline mode — generate SQL script without a live DB connection
 # ══════════════════════════════════════════════════════════════════════════════
 
-
 def run_migrations_offline() -> None:
-    """
-    Render migrations as a SQL script (no DB connection required).
-
-    Used for:
-      - Reviewing changes before applying them
-      - CI pipelines without a PostgreSQL instance
-      - Generating migration SQL for DBA review
-
-    Command:
-        alembic --config db/migrations/alembic.ini upgrade head --sql
-    """
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        compare_type=True,  # Detect column type changes
-        compare_server_default=True,  # Detect server_default changes
+        compare_type=True,
+        compare_server_default=True,
+        version_table="courtaccess_alembic_version",
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -96,16 +85,10 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    """
-    Apply migrations directly to a live PostgreSQL instance.
-
-    Uses psycopg2 (sync) driver. Database URL is read from
-    SYNC_DATABASE_URL (which converts asyncpg→psycopg2).
-    """
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
-        poolclass=pool.NullPool,  # No connection pool for migration runner
+        poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
         context.configure(
@@ -113,6 +96,7 @@ def run_migrations_online() -> None:
             target_metadata=target_metadata,
             compare_type=True,
             compare_server_default=True,
+            version_table="courtaccess_alembic_version",
         )
         with context.begin_transaction():
             context.run_migrations()
