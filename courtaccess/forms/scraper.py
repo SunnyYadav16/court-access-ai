@@ -576,6 +576,7 @@ def _handle_new_form(
         "needs_human_review": True,
         "created_at": ts,
         "last_scraped_at": ts,
+        "last_updated_at": ts,
         "appearances": list(appearances),
         "versions": [
             {
@@ -647,6 +648,7 @@ def _handle_updated_form(
     entry["file_type"] = file_type
     entry["needs_human_review"] = True
     entry["last_scraped_at"] = ts
+    entry["last_updated_at"] = ts
     entry["status"] = "active"
 
     pretranslation_queue.append(entry["form_id"])

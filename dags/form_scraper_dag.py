@@ -6,13 +6,14 @@ Scheduled: every Monday at 06:00 UTC
 
 Pipeline flow:
   scrape_and_classify → preprocess_data → validate_catalog → detect_anomalies
-      → detect_bias → trigger_pretranslation → log_summary → dvc_version_data
+      → detect_bias → trigger_pretranslation → log_summary → write_manifest
 
 MIGRATED from data_pipeline/dags/form_scraper_dag.py.
 All src.* imports updated to courtaccess.* package imports.
 """
 
 import contextlib
+import json
 import logging
 import os
 import uuid
@@ -79,6 +80,12 @@ def task_scrape_and_classify(**context) -> dict:
     """Task 1 — Run the scraper, classify every form, update the catalog."""
     logger.info("Starting weekly mass.gov form scrape.")
     existing_forms = form_queries.get_all_forms_sync()
+    active_existing = sum(1 for f in existing_forms if f.get("status") == "active")
+    logger.info(
+        "Loaded existing catalog from DB: %d row(s) total, %d active (used for URL/hash matching before scrape).",
+        len(existing_forms),
+        active_existing,
+    )
     result = run_scrape(existing_catalog=existing_forms)
     logger.info("Scrape finished. Summary: %s", result["counts"])
     context["ti"].xcom_push(key="scrape_result", value=result)
@@ -92,7 +99,7 @@ def task_upload_forms_to_gcs(**context) -> dict:
 
     For each form/version/path key:
       - gs://... → leave as-is
-      - local existing file → upload to gs://{_GCS_BUCKET_FORMS}/forms/{form_id}/v{version}/{slug}{suffix}.{ext}
+      - local existing file → upload to gs://{_GCS_BUCKET_FORMS}/forms/{slug}/v{version}/{slug}{suffix}.{ext}
         then delete local file, record mapping.
     """
     ti = context["ti"]
@@ -103,7 +110,7 @@ def task_upload_forms_to_gcs(**context) -> dict:
         ti.xcom_push(key="gcs_path_map", value={})
         return {"uploaded": 0, "skipped": 0, "failed": 0}
 
-    correlation_id = (context.get("dag_run") or {}).run_id
+    correlation_id = context["dag_run"].run_id if context.get("dag_run") else "manual"
     gcs_path_map: dict[str, str] = {}
     uploaded = skipped = failed = 0
 
@@ -143,15 +150,24 @@ def task_upload_forms_to_gcs(**context) -> dict:
 
                 local_path = str(path_val)
                 p = Path(local_path)
+
+                ext = _ext_for(key, ver)
+                suffix = _suffix_for(key)
+                blob = f"forms/{slug}/v{vnum}/{slug}{suffix}.{ext}"
+                uri = f"gs://{_GCS_BUCKET_FORMS}/{blob}"
+
+                if gcs.blob_exists(_GCS_BUCKET_FORMS, blob):
+                    logger.info("GCS blob already exists, skipping upload: gs://%s/%s", _GCS_BUCKET_FORMS, blob)
+                    skipped += 1
+                    new_ver[key] = uri
+                    with contextlib.suppress(Exception):
+                        p.unlink()
+                    continue
+
                 if not p.exists():
                     failed += 1
                     logger.warning("Local file missing (skip upload): %s", local_path)
                     continue
-
-                ext = _ext_for(key, ver)
-                suffix = _suffix_for(key)
-                blob = f"forms/{form_id}/v{vnum}/{slug}{suffix}.{ext}"
-                uri = f"gs://{_GCS_BUCKET_FORMS}/{blob}"
 
                 try:
                     gcs.upload_file(local_path, _GCS_BUCKET_FORMS, blob, correlation_id=correlation_id)
@@ -201,6 +217,86 @@ def task_upload_forms_to_gcs(**context) -> dict:
     return {"uploaded": uploaded, "skipped": skipped, "failed": failed}
 
 
+def _write_single_form_to_db(engine, entry: dict, session_class, integrity_error_class) -> None:
+    """Write one form entry (catalog + versions + appearances) to DB.
+
+    Uses an isolated Session so failures cannot poison other entries.
+    Handles form_slug unique-constraint collisions by suffixing the slug
+    with the first 8 chars of form_id and retrying once.
+    """
+    form_id = uuid.UUID(str(entry["form_id"]))
+
+    def _build_catalog_row(slug_override: str | None = None) -> dict:
+        row = {
+            "form_id": form_id,
+            "form_name": entry.get("form_name", ""),
+            "form_slug": slug_override or entry.get("form_slug", ""),
+            "source_url": entry.get("source_url", ""),
+            "file_type": entry.get("file_type", "pdf"),
+            "status": entry.get("status", "active"),
+            "content_hash": entry.get("content_hash", ""),
+            "current_version": entry.get("current_version", 1),
+            "needs_human_review": bool(entry.get("needs_human_review", True)),
+            "created_at": entry.get("created_at"),
+            "last_scraped_at": entry.get("last_scraped_at"),
+            "last_updated_at": entry.get("last_updated_at"),
+            "preprocessing_flags": entry.get("preprocessing_flags"),
+        }
+        if row["created_at"] is None:
+            row.pop("created_at")
+        if row["last_scraped_at"] is None:
+            row.pop("last_scraped_at")
+        if row["last_updated_at"] is None:
+            row.pop("last_updated_at")
+        return row
+
+    def _do_write(session, catalog_row: dict) -> None:
+        form_queries.upsert_form_catalog_sync(session, catalog_row)
+
+        for ver in entry.get("versions") or []:
+            version_row = {
+                "version": int(ver.get("version", 1)),
+                "content_hash": ver.get("content_hash", entry.get("content_hash", "")),
+                "file_type": ver.get("file_type", entry.get("file_type", "pdf")),
+                "file_path_original": ver.get("file_path_original", ""),
+                "file_path_es": ver.get("file_path_es"),
+                "file_path_pt": ver.get("file_path_pt"),
+                "file_type_es": ver.get("file_type_es"),
+                "file_type_pt": ver.get("file_type_pt"),
+            }
+            if ver.get("created_at"):
+                version_row["created_at"] = ver.get("created_at")
+            form_queries.upsert_form_version_sync(session, form_id, version_row)
+
+        for app in entry.get("appearances") or []:
+            div = app.get("division")
+            heading = app.get("section_heading")
+            if not div or not heading:
+                continue
+            form_queries.upsert_form_appearance_sync(session, form_id, div, heading)
+
+    catalog_row = _build_catalog_row()
+
+    try:
+        with session_class(engine) as session, session.begin():
+            _do_write(session, catalog_row)
+    except integrity_error_class as exc:
+        # Likely form_slug unique constraint collision (form_catalog_form_slug_key).
+        # ON CONFLICT (form_id) cannot intercept a violation on a different
+        # unique column. Retry with a suffixed slug in a fresh session.
+        suffixed_slug = f"{entry.get('form_slug', '')}-{str(form_id)[:8]}"
+        logger.warning(
+            "Slug collision for form_id=%s slug=%r — retrying with '%s'. (%s)",
+            form_id,
+            entry.get("form_slug"),
+            suffixed_slug,
+            exc.orig,
+        )
+        catalog_row = _build_catalog_row(slug_override=suffixed_slug)
+        with session_class(engine) as session, session.begin():
+            _do_write(session, catalog_row)
+
+
 def task_write_catalog_to_db(**context) -> dict:
     """
     Task 1c — Upsert the scraped catalog into the DB (sync).
@@ -210,11 +306,6 @@ def task_write_catalog_to_db(**context) -> dict:
     from sqlalchemy.orm import Session
 
     ti = context["ti"]
-    forms: list[dict] = ti.xcom_pull(task_ids="upload_forms_to_gcs", key="forms") or ti.xcom_pull(
-        task_ids="upload_forms_to_gcs", key="return_value"
-    )
-    # We actually push updated forms into XCom key "forms" inside the upload task,
-    # which is read by downstream tasks. Pull directly from that key.
     forms = (
         ti.xcom_pull(task_ids="upload_forms_to_gcs", key="forms")
         or ti.xcom_pull(task_ids="scrape_and_classify", key="forms")
@@ -225,69 +316,54 @@ def task_write_catalog_to_db(**context) -> dict:
         logger.warning("No forms found in XCom — skipping DB write task.")
         return {"written": 0, "failed": 0}
 
+    from sqlalchemy.exc import IntegrityError
+
     engine = get_sync_engine()
     written = failed = 0
 
-    with Session(engine) as session:
-        for entry in forms:
-            try:
-                with session.begin():
-                    # form_catalog
-                    form_id = uuid.UUID(str(entry["form_id"]))
-                    catalog_row = {
-                        "form_id": form_id,
-                        "form_name": entry.get("form_name", ""),
-                        "form_slug": entry.get("form_slug", ""),
-                        "source_url": entry.get("source_url", ""),
-                        "file_type": entry.get("file_type", "pdf"),
-                        "status": entry.get("status", "active"),
-                        "content_hash": entry.get("content_hash", ""),
-                        "current_version": entry.get("current_version", 1),
-                        "needs_human_review": bool(entry.get("needs_human_review", True)),
-                        "created_at": entry.get("created_at"),
-                        "last_scraped_at": entry.get("last_scraped_at"),
-                        "preprocessing_flags": entry.get("preprocessing_flags"),
-                    }
+    # ── Each entry gets its own Session so a rollback on entry N cannot      ──
+    # ── poison the connection state for entries N+1 … 22.                   ──
+    # ── Previously a single shared Session was used: after the first         ──
+    # ── form_slug unique-constraint violation, SQLAlchemy marked the session ──
+    # ── inactive, causing every subsequent session.begin() to raise          ──
+    # ── InvalidRequestError, silently failing all 22 writes and leaving the  ──
+    # ── DB empty — which made every re-run classify all forms as "New".      ──
+    for entry in forms:
+        try:
+            _write_single_form_to_db(engine, entry, Session, IntegrityError)
+            written += 1
+        except Exception as exc:
+            failed += 1
+            logger.error(
+                "DB write failed for form_id=%s: %s",
+                entry.get("form_id"),
+                exc,
+                exc_info=True,
+            )
+            continue
 
-                    # Remove None for timestamps so DB defaults can apply if needed
-                    if catalog_row["created_at"] is None:
-                        catalog_row.pop("created_at")
-                    if catalog_row["last_scraped_at"] is None:
-                        catalog_row.pop("last_scraped_at")
+    if failed > 0 and written == 0:
+        raise RuntimeError(
+            f"write_catalog_to_db: every entry failed ({failed}/{len(forms)}). "
+            "Check ERROR logs above for the root cause."
+        )
 
-                    form_queries.upsert_form_catalog_sync(session, catalog_row)
-
-                    # versions
-                    for ver in entry.get("versions") or []:
-                        version_row = {
-                            "version": int(ver.get("version", 1)),
-                            "content_hash": ver.get("content_hash", entry.get("content_hash", "")),
-                            "file_type": ver.get("file_type", entry.get("file_type", "pdf")),
-                            "file_path_original": ver.get("file_path_original", ""),
-                            "file_path_es": ver.get("file_path_es"),
-                            "file_path_pt": ver.get("file_path_pt"),
-                            "file_type_es": ver.get("file_type_es"),
-                            "file_type_pt": ver.get("file_type_pt"),
-                        }
-                        if ver.get("created_at"):
-                            version_row["created_at"] = ver.get("created_at")
-                        form_queries.upsert_form_version_sync(session, form_id, version_row)
-
-                    # appearances
-                    for app in entry.get("appearances") or []:
-                        div = app.get("division")
-                        heading = app.get("section_heading")
-                        if not div or not heading:
-                            continue
-                        form_queries.upsert_form_appearance_sync(session, form_id, div, heading)
-
-                written += 1
-            except Exception as exc:
-                failed += 1
-                logger.warning("DB write failed for form_id=%s: %s", entry.get("form_id"), exc)
-                with contextlib.suppress(Exception):
-                    session.rollback()
-                continue
+    if failed > 0:
+        fail_pct = (failed / len(forms)) * 100
+        logger.warning(
+            "write_catalog_to_db: %d/%d entries failed (%.0f%%) — see ERROR logs above.",
+            failed,
+            len(forms),
+            fail_pct,
+        )
+        # Raise if more than half of writes failed — this prevents a silent
+        # empty-DB state where the next run again sees all forms as "New".
+        if fail_pct > 50:
+            raise RuntimeError(
+                f"write_catalog_to_db: {fail_pct:.0f}% of entries failed "
+                f"({failed}/{len(forms)}). Raising to prevent silent data loss — "
+                "check ERROR logs above for the root cause."
+            )
 
     return {"written": written, "failed": failed}
 
@@ -302,7 +378,13 @@ def task_preprocess_data(**context) -> dict:
     """
     logger.info("Starting data preprocessing.")
     ti = context["ti"]
-    forms = ti.xcom_pull(task_ids="scrape_and_classify", key="forms") or []
+    # Prefer the GCS-resolved form list pushed by upload_forms_to_gcs (gs:// paths).
+    # Fall back to scrape_and_classify only if upload_forms_to_gcs was skipped.
+    forms = (
+        ti.xcom_pull(task_ids="upload_forms_to_gcs", key="forms")
+        or ti.xcom_pull(task_ids="scrape_and_classify", key="forms")
+        or []
+    )
     if not forms:
         logger.error("No forms catalog found in XCom — cannot preprocess.")
         return {"error": "catalog_missing"}
@@ -639,7 +721,15 @@ def task_detect_bias(**context) -> dict:
 
 def task_prepare_trigger_confs(**context) -> list[dict]:
     """
-    Task 6a — Prepare confs for TriggerDagRunOperator dynamic mapping.
+    Task 6a — Prepare confs for trigger_pretranslation task.
+
+    Each entry includes a unique ``trigger_run_id`` to prevent ``logical_date``
+    collision deduplication when multiple forms are triggered in the same second.
+    Without this, ``TriggerDagRunOperator.expand()`` silently drops runs whose
+    auto-generated ``run_id`` collides with an earlier mapped instance's.
+
+    Returns a list of dicts shaped for ``expand_kwargs()``:
+        [{"conf": {"form_id": ...}, "trigger_run_id": "pretranslation__<uuid>__<dag_run>"}, ...]
     """
     ti = context["ti"]
     result = ti.xcom_pull(task_ids="scrape_and_classify", key="scrape_result")
@@ -652,8 +742,16 @@ def task_prepare_trigger_confs(**context) -> list[dict]:
         logger.info("No forms need pre-translation this cycle.")
         return []
 
+    dag_run_id = context["dag_run"].run_id if context.get("dag_run") else "manual"
     logger.info("Preparing trigger confs for %d form(s): %s", len(queue), queue)
-    return [{"form_id": form_id} for form_id in queue]
+
+    return [
+        {
+            "conf": {"form_id": form_id},
+            "trigger_run_id": f"pretranslation__{form_id}__{dag_run_id}",
+        }
+        for form_id in queue
+    ]
 
 
 def task_log_summary(**context) -> None:
@@ -739,15 +837,17 @@ def task_log_summary(**context) -> None:
 
     # ── Append DB audit write (never raise) ───────────────────────────────────
     try:
-        dag_run_id = (context.get("dag_run") or {}).run_id
+        dag_run_id = context["dag_run"].run_id if context.get("dag_run") else "manual"
         details = {
             "counts": c,
             "pretranslation_queued": len(result.get("pretranslation_queue", [])),
-            "anomaly_count": (anomaly or {}).get("anomaly_count", 0) if isinstance(anomaly, dict) else 0,
-            "bias_flags": (bias or {}).get("bias_count", 0) if isinstance(bias, dict) else 0,
             "dag_run_id": dag_run_id,
-            # include active_forms for next run's baseline lookup
+            # active_forms must stay top-level — _prev_active_forms_count() reads details->>'active_forms'
             "active_forms": (metrics or {}).get("active_forms", 0) if isinstance(metrics, dict) else 0,
+            "catalog_metrics": metrics or {},
+            "preprocess_report": preproc or {},
+            "anomaly_report": anomaly or {},
+            "bias_report": bias or {},
         }
         engine = get_sync_engine()
         with engine.begin() as conn:
@@ -761,6 +861,56 @@ def task_log_summary(**context) -> None:
         logger.warning("Could not write form_scrape_completed audit log: %s", exc)
 
 
+def task_write_manifest(**context) -> dict:
+    """Task 8 — Build and upload the weekly form catalog manifest to GCS.
+
+    Queries the DB for all active forms, builds a JSON snapshot of the full
+    catalog (one entry per form at its current version), and uploads it to a
+    fixed GCS path. GCS Object Versioning on the bucket preserves every
+    historical manifest automatically.
+    """
+    correlation_id = context["dag_run"].run_id if context.get("dag_run") else "manual"
+    all_forms = form_queries.get_all_forms_sync()
+
+    active_forms = [f for f in all_forms if f.get("status") == "active"]
+
+    manifest_forms = []
+    for form in active_forms:
+        versions = sorted(form.get("versions") or [], key=lambda v: v.get("version", 0), reverse=True)
+        latest = versions[0] if versions else {}
+        manifest_forms.append(
+            {
+                "form_id": str(form.get("form_id", "")),
+                "form_slug": form.get("form_slug", ""),
+                "version": latest.get("version"),
+                "content_hash": latest.get("content_hash") or form.get("content_hash"),
+                "gcs_path_original": latest.get("file_path_original"),
+                "gcs_path_es": latest.get("file_path_es"),
+                "gcs_path_pt": latest.get("file_path_pt"),
+            }
+        )
+
+    manifest = {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "scraper_run_id": correlation_id,
+        "total_active_forms": len(active_forms),
+        "forms": manifest_forms,
+    }
+
+    payload = json.dumps(manifest, indent=2).encode()
+    blob = "manifests/form_catalog_manifest.json"
+    gcs.upload_bytes(_GCS_BUCKET_FORMS, blob, payload, "application/json", correlation_id=correlation_id)
+
+    logger.info(
+        "Manifest uploaded: gs://%s/%s (%d active forms, %d bytes)",
+        _GCS_BUCKET_FORMS,
+        blob,
+        len(active_forms),
+        len(payload),
+    )
+    return {"total_active_forms": len(active_forms), "manifest_bytes": len(payload)}
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # DAG definition
 # ══════════════════════════════════════════════════════════════════════════════
@@ -772,7 +922,8 @@ with DAG(
     start_date=datetime(2024, 1, 1),
     default_args=DEFAULT_ARGS,
     catchup=False,
-    tags=["courtaccess", "forms", "scraping", "preprocessing", "dvc", "anomaly-detection", "bias-detection"],
+    is_paused_upon_creation=False,
+    tags=["courtaccess", "forms", "scraping", "preprocessing", "anomaly-detection", "bias-detection"],
 ) as dag:
     t1_scrape = PythonOperator(task_id="scrape_and_classify", python_callable=task_scrape_and_classify)
     t1b_gcs = PythonOperator(task_id="upload_forms_to_gcs", python_callable=task_upload_forms_to_gcs)
@@ -787,8 +938,9 @@ with DAG(
     t6_trigger = TriggerDagRunOperator.partial(
         task_id="trigger_pretranslation",
         trigger_dag_id="form_pretranslation_dag",
-    ).expand(conf=t6_prepare.output)
+    ).expand_kwargs(t6_prepare.output)
     t7_summary = PythonOperator(task_id="log_summary", python_callable=task_log_summary)
+    t8_manifest = PythonOperator(task_id="write_manifest", python_callable=task_write_manifest)
 
     (
         t1_scrape
@@ -801,4 +953,5 @@ with DAG(
         >> t6_prepare
         >> t6_trigger
         >> t7_summary
+        >> t8_manifest
     )

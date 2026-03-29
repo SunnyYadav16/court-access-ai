@@ -82,7 +82,6 @@ class Settings(BaseSettings):
     # ── Model toggles (feature flags — safe to leave False locally) ───────────
     use_real_classification: bool
     use_real_translation: bool
-    use_real_legal_review: bool
     use_vertex_legal_review: bool
     use_real_ocr: bool
 

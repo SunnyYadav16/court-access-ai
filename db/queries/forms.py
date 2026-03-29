@@ -396,11 +396,27 @@ def upsert_form_catalog_sync(session, entry_dict: dict[str, Any]):
     Sync variant of ``upsert_form_catalog`` for Airflow tasks.
 
     Does NOT commit. Caller owns transaction boundary.
+
+    Note: ``ON CONFLICT (form_id) DO UPDATE`` cannot intercept a violation on
+    the *separate* ``form_catalog_form_slug_key`` unique index.  If a slug
+    collision occurs, the caller (``task_write_catalog_to_db`` /
+    ``_write_single_form_to_db``) catches ``IntegrityError``, suffixes the
+    slug, and retries inside a fresh Session.
     """
+    import logging
+
     from db.models import FormCatalog
+
+    _logger = logging.getLogger(__name__)
 
     form_id = entry_dict["form_id"]
     set_dict = {k: v for k, v in entry_dict.items() if k not in ("form_id", "created_at")}
+
+    _logger.debug(
+        "upsert_form_catalog_sync: form_id=%s slug=%r",
+        form_id,
+        entry_dict.get("form_slug"),
+    )
 
     stmt = (
         pg_insert(FormCatalog)

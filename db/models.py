@@ -513,6 +513,11 @@ class FormCatalog(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+    last_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="Timestamp of last content change (hash change or new form). Not updated on rename or translation.",
+    )
 
     # Relationships
     versions: Mapped[list[FormVersion]] = relationship("FormVersion", back_populates="form")

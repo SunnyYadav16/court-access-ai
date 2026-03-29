@@ -24,8 +24,6 @@ Pipeline (one form per DAG run):
                        ▼
             store_and_update_catalog
                        ▼
-             dvc_version_data
-                       ▼
                log_summary
 
 Each task instantiates the classes it needs internally.
@@ -34,7 +32,6 @@ Airflow runs each task in its own process — instances are not shared.
 
 import logging
 import os
-import subprocess
 import time
 import uuid
 from datetime import datetime
@@ -169,52 +166,61 @@ def task_load_form_entry(**context) -> dict:
         if form is None:
             raise ValueError(f"form_id '{form_id}' not found in DB.")
 
+        # ── Eagerly read all relationship data while session is open ─────────
         versions = sorted(list(form.versions), key=lambda v: v.version, reverse=True)
         if not versions:
             raise ValueError(f"DB form '{form_id}' has no version records.")
         latest = versions[0]
 
-        orig_uri = latest.file_path_original
+        # ── Extract all scalar values NOW — before session closes ────────────
+        orig_uri = str(latest.file_path_original) if latest.file_path_original else None
         if not orig_uri:
             raise ValueError(f"DB form '{form_id}' missing file_path_original.")
-        if not str(orig_uri).startswith("gs://"):
+        if not orig_uri.startswith("gs://"):
             raise ValueError(f"Expected GCS URI for file_path_original, got: {orig_uri}")
 
         already_has_es = bool(latest.file_path_es)
         already_has_pt = bool(latest.file_path_pt)
+        existing_es_path = str(latest.file_path_es) if latest.file_path_es else None
+        existing_pt_path = str(latest.file_path_pt) if latest.file_path_pt else None
+        version_num = latest.version
+        form_name = str(form.form_name)
+        form_slug = str(form.form_slug) if form.form_slug else "form"
+        preprocessing_flags = list(form.preprocessing_flags or [])
 
-        if already_has_es and already_has_pt:
-            logger.info("Form '%s' already translated. Skipping.", form_id)
-            context["ti"].xcom_push(key="form_meta", value={"skip": True, "form_id": form_id})
-            return {"skip": True, "form_id": form_id}
+    # ── All ORM access is done — session is now closed ───────────────────────
+    if already_has_es and already_has_pt:
+        logger.info("Form '%s' already translated. Skipping.", form_id)
+        context["ti"].xcom_push(key="form_meta", value={"skip": True, "form_id": form_id})
+        return {"skip": True, "form_id": form_id}
 
-        dag_run_id = (context.get("dag_run") or {}).run_id
-        work_dir = Path(f"/tmp/courtaccess/form_pretranslation/{dag_run_id}")  # noqa: S108  # nosec B108
-        work_dir.mkdir(parents=True, exist_ok=True)
-        local_orig = str(work_dir / "original.pdf")
+    dag_run_id = context["dag_run"].run_id if context.get("dag_run") else "manual"
+    work_dir = Path(f"/tmp/courtaccess/form_pretranslation/{dag_run_id}")  # noqa: S108  # nosec B108
+    work_dir.mkdir(parents=True, exist_ok=True)
+    local_orig = str(work_dir / "original.pdf")
 
-        b, bl = gcs.parse_gcs_uri(str(orig_uri))
-        gcs.download_file(b, bl, local_orig, correlation_id=form_id)
+    b, bl = gcs.parse_gcs_uri(orig_uri)
+    gcs.download_file(b, bl, local_orig, correlation_id=form_id)
 
-        slug_stem = form.form_slug or "form"
-        out_dir = Path(local_orig).parent
+    slug_stem = form_slug
+    out_dir = Path(local_orig).parent
 
-        form_meta = {
-            "form_id": form_id,
-            "form_name": form.form_name,
-            "form_slug": form.form_slug,
-            "version": latest.version,
-            "original_gcs_uri": str(orig_uri),
-            "original_path": local_orig,
-            "output_es": str(out_dir / f"{slug_stem}_es.pdf"),
-            "output_pt": str(out_dir / f"{slug_stem}_pt.pdf"),
-            "skip": False,
-            "already_has_es": already_has_es,
-            "already_has_pt": already_has_pt,
-            "existing_es_path": latest.file_path_es,
-            "existing_pt_path": latest.file_path_pt,
-            "is_mislabeled": "mislabeled" in str(form.preprocessing_flags or []),
-        }
+    form_meta = {
+        "form_id": form_id,
+        "form_name": form_name,
+        "form_slug": form_slug,
+        "version": version_num,
+        "original_gcs_uri": orig_uri,
+        "original_path": local_orig,
+        "output_es": str(out_dir / f"{slug_stem}_es.pdf"),
+        "output_pt": str(out_dir / f"{slug_stem}_pt.pdf"),
+        "skip": False,
+        "already_has_es": already_has_es,
+        "already_has_pt": already_has_pt,
+        "existing_es_path": existing_es_path,
+        "existing_pt_path": existing_pt_path,
+        "is_mislabeled": "mislabeled" in str(preprocessing_flags),
+    }
 
     logger.info(
         "Form loaded: '%s' (v%d) | original='%s' | output_es='%s' | output_pt='%s' | mislabeled=%s",
@@ -438,7 +444,7 @@ def task_reconstruct_pdf_portuguese(**context) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Tasks 9-11 — store, dvc, summary (unchanged)
+# Tasks 9-10 — store, summary
 # ══════════════════════════════════════════════════════════════════════════════
 
 
@@ -473,38 +479,44 @@ def task_store_and_update_catalog(**context) -> dict:
         if form is None:
             raise ValueError(f"form_id '{form_id}' not found in DB during store.")
 
+        # ── Eagerly read all relationship data while session is open ─────────
         versions = sorted(list(form.versions), key=lambda v: v.version, reverse=True)
         if not versions:
             raise ValueError(f"DB form '{form_id}' has no version records during store.")
         latest = versions[0]
 
+        # ── Extract all scalars inside the session ───────────────────────────
         slug = form.form_slug or "form"
         vnum = latest.version
+        existing_file_path_es = str(latest.file_path_es) if latest.file_path_es else None
+        existing_file_path_pt = str(latest.file_path_pt) if latest.file_path_pt else None
+        existing_file_type_es = latest.file_type_es
+        existing_file_type_pt = latest.file_type_pt
+        preprocessing_flags = list(form.preprocessing_flags or [])
 
         # Upload translated PDFs to GCS (if produced)
         if path_es:
-            blob_es = f"forms/{form_id}/v{vnum}/{slug}_es.pdf"
+            blob_es = f"forms/{slug}/v{vnum}/{slug}_es.pdf"
             gcs.upload_file(path_es, _GCS_BUCKET_FORMS, blob_es, correlation_id=form_id)
             es_uri = f"gs://{_GCS_BUCKET_FORMS}/{blob_es}"
 
         if path_pt:
-            blob_pt = f"forms/{form_id}/v{vnum}/{slug}_pt.pdf"
+            blob_pt = f"forms/{slug}/v{vnum}/{slug}_pt.pdf"
             gcs.upload_file(path_pt, _GCS_BUCKET_FORMS, blob_pt, correlation_id=form_id)
             pt_uri = f"gs://{_GCS_BUCKET_FORMS}/{blob_pt}"
 
-        # Update DB version row with translated URIs
+        # Update DB version row with translated URIs (use extracted locals)
         form_queries.update_form_version_translations_sync(
             session,
             form_id=form_uuid,
             version=vnum,
-            file_path_es=es_uri or latest.file_path_es,
-            file_path_pt=pt_uri or latest.file_path_pt,
-            file_type_es="pdf" if es_uri else latest.file_type_es,
-            file_type_pt="pdf" if pt_uri else latest.file_type_pt,
+            file_path_es=es_uri or existing_file_path_es,
+            file_path_pt=pt_uri or existing_file_path_pt,
+            file_type_es="pdf" if es_uri else existing_file_type_es,
+            file_type_pt="pdf" if pt_uri else existing_file_type_pt,
         )
 
         # Update catalog fields: needs_human_review + preprocessing_flags
-        preprocessing_flags = list(form.preprocessing_flags or [])
         if (
             (review_es and review_es.get("skipped")) or (review_pt and review_pt.get("skipped"))
         ) and "legal_review_skipped" not in preprocessing_flags:
@@ -555,53 +567,6 @@ def task_store_and_update_catalog(**context) -> dict:
     }
     context["ti"].xcom_push(key="store_result", value=result)
     return result
-
-
-def task_dvc_version_data(**context) -> None:
-    import os as _os
-
-    ti = context["ti"]
-    form_meta = ti.xcom_pull(task_ids="load_form_entry", key="form_meta")
-    if form_meta.get("skip"):
-        logger.info("Skipping DVC versioning — no new files produced.")
-        return
-
-    form_id = form_meta["form_id"]
-    version = form_meta["version"]
-    env = _os.environ.copy()
-
-    def _run(cmd: list[str]) -> bool:
-        try:
-            res = subprocess.run(  # noqa: S603
-                cmd,
-                cwd=PROJECT_ROOT,
-                capture_output=True,
-                text=True,
-                env=env,
-                timeout=120,
-            )
-            if res.returncode == 0:
-                logger.info("DVC OK: %s", " ".join(cmd))
-                return True
-            logger.warning(
-                "DVC failed (rc=%d): %s | stderr: %s",
-                res.returncode,
-                " ".join(cmd),
-                res.stderr.strip(),
-            )
-            return False
-        except subprocess.TimeoutExpired:
-            logger.warning("DVC timed out: %s", " ".join(cmd))
-            return False
-        except FileNotFoundError:
-            logger.error("DVC not found in container PATH.")
-            return False
-
-    c_tracked = _run(["dvc", "add", "courtaccess/data/form_catalog.json"])
-    f_tracked = _run(["dvc", "add", f"forms/{form_id}/v{version}"])
-    if c_tracked or f_tracked:
-        pushed = _run(["dvc", "push"])
-        logger.info("DVC push complete." if pushed else "DVC push failed — tracked locally but not pushed.")
 
 
 def task_log_summary(**context) -> None:
@@ -669,6 +634,8 @@ with DAG(
     start_date=datetime(2024, 1, 1),
     default_args=DEFAULT_ARGS,
     catchup=False,
+    is_paused_upon_creation=False,
+    max_active_runs=1,
     tags=["courtaccess", "forms", "translation", "ocr"],
 ) as dag:
     t1_load = PythonOperator(task_id="load_form_entry", python_callable=task_load_form_entry)
@@ -680,13 +647,12 @@ with DAG(
     t7_rec_es = PythonOperator(task_id="reconstruct_pdf_spanish", python_callable=task_reconstruct_pdf_spanish)
     t8_rec_pt = PythonOperator(task_id="reconstruct_pdf_portuguese", python_callable=task_reconstruct_pdf_portuguese)
     t9_store = PythonOperator(task_id="store_and_update_catalog", python_callable=task_store_and_update_catalog)
-    t10_dvc = PythonOperator(task_id="dvc_version_data", python_callable=task_dvc_version_data)
-    t11_sum = PythonOperator(task_id="log_summary", python_callable=task_log_summary)
+    t10_sum = PythonOperator(task_id="log_summary", python_callable=task_log_summary)
 
     t1_load >> t2_ocr
-    t2_ocr >> [t3_es, t4_pt]
-    t3_es >> t5_rev_es
-    t4_pt >> t6_rev_pt
-    t5_rev_es >> t7_rec_es
-    t6_rev_pt >> t8_rec_pt
-    [t7_rec_es, t8_rec_pt] >> t9_store >> t10_dvc >> t11_sum
+    # Sequential: ES pipeline completes fully before PT starts.
+    # In real mode each language loads ~3.2 GB (spaCy + NLLB);
+    # running them serially halves peak memory per DAG run.
+    t2_ocr >> t3_es >> t5_rev_es >> t7_rec_es
+    t7_rec_es >> t4_pt >> t6_rev_pt >> t8_rec_pt
+    t8_rec_pt >> t9_store >> t10_sum

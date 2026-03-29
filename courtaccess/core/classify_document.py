@@ -95,16 +95,29 @@ def _stub_classify(pdf_path: str) -> dict:
 def _get_vertex_client():
     """
     Build OpenAI-compatible Vertex AI client.
-    Same auth pattern as LegalReviewer._get_vertex_client().
+
+    Auth strategy (matches LegalReviewer._get_vertex_client):
+      - Local dev: reads GCP_SERVICE_ACCOUNT_JSON and uses a service-account key.
+      - Production (Cloud Run / GCE): GCP_SERVICE_ACCOUNT_JSON is absent;
+        falls back to Application Default Credentials (ADC) which are provided
+        automatically by the attached service account — no key file needed.
     """
+    import google.auth
     import google.auth.transport.requests
-    from google.oauth2 import service_account
     from openai import OpenAI
 
-    credentials = service_account.Credentials.from_service_account_info(
-        json.loads(_GCP_SA_JSON),
-        scopes=["https://www.googleapis.com/auth/cloud-platform"],
-    )
+    if _GCP_SA_JSON:
+        # Local dev — explicit SA JSON key
+        from google.oauth2 import service_account
+
+        credentials = service_account.Credentials.from_service_account_info(
+            json.loads(_GCP_SA_JSON),
+            scopes=["https://www.googleapis.com/auth/cloud-platform"],
+        )
+    else:
+        # Production — use ADC (attached service account on GCE/Cloud Run)
+        credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+
     credentials.refresh(google.auth.transport.requests.Request())
 
     return OpenAI(

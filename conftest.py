@@ -105,10 +105,10 @@ def mock_redis():
     clean call counts and default return values — prevents state leakage when
     one test overrides mock_redis.get.return_value or asserts call counts.
 
-    Use in tests that exercise LegalReviewer with USE_REAL_LEGAL_REVIEW=true:
+    Use in tests that exercise LegalReviewer with USE_VERTEX_LEGAL_REVIEW=true:
 
         def test_cache_miss(mock_redis, reviewer_es, monkeypatch):
-            monkeypatch.setenv("USE_REAL_LEGAL_REVIEW", "true")
+            monkeypatch.setenv("USE_VERTEX_LEGAL_REVIEW", "true")
             monkeypatch.setenv("REDIS_URL", "redis://localhost:6379")
             with patch("redis.Redis.from_url", return_value=mock_redis):
                 result = reviewer_es.verify_batch(["the court"], ["el tribunal"])

@@ -93,7 +93,7 @@ def write_audit_sync(
             INSERT INTO audit_logs
                 (audit_id, user_id, session_id, request_id, action_type, details, created_at)
             VALUES
-                (:audit_id::uuid, :user_id::uuid, :session_id::uuid, :request_id::uuid, :action_type, :details::jsonb, NOW())
+                (CAST(:audit_id AS uuid), CAST(:user_id AS uuid), CAST(:session_id AS uuid), CAST(:request_id AS uuid), :action_type, CAST(:details AS jsonb), NOW())
             """
         ),
         {

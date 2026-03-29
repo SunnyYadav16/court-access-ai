@@ -64,6 +64,7 @@ def _get_storage_client():
 
 @functools.lru_cache(maxsize=8)
 def _get_service_account_credentials(service_account_json: str):
+    """Build signing credentials from a SA JSON key string (local dev only)."""
     from google.oauth2 import service_account
 
     return service_account.Credentials.from_service_account_info(json.loads(service_account_json))
@@ -203,6 +204,11 @@ def delete_blob(bucket: str, blob: str, *, correlation_id: str | None = None) ->
         logger.debug("%sGCS delete: gs://%s/%s not found — already gone", _ctx(correlation_id), bucket, blob)
 
 
+def blob_exists(bucket: str, blob: str) -> bool:
+    """Return True if the GCS object exists, False otherwise."""
+    return _get_storage_client().bucket(bucket).blob(blob).exists(retry=GCS_RETRY)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Signed URLs
 # ══════════════════════════════════════════════════════════════════════════════
@@ -219,18 +225,34 @@ def generate_signed_url(
     """
     Generate a v4 signed GET URL for a GCS object.
 
-    Args:
-        bucket: GCS bucket name.
-        blob: GCS blob path within the bucket.
-        expiry_seconds: How long the URL is valid for, in seconds.
-        service_account_json: JSON string of the service account key.
-            Pass an empty string to fall back to Application Default Credentials
-            (ADC), which works in GKE/Cloud Run but not locally without a key.
+    Auth strategy for URL signing:
+      - Local dev: ``service_account_json`` contains the SA key JSON string.
+        The key's private key is used directly to sign the URL.
+      - Production (GCE / Cloud Run): ``service_account_json`` is empty.
+        Uses ``google.auth.compute_engine.Credentials``, which delegates
+        signing to the GCE metadata server via the IAM ``signBlob`` API.
+        Requires the attached SA to have ``roles/iam.serviceAccountTokenCreator``
+        on itself (self-sign permission).
 
-    Returns:
-        A signed URL string valid for ``expiry_seconds`` seconds.
+    Note: plain ``storage.Client()`` (ADC without signing) cannot generate
+    signed URLs — it lacks the private key material. This function always
+    provides credentials that support the signing interface.
     """
-    client = _get_storage_client_with_sa(service_account_json) if service_account_json else _get_storage_client()
+    if service_account_json:
+        # Local dev — use explicit SA JSON key
+        credentials = _get_service_account_credentials(service_account_json)
+        client = _get_storage_client_with_sa(service_account_json)
+    else:
+        # Production — use Compute Engine credentials (supports signBlob via metadata server)
+        import google.auth
+        import google.auth.transport.requests
+        from google.auth.compute_engine import Credentials as ComputeCredentials
+
+        credentials, _ = google.auth.default()
+        if isinstance(credentials, ComputeCredentials):
+            # Refresh to ensure the token and service_account_email are populated
+            credentials.refresh(google.auth.transport.requests.Request())
+        client = _get_storage_client()
 
     url = (
         client.bucket(bucket)
@@ -239,6 +261,7 @@ def generate_signed_url(
             expiration=timedelta(seconds=expiry_seconds),
             method="GET",
             version="v4",
+            credentials=credentials,
         )
     )
     logger.debug(
