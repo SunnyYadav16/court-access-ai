@@ -30,7 +30,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy import desc, func, select
 
 from api.dependencies import CurrentUser, DBSession, require_verified_email
@@ -55,7 +55,16 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 _MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
-_ALLOWED_TYPES = {"application/pdf"}
+_ALLOWED_TYPES = {
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
+    "application/msword",  # .doc
+}
+_PDF_TYPES = {"application/pdf"}
+_DOCX_TYPES = {
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/msword",
+}
 _NLLB_TARGET = {"es": "spa_Latn", "pt": "por_Latn"}
 _NLLB_TO_SHORT = {"spa_Latn": "es", "por_Latn": "pt"}
 
@@ -93,8 +102,8 @@ async def upload_document(
     notes: str | None = Form(default=None, max_length=500),
 ) -> DocumentResponse:
     """
-    Validate PDF, upload to GCS, insert session + translation_request rows,
-    trigger document_pipeline_dag. Returns session_id for polling.
+    Validate file, upload to GCS, insert session + translation_request rows,
+    trigger the appropriate pipeline DAG. Returns session_id for polling.
 
     One language per upload — the frontend offers the second language
     on the results page via a second upload call.
@@ -103,7 +112,7 @@ async def upload_document(
     if file.content_type not in _ALLOWED_TYPES:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=f"Only PDF files accepted. Got: '{file.content_type}'",
+            detail=f"Only PDF and Word (.docx/.doc) files accepted. Got: '{file.content_type}'",
         )
 
     contents = await file.read()
@@ -114,11 +123,10 @@ async def upload_document(
             detail=f"File exceeds 50 MB ({len(contents) / 1_048_576:.1f} MB received)",
         )
 
-    if not contents.startswith(b"%PDF-"):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="File does not appear to be a valid PDF (missing %PDF- header)",
-        )
+    # Determine format — each DAG validates magic bytes on the downloaded file
+    is_pdf = file.content_type in _PDF_TYPES
+    dag_id = "document_pipeline_dag" if is_pdf else "docx_pipeline_dag"
+    original_format = "pdf" if is_pdf else "docx"
 
     # ── Validate language ────────────────────────────────────────────────────
     lang = target_language.strip().lower()
@@ -145,7 +153,7 @@ async def upload_document(
             settings.gcs_bucket_uploads,
             blob_name,
             contents,
-            "application/pdf",
+            file.content_type or "application/octet-stream",
         )
     except Exception as exc:
         logger.error("GCS upload failed: %s", exc)
@@ -203,7 +211,7 @@ async def upload_document(
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
-                f"{settings.airflow_base_url}/api/v2/dags/document_pipeline_dag/dagRuns",
+                f"{settings.airflow_base_url}/api/v2/dags/{dag_id}/dagRuns",
                 auth=(settings.airflow_username, settings.airflow_password),
                 json={
                     "conf": {
@@ -215,12 +223,14 @@ async def upload_document(
                         "nllb_target": nllb_target,
                         "filename": file.filename,
                         "start_time": start_time,
+                        "original_format": original_format,
                     }
                 },
             )
             resp.raise_for_status()
             logger.info(
-                "DAG triggered: session=%s lang=%s dag_run_id=%s",
+                "DAG triggered: dag=%s session=%s lang=%s dag_run_id=%s",
+                dag_id,
                 session_id,
                 lang,
                 resp.json().get("dag_run_id"),
@@ -482,3 +492,129 @@ async def delete_document(
     await db.commit()
 
     logger.info("Session deleted: session_id=%s by user_id=%s", session_id, user.user_id)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# POST /documents/{session_id}/retranslate
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@router.post(
+    "/{session_id}/retranslate",
+    response_model=DocumentResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Re-translate an existing document into a second language",
+    description=(
+        "Re-uses the original GCS PDF (still in courtaccess-ai-uploads) and "
+        "creates a new translation_request row under the same session_id. "
+        "Returns a DocumentResponse whose request_id is the new polling key."
+    ),
+)
+async def retranslate_document(
+    session_id: uuid.UUID,
+    target_language: Annotated[str, Body(..., embed=True)],
+    user: Annotated[CurrentUser, Depends(require_verified_email)],
+    db: DBSession,
+) -> DocumentResponse:
+    """
+    Validate the session, ensure the new language differs from the original,
+    insert a TranslationRequest, and fire a new DAG run.
+    """
+    # ── Fetch original session ────────────────────────────────────────────────────
+    result = await db.execute(select(SessionModel).where(SessionModel.session_id == session_id))
+    session_obj = result.scalar_one_or_none()
+    if not session_obj:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    # ── Access control ──────────────────────────────────────────────────────
+    if session_obj.user_id != user.user_id and user.role_id not in _ELEVATED_ROLES:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    # ── Validate target language ──────────────────────────────────────────────
+    lang = target_language.strip().lower()
+    if lang not in _NLLB_TARGET:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unsupported language: '{lang}'. Must be 'es' or 'pt'.",
+        )
+    nllb_target = _NLLB_TARGET[lang]
+
+    # Guard: don't re-translate into the same language as the original session
+    original_lang_short = _NLLB_TO_SHORT.get(session_obj.target_language, session_obj.target_language)
+    if lang == original_lang_short:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Session already has a '{lang}' translation. Choose a different language.",
+        )
+
+    # Guard: GCS input must still exist (it should — we haven't deleted it)
+    if not session_obj.input_file_gcs_path:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Original file is no longer available for re-translation.",
+        )
+
+    # ── New IDs and timestamps ──────────────────────────────────────────────
+    new_request_id = uuid.uuid4()
+    now = datetime.now(tz=UTC)
+    gcs_path = session_obj.input_file_gcs_path
+
+    # ── Insert new translation_request under the SAME session ────────────────
+    request_obj = TranslationRequest(
+        request_id=new_request_id,
+        session_id=session_id,
+        target_language=nllb_target,
+        status="processing",
+        created_at=now,
+    )
+    db.add(request_obj)
+
+    await write_audit(
+        db,
+        user.user_id,
+        action_type="document_retranslate",
+        details={"target_language": lang, "gcs_path": gcs_path},
+        session_id=session_id,
+        request_id=new_request_id,
+    )
+
+    await db.commit()
+
+    # ── Trigger Airflow DAG ────────────────────────────────────────────────
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"{settings.airflow_base_url}/api/v2/dags/document_pipeline_dag/dagRuns",
+                auth=(settings.airflow_username, settings.airflow_password),
+                json={
+                    "conf": {
+                        "session_id": str(session_id),
+                        "request_id": str(new_request_id),
+                        "user_id": str(user.user_id),
+                        "gcs_input_path": gcs_path,
+                        "target_lang": lang,
+                        "nllb_target": nllb_target,
+                        "filename": gcs_path.split("/")[-1],
+                        "start_time": now.isoformat(),
+                    }
+                },
+            )
+            resp.raise_for_status()
+            logger.info(
+                "Retranslate DAG triggered: session=%s lang=%s dag_run_id=%s",
+                session_id,
+                lang,
+                resp.json().get("dag_run_id"),
+            )
+    except Exception as exc:
+        logger.error("Airflow retranslate trigger failed for session=%s: %s", session_id, exc)
+
+    return DocumentResponse(
+        session_id=session_id,
+        request_id=new_request_id,
+        status=DocumentStatus.PROCESSING,
+        gcs_input_path=gcs_path,
+        target_language=lang,
+        created_at=now,
+        estimated_completion_seconds=300,
+    )

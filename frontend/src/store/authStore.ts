@@ -25,7 +25,7 @@ import {
   OAuthProvider,
 } from "firebase/auth";
 import { auth } from "@/config/firebase";
-import { authApi } from "@/services/api";
+import { authApi, type DocumentStatus } from "@/services/api";
 import {
   type AuthState,
   type AuthModalView,
@@ -64,6 +64,11 @@ interface AuthStoreState {
 
   // Pending verification email (for display in verify view)
   pendingVerificationEmail: string | null;
+
+  // Active document translation session (set by DocUpload, read by DocProcessing/DocResults)
+  documentSession: { sessionId: string; targetLanguage: string } | null;
+  // Final result stored by DocProcessing so DocResults can render without a round-trip
+  documentResult: DocumentStatus | null;
 }
 
 interface AuthStoreActions {
@@ -92,6 +97,10 @@ interface AuthStoreActions {
   // Utility
   clearError: () => void;
   fetchBackendUser: () => Promise<void>;
+
+  // Document session
+  setDocumentSession: (s: { sessionId: string; targetLanguage: string } | null) => void;
+  setDocumentResult: (r: DocumentStatus | null) => void;
 }
 
 type AuthStore = AuthStoreState & AuthStoreActions;
@@ -120,6 +129,8 @@ const useAuthStore = create<AuthStore>((set, get) => ({
   isLoading: false,
   error: null,
   pendingVerificationEmail: null,
+  documentSession: null,
+  documentResult: null,
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -314,6 +325,9 @@ const useAuthStore = create<AuthStore>((set, get) => ({
   // ── Utility ────────────────────────────────────────────────────────────────
 
   clearError: () => set({ error: null }),
+
+  setDocumentSession: (s) => set({ documentSession: s }),
+  setDocumentResult: (r) => set({ documentResult: r }),
 
   fetchBackendUser: async () => {
     try {
