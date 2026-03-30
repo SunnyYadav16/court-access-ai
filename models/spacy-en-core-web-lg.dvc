@@ -1,0 +1,6 @@
+outs:
+- md5: 7bb6c3766e2fc70bf1ba0318be28ef14.dir
+  size: 649033614
+  nfiles: 26
+  hash: md5
+  path: spacy-en-core-web-lg

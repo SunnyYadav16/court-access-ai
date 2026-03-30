@@ -1,0 +1,6 @@
+outs:
+- md5: f2a4ecb04ee63b772678e55458ac7970.dir
+  size: 3090840001
+  nfiles: 15
+  hash: md5
+  path: whisper-large-v3

@@ -1,0 +1,6 @@
+outs:
+- md5: 2e2ba5d33226afe6a56b7637744d0f68.dir
+  size: 1201
+  nfiles: 1
+  hash: md5
+  path: tfdv-baseline-stats

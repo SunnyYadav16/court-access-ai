@@ -1,0 +1,6 @@
+outs:
+- md5: 0fbff23f31c878b83c69152a054fdfca.dir
+  size: 63127495
+  nfiles: 5
+  hash: md5
+  path: piper-tts-es
