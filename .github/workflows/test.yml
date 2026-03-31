@@ -43,23 +43,53 @@ jobs:
 
     # All stub-mode flags — never run real models in CI (no GPU, no credentials)
     env:
-      USE_REAL_TRANSLATION: "false"
-      USE_REAL_CLASSIFICATION: "false"
-      USE_VERTEX_LEGAL_REVIEW: "false"
-      USE_REAL_OCR: "false"
-      # Minimal config values that settings validation requires
-      DATABASE_URL: "postgresql+asyncpg://ci:ci@localhost/ci"
+      # ── App ──
+      APP_ENV: "ci"
+      DEBUG: "false"
       SECRET_KEY: "ci-test-secret-key-not-used-in-real-auth"
+      ALLOWED_ORIGINS: "http://localhost:3000"
+      # ── Database (individual fields — config.py builds DATABASE_URL itself) ──
+      POSTGRES_USER: "ci"
+      POSTGRES_PASSWORD: "ci"
+      POSTGRES_DB: "ci"
+      POSTGRES_HOST: "localhost"
+      POSTGRES_PORT: "5432"
+      # ── GCS ──
+      GCP_PROJECT_ID: "ci-project"
+      GCP_REGION: "us-central1"
       GCS_BUCKET_UPLOADS: "ci-bucket-uploads"
       GCS_BUCKET_TRANSLATED: "ci-bucket-translated"
+      GCS_BUCKET_FORMS: "ci-bucket-forms"
       GCS_BUCKET_MODELS: "ci-bucket-models"
-      MLFLOW_TRACKING_URI: "file:///tmp/mlflow"
+      # ── Firebase/GCIP ──
+      GCIP_API_KEY: "ci-api-key"
+      GCIP_AUTH_DOMAIN: "ci.firebaseapp.com"
+      GCIP_PROJECT_ID: "ci-project"
+      # ── Vertex AI (field names match Settings exactly) ──
+      VERTEX_PROJECT: "ci-project"
+      VERTEX_LOCATION: "us-central1"
+      LEGAL_LLM_MODEL: "meta/llama-4-maverick-17b-128e-instruct-maas"
+      LEGAL_VERIFY_TIMEOUT: "30.0"
+      GCP_SERVICE_ACCOUNT_JSON: ""
+      # ── Signed URLs ──
+      SIGNED_URL_EXPIRY_SECONDS: "3600"
+      # ── Airflow ──
       AIRFLOW_BASE_URL: "http://localhost:8080"
       AIRFLOW_USERNAME: "ci"
       AIRFLOW_PASSWORD: "ci"
-      VERTEX_PROJECT_ID: "ci-project"
-      VERTEX_LOCATION: "us-central1"
-      VERTEX_LEGAL_LLM_MODEL: "meta/llama-4-maverick-17b-128e-instruct-maas"
+      # ── MLflow ──
+      MLFLOW_TRACKING_URI: "file:///tmp/mlflow"
+      # ── Redis ──
+      REDIS_URL: "redis://localhost:6379/0"
+      # ── Model toggles (all false — stub mode) ──
+      USE_REAL_CLASSIFICATION: "false"
+      USE_REAL_TRANSLATION: "false"
+      USE_REAL_LEGAL_REVIEW: "false"
+      USE_VERTEX_LEGAL_REVIEW: "false"
+      USE_REAL_OCR: "false"
+      # ── Auth ──
+      ACCESS_TOKEN_EXPIRE_MINUTES: "30"
+      ALGORITHM: "HS256"
 
     steps:
       - uses: actions/checkout@v4
@@ -104,23 +134,43 @@ jobs:
     needs: unit-tests
 
     env:
-      USE_REAL_TRANSLATION: "false"
-      USE_REAL_CLASSIFICATION: "false"
-      USE_VERTEX_LEGAL_REVIEW: "false"
-      USE_REAL_OCR: "false"
-      DATABASE_URL: "postgresql+asyncpg://ci:ci@localhost/ci"
+      APP_ENV: "ci"
+      DEBUG: "false"
       SECRET_KEY: "ci-test-secret-key-not-used-in-real-auth"
+      ALLOWED_ORIGINS: "http://localhost:3000"
+      POSTGRES_USER: "ci"
+      POSTGRES_PASSWORD: "ci"
+      POSTGRES_DB: "ci"
+      POSTGRES_HOST: "localhost"
+      POSTGRES_PORT: "5432"
+      GCP_PROJECT_ID: "ci-project"
+      GCP_REGION: "us-central1"
       GCS_BUCKET_UPLOADS: "ci-bucket-uploads"
       GCS_BUCKET_TRANSLATED: "ci-bucket-translated"
+      GCS_BUCKET_FORMS: "ci-bucket-forms"
       GCS_BUCKET_MODELS: "ci-bucket-models"
-      MLFLOW_TRACKING_URI: "file:///tmp/mlflow"
+      GCIP_API_KEY: "ci-api-key"
+      GCIP_AUTH_DOMAIN: "ci.firebaseapp.com"
+      GCIP_PROJECT_ID: "ci-project"
+      VERTEX_PROJECT: "ci-project"
+      VERTEX_LOCATION: "us-central1"
+      LEGAL_LLM_MODEL: "meta/llama-4-maverick-17b-128e-instruct-maas"
+      LEGAL_VERIFY_TIMEOUT: "30.0"
+      GCP_SERVICE_ACCOUNT_JSON: ""
+      SIGNED_URL_EXPIRY_SECONDS: "3600"
       AIRFLOW_BASE_URL: "http://localhost:8080"
       AIRFLOW_USERNAME: "ci"
       AIRFLOW_PASSWORD: "ci"
-      VERTEX_PROJECT_ID: "ci-project"
-      VERTEX_LOCATION: "us-central1"
-      VERTEX_LEGAL_LLM_MODEL: "meta/llama-4-maverick-17b-128e-instruct-maas"
-      # Confidence threshold for stub mode (stub always returns 0.50, real mode uses 0.85)
+      MLFLOW_TRACKING_URI: "file:///tmp/mlflow"
+      REDIS_URL: "redis://localhost:6379/0"
+      USE_REAL_CLASSIFICATION: "false"
+      USE_REAL_TRANSLATION: "false"
+      USE_REAL_LEGAL_REVIEW: "false"
+      USE_VERTEX_LEGAL_REVIEW: "false"
+      USE_REAL_OCR: "false"
+      ACCESS_TOKEN_EXPIRE_MINUTES: "30"
+      ALGORITHM: "HS256"
+      # Confidence threshold for stub mode
       VALIDATION_CONFIDENCE_THRESHOLD: "0.0"
 
     steps:
@@ -275,22 +325,42 @@ jobs:
       id-token: write   # required for WIF GCS auth
 
     env:
-      USE_REAL_TRANSLATION: "false"
-      USE_REAL_CLASSIFICATION: "false"
-      USE_VERTEX_LEGAL_REVIEW: "false"
-      USE_REAL_OCR: "false"
-      DATABASE_URL: "postgresql+asyncpg://ci:ci@localhost/ci"
+      APP_ENV: "ci"
+      DEBUG: "false"
       SECRET_KEY: "ci-test-secret-key-not-used-in-real-auth"
+      ALLOWED_ORIGINS: "http://localhost:3000"
+      POSTGRES_USER: "ci"
+      POSTGRES_PASSWORD: "ci"
+      POSTGRES_DB: "ci"
+      POSTGRES_HOST: "localhost"
+      POSTGRES_PORT: "5432"
+      GCP_PROJECT_ID: "ci-project"
+      GCP_REGION: "us-central1"
       GCS_BUCKET_UPLOADS: "ci-bucket-uploads"
       GCS_BUCKET_TRANSLATED: "ci-bucket-translated"
+      GCS_BUCKET_FORMS: "ci-bucket-forms"
       GCS_BUCKET_MODELS: "ci-bucket-models"
-      MLFLOW_TRACKING_URI: "file:///tmp/mlflow"
+      GCIP_API_KEY: "ci-api-key"
+      GCIP_AUTH_DOMAIN: "ci.firebaseapp.com"
+      GCIP_PROJECT_ID: "ci-project"
+      VERTEX_PROJECT: "ci-project"
+      VERTEX_LOCATION: "us-central1"
+      LEGAL_LLM_MODEL: "meta/llama-4-maverick-17b-128e-instruct-maas"
+      LEGAL_VERIFY_TIMEOUT: "30.0"
+      GCP_SERVICE_ACCOUNT_JSON: ""
+      SIGNED_URL_EXPIRY_SECONDS: "3600"
       AIRFLOW_BASE_URL: "http://localhost:8080"
       AIRFLOW_USERNAME: "ci"
       AIRFLOW_PASSWORD: "ci"
-      VERTEX_PROJECT_ID: "ci-project"
-      VERTEX_LOCATION: "us-central1"
-      VERTEX_LEGAL_LLM_MODEL: "meta/llama-4-maverick-17b-128e-instruct-maas"
+      MLFLOW_TRACKING_URI: "file:///tmp/mlflow"
+      REDIS_URL: "redis://localhost:6379/0"
+      USE_REAL_CLASSIFICATION: "false"
+      USE_REAL_TRANSLATION: "false"
+      USE_REAL_LEGAL_REVIEW: "false"
+      USE_VERTEX_LEGAL_REVIEW: "false"
+      USE_REAL_OCR: "false"
+      ACCESS_TOKEN_EXPIRE_MINUTES: "30"
+      ALGORITHM: "HS256"
 
     steps:
       - uses: actions/checkout@v4
