@@ -32,6 +32,7 @@ Airflow runs each task in its own process — instances are not shared.
 
 import logging
 import os
+import shutil
 import time
 import uuid
 from datetime import datetime
@@ -619,8 +620,37 @@ def task_log_summary(**context) -> None:
             logger.warning("AUDIT NOTE: %s", note)
 
 
+def task_cleanup_workdir(**context) -> None:
+    """
+    Final cleanup task — remove the per-run /tmp working directory.
+
+    Runs with trigger_rule='all_done' so it executes whether upstream tasks
+    succeeded, failed, or were skipped, preventing unbounded /tmp accumulation
+    on long-running Airflow workers.
+    """
+    ti = context["ti"]
+    form_meta = ti.xcom_pull(task_ids="load_form_entry", key="form_meta") or {}
+
+    # Derive work_dir from form_meta or fall back to reconstructing from dag_run_id.
+    original_path = form_meta.get("original_path")
+    if original_path:
+        work_dir = Path(original_path).parent
+    else:
+        dag_run_id = context["dag_run"].run_id if context.get("dag_run") else "manual"
+        work_dir = Path(f"/tmp/courtaccess/form_pretranslation/{dag_run_id}")  # noqa: S108  # nosec B108
+
+    if work_dir.exists():
+        try:
+            shutil.rmtree(work_dir)
+            logger.info("Cleaned up work directory: %s", work_dir)
+        except Exception as exc:
+            logger.warning("Could not remove work directory %s: %s", work_dir, exc)
+    else:
+        logger.debug("Work directory already absent (skip=True path?): %s", work_dir)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
-# DAG definition (unchanged)
+# DAG definition
 # ══════════════════════════════════════════════════════════════════════════════
 
 with DAG(
@@ -648,6 +678,13 @@ with DAG(
     t8_rec_pt = PythonOperator(task_id="reconstruct_pdf_portuguese", python_callable=task_reconstruct_pdf_portuguese)
     t9_store = PythonOperator(task_id="store_and_update_catalog", python_callable=task_store_and_update_catalog)
     t10_sum = PythonOperator(task_id="log_summary", python_callable=task_log_summary)
+    t11_cleanup = PythonOperator(
+        task_id="cleanup_workdir",
+        python_callable=task_cleanup_workdir,
+        # 'all_done' ensures cleanup runs whether upstream tasks succeeded,
+        # failed, or were skipped — preventing /tmp accumulation on errors.
+        trigger_rule="all_done",
+    )
 
     t1_load >> t2_ocr
     # Sequential: ES pipeline completes fully before PT starts.
@@ -655,4 +692,4 @@ with DAG(
     # running them serially halves peak memory per DAG run.
     t2_ocr >> t3_es >> t5_rev_es >> t7_rec_es
     t7_rec_es >> t4_pt >> t6_rev_pt >> t8_rec_pt
-    t8_rec_pt >> t9_store >> t10_sum
+    t8_rec_pt >> t9_store >> t10_sum >> t11_cleanup

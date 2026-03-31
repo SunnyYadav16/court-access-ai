@@ -209,6 +209,28 @@ def blob_exists(bucket: str, blob: str) -> bool:
     return _get_storage_client().bucket(bucket).blob(blob).exists(retry=GCS_RETRY)
 
 
+def get_blob_size(bucket: str, blob: str) -> int | None:
+    """
+    Return the size in bytes of a GCS object, or None if it does not exist
+    or the metadata fetch fails.
+
+    Calls ``blob.reload()`` to populate server-side metadata (including
+    ``blob.size``) without downloading the object body.
+    """
+    from google.api_core.exceptions import NotFound
+
+    try:
+        gcs_blob = _get_storage_client().bucket(bucket).blob(blob)
+        gcs_blob.reload(retry=GCS_RETRY)
+        return gcs_blob.size
+    except NotFound:
+        logger.debug("GCS get_blob_size: gs://%s/%s not found", bucket, blob)
+        return None
+    except Exception as exc:
+        logger.warning("GCS get_blob_size failed for gs://%s/%s: %s", bucket, blob, exc)
+        return None
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Signed URLs
 # ══════════════════════════════════════════════════════════════════════════════

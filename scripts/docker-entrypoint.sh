@@ -104,5 +104,39 @@ if [[ -f "/entrypoint" && "${1:-}" =~ ^(scheduler|api-server|triggerer|dag-proce
 fi
 
 log "Starting: $*"
-alembic --config db/migrations/alembic.ini upgrade head
+
+# ── Database migrations ───────────────────────────────────────────────────────
+# Skip entirely when SKIP_API_MIGRATIONS=true.  Set this in environments where
+# another process (e.g. a dedicated init container or CI step) owns the schema.
+#
+# When migrations are enabled, wait briefly for Postgres to be ready before
+# running alembic — the api container may start before airflow-init completes.
+if [[ "${SKIP_API_MIGRATIONS:-false}" == "true" ]]; then
+    warn "SKIP_API_MIGRATIONS=true — skipping alembic upgrade."
+else
+    # Resolve connection details from individual env vars (same pattern as the app).
+    _PG_HOST="${POSTGRES_HOST:-localhost}"
+    _PG_PORT="${POSTGRES_PORT:-5432}"
+    _PG_USER="${POSTGRES_USER:-}"
+    _RETRIES=15
+    _WAIT=2
+
+    log "Waiting for Postgres at ${_PG_HOST}:${_PG_PORT} (up to $((_RETRIES * _WAIT))s)..."
+    for i in $(seq 1 "$_RETRIES"); do
+        if pg_isready -h "$_PG_HOST" -p "$_PG_PORT" -U "$_PG_USER" -q 2>/dev/null; then
+            log "Postgres is ready."
+            break
+        fi
+        if [[ "$i" -eq "$_RETRIES" ]]; then
+            warn "Postgres not ready after $((_RETRIES * _WAIT))s — proceeding anyway (alembic may fail)."
+        else
+            log "Postgres not ready yet (attempt $i/$_RETRIES) — retrying in ${_WAIT}s..."
+            sleep "$_WAIT"
+        fi
+    done
+
+    log "Running: alembic --config db/migrations/alembic.ini upgrade head"
+    alembic --config db/migrations/alembic.ini upgrade head
+fi
+
 exec "$@"

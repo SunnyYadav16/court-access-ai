@@ -41,9 +41,11 @@ WORKER NOTE:
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import os
+import re
 import shutil
 import time
 import uuid
@@ -92,6 +94,7 @@ DEFAULT_ARGS = {
 # ══════════════════════════════════════════════════════════════════════════════
 
 
+@functools.cache
 def _engine():
     import sqlalchemy as sa
 
@@ -190,6 +193,22 @@ def _write_audit(user_id: str, session_id: str, request_id: str, action: str, de
         logger.error("[DB] write audit_logs failed (%s): %s", action, exc)
 
 
+def _get_request_status(request_id: str) -> str | None:
+    """Return the current status of a translation_request row, or None on error."""
+    try:
+        import sqlalchemy as sa
+
+        with _engine().begin() as c:
+            row = c.execute(
+                sa.text("SELECT status FROM translation_requests WHERE request_id = :rid"),
+                {"rid": request_id},
+            ).fetchone()
+        return row[0] if row else None
+    except Exception as exc:
+        logger.error("[DB] _get_request_status failed (rid=%s): %s", request_id, exc)
+        return None
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Heavy XCom helpers
 #
@@ -240,7 +259,12 @@ def _on_dag_failure(context) -> None:
         _update_session(session_id, "failed")
         _write_step(session_id, task_id, "failed", msg)
     if request_id:
-        _update_request(request_id, status="failed", error_message=msg[:500])
+        # Do not overwrite a 'rejected' status set by task_classify_document.
+        # Read the current DB status first and only fall back to 'failed' when
+        # the request has not already been given a terminal rejection state.
+        current_status = _get_request_status(request_id)
+        if current_status != "rejected":
+            _update_request(request_id, status="failed", error_message=msg[:500])
 
     logger.error("[DAG FAILURE] session=%s task=%s: %s", session_id, task_id, msg)
 
@@ -256,13 +280,27 @@ def task_validate_upload(**context) -> dict:
     XCom → upload_meta (small dict, pushed directly)
     """
     conf = context["dag_run"].conf or {}
-    session_id = conf.get("session_id", str(uuid.uuid4()))
-    request_id = conf.get("request_id", str(uuid.uuid4()))
+
+    # session_id and request_id MUST be provided by POST /documents/upload.
+    # Falling back to a random UUID would silently write to non-existent DB rows.
+    session_id = conf.get("session_id")
+    request_id = conf.get("request_id")
+    for key, val in (("session_id", session_id), ("request_id", request_id)):
+        if not val:
+            raise AirflowFailException(
+                f"DAG conf is missing required key '{key}'. "
+                "This DAG must be triggered by POST /documents/upload, not manually without conf."
+            )
     user_id = conf.get("user_id", "unknown")
     gcs_path = conf.get("gcs_input_path", "")
     target_lang = conf.get("target_lang", "es")
     nllb_target = conf.get("nllb_target", _NLLB_TARGET.get(target_lang, "spa_Latn"))
-    filename = conf.get("filename", "document.pdf")
+    _raw_filename = conf.get("filename", "document.pdf")
+    # Sanitize: strip directory components first (guards against absolute paths
+    # and ../ traversal injected via conf), then remove any character that isn't
+    # alphanumeric, underscore, hyphen, or dot — same policy as the upload route.
+    _safe_filename = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", Path(_raw_filename).name)
+    filename = _safe_filename if _safe_filename and not _safe_filename.startswith(".") else "document.pdf"
     start_time = conf.get("start_time", datetime.now(tz=UTC).isoformat())
 
     _update_session(session_id, "processing")

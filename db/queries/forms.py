@@ -266,8 +266,13 @@ async def list_forms(
     if status:
         conditions.append(FormCatalog.status == status)
 
+    def _escape_like(s: str) -> str:
+        """Escape LIKE special characters so user input is matched literally."""
+        return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
     if division:
-        conditions.append(FormCatalog.appearances.any(FormAppearance.division.ilike(f"%{division}%")))
+        safe_div = _escape_like(division)
+        conditions.append(FormCatalog.appearances.any(FormAppearance.division.ilike(f"%{safe_div}%", escape="\\")))
 
     if language == "es":
         conditions.append(FormCatalog.versions.any(FormVersion.file_path_es.isnot(None)))
@@ -275,7 +280,8 @@ async def list_forms(
         conditions.append(FormCatalog.versions.any(FormVersion.file_path_pt.isnot(None)))
 
     if q:
-        conditions.append(FormCatalog.form_name.ilike(f"%{q}%"))
+        safe_q = _escape_like(q)
+        conditions.append(FormCatalog.form_name.ilike(f"%{safe_q}%", escape="\\"))
 
     # ── Total count (no pagination, no relationship loading) ─────────────────
     count_stmt = select(func.count(FormCatalog.form_id)).where(*conditions)

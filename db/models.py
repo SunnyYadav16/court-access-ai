@@ -299,7 +299,11 @@ class Session(Base):
     )
     audit_logs: Mapped[list[AuditLog]] = relationship("AuditLog", back_populates="session")
 
-    pipeline_steps: Mapped[list[PipelineStep]] = relationship("PipelineStep", back_populates="session")
+    pipeline_steps: Mapped[list[PipelineStep]] = relationship(
+        "PipelineStep",
+        back_populates="session",
+        passive_deletes=True,
+    )
 
     # Constraints and indexes
     __table_args__ = (
@@ -631,7 +635,11 @@ class PipelineStep(Base):
     __tablename__ = "pipeline_steps"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    session_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("sessions.session_id"), nullable=False)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sessions.session_id", ondelete="CASCADE"),
+        nullable=False,
+    )
     step_name: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     detail: Mapped[str] = mapped_column(Text, nullable=False, server_default="")

@@ -12,7 +12,6 @@ MIGRATED from data_pipeline/dags/form_scraper_dag.py.
 All src.* imports updated to courtaccess.* package imports.
 """
 
-import contextlib
 import json
 import logging
 import os
@@ -129,7 +128,6 @@ def task_upload_forms_to_gcs(**context) -> dict:
     updated_forms: list[dict] = []
 
     for entry in forms:
-        form_id = entry.get("form_id")
         slug = entry.get("form_slug") or "form"
         versions = entry.get("versions") or []
         new_versions: list[dict] = []
@@ -160,8 +158,9 @@ def task_upload_forms_to_gcs(**context) -> dict:
                     logger.info("GCS blob already exists, skipping upload: gs://%s/%s", _GCS_BUCKET_FORMS, blob)
                     skipped += 1
                     new_ver[key] = uri
-                    with contextlib.suppress(Exception):
-                        p.unlink()
+                    # Do NOT unlink here — preprocess_data still needs the local file
+                    # for integrity checks. Deferred to task_cleanup_local_forms.
+                    gcs_path_map[local_path] = uri
                     continue
 
                 if not p.exists():
@@ -174,31 +173,20 @@ def task_upload_forms_to_gcs(**context) -> dict:
                 except Exception as exc:
                     failed += 1
                     logger.warning("GCS upload failed for %s → %s: %s", local_path, uri, exc)
+                    # Clear the local path so task_write_catalog_to_db never
+                    # persists a worker-local filesystem path to the DB.
+                    new_ver[key] = None
                     continue
 
                 uploaded += 1
                 gcs_path_map[local_path] = uri
                 new_ver[key] = uri
-
-                # Best-effort delete; if delete fails, keep going.
-                try:
-                    p.unlink()
-                except Exception as exc:
-                    logger.warning("Could not delete local file %s after upload: %s", local_path, exc)
-
-            # cleanup empty version dir: /opt/airflow/forms/{form_id}/v{version}
-            with contextlib.suppress(Exception):
-                version_dir = Path("/opt/airflow/forms") / str(form_id) / f"v{vnum}"
-                if version_dir.exists() and not any(version_dir.iterdir()):
-                    version_dir.rmdir()
+                # Do NOT unlink here — preprocess_data still needs the local file
+                # for integrity checks (magic bytes, size, %%EOF marker).
+                # Deletion is deferred to task_cleanup_local_forms which runs
+                # after task_preprocess_data completes.
 
             new_versions.append(new_ver)
-
-        # cleanup empty form dir: /opt/airflow/forms/{form_id}
-        with contextlib.suppress(Exception):
-            form_dir = Path("/opt/airflow/forms") / str(form_id)
-            if form_dir.exists() and not any(form_dir.iterdir()):
-                form_dir.rmdir()
 
         updated_entry = dict(entry)
         updated_entry["versions"] = new_versions
@@ -396,6 +384,50 @@ def task_preprocess_data(**context) -> dict:
     return report
 
 
+def task_cleanup_local_forms(**context) -> dict:
+    """
+    Task 2b — Delete local form files that were successfully uploaded to GCS.
+
+    Deferred from task_upload_forms_to_gcs so that task_preprocess_data() can
+    still read local files for integrity checks (magic bytes, size, %%EOF).
+    Reads the gcs_path_map pushed by upload_forms_to_gcs to know which local
+    paths are safe to remove.
+    """
+    ti = context["ti"]
+    gcs_path_map: dict = ti.xcom_pull(task_ids="upload_forms_to_gcs", key="gcs_path_map") or {}
+
+    if not gcs_path_map:
+        logger.info("No local files to clean up (gcs_path_map is empty).")
+        return {"deleted": 0, "failed": 0}
+
+    deleted = failed = 0
+    dirs_to_check: set[Path] = set()
+
+    for local_path in gcs_path_map:
+        p = Path(local_path)
+        dirs_to_check.add(p.parent)  # version dir
+        dirs_to_check.add(p.parent.parent)  # form dir
+        try:
+            p.unlink(missing_ok=True)
+            deleted += 1
+            logger.debug("Deleted local file: %s", local_path)
+        except Exception as exc:
+            failed += 1
+            logger.warning("Could not delete local file %s after GCS upload: %s", local_path, exc)
+
+    # Remove now-empty version and form directories (best-effort).
+    for directory in sorted(dirs_to_check, key=lambda d: len(d.parts), reverse=True):
+        try:
+            if directory.exists() and not any(directory.iterdir()):
+                directory.rmdir()
+                logger.debug("Removed empty directory: %s", directory)
+        except Exception as exc:
+            logger.warning("Could not remove directory %s: %s", directory, exc)
+
+    logger.info("Local form cleanup: deleted=%d failed=%d", deleted, failed)
+    return {"deleted": deleted, "failed": failed}
+
+
 def task_validate_catalog(**context) -> dict:
     """Task 3 — Validate the catalog JSON after preprocessing."""
     from collections import Counter
@@ -524,12 +556,19 @@ def _prev_active_forms_count() -> int | None:
 
     Priority:
       1) Last audit_logs entry for action_type='form_scrape_completed' → details.active_forms
-      2) Fallback: COUNT(*) from form_catalog where status='active'
+         (This is the fast, accurate path — written at the end of every successful scrape.)
+      2) Fallback: find the timestamp of the previous scrape run (the second-most-recent
+         'form_scrape_completed' audit row, or the most recent 'form_scrape_completed' row
+         whose created_at predates NOW() minus a small buffer), then count form_catalog rows
+         that were active AND had last_scraped_at BEFORE that timestamp.
+         This avoids counting rows written by the *current* run (which runs after
+         write_catalog_to_db has already updated last_scraped_at for this cycle).
     """
 
     try:
         engine = get_sync_engine()
         with engine.begin() as conn:
+            # ── Priority 1: audit_logs snapshot (written at end of prior run) ──
             row = conn.execute(
                 sa.text(
                     """
@@ -545,8 +584,43 @@ def _prev_active_forms_count() -> int | None:
             if row and row[0] is not None:
                 return int(row[0])
 
-            row2 = conn.execute(sa.text("SELECT COUNT(*) FROM form_catalog WHERE status = 'active'")).first()
-            return int(row2[0]) if row2 else None
+            # ── Priority 2: timestamp-gated COUNT as-of previous scrape run ──
+            # Find the created_at of the second-most-recent form_scrape_completed
+            # audit entry (i.e. the run before this one).  If only one entry
+            # exists, use its timestamp as the cutoff so we at least know rows
+            # that pre-date this run.
+            prev_ts_row = conn.execute(
+                sa.text(
+                    """
+                    SELECT created_at
+                    FROM audit_logs
+                    WHERE action_type = 'form_scrape_completed'
+                    ORDER BY created_at DESC
+                    OFFSET 1
+                    LIMIT 1
+                    """
+                )
+            ).first()
+
+            if prev_ts_row and prev_ts_row[0] is not None:
+                # Count rows that were already active before the previous run's
+                # scrape updated last_scraped_at.
+                count_row = conn.execute(
+                    sa.text(
+                        """
+                        SELECT COUNT(*)
+                        FROM form_catalog
+                        WHERE status = 'active'
+                          AND last_scraped_at < :prev_run_ts
+                        """
+                    ),
+                    {"prev_run_ts": prev_ts_row[0]},
+                ).first()
+                return int(count_row[0]) if count_row else None
+
+            # No prior audit entry at all — first ever run, no baseline available.
+            logger.info("No prior form_scrape_completed audit entry found — skipping drop check.")
+            return None
     except Exception as exc:
         logger.warning("Could not query previous active form count: %s", exc)
         return None
@@ -603,6 +677,24 @@ def task_detect_anomalies(**context) -> dict:
     )
     tiny_pdfs = []
     huge_pdfs = []
+
+    def _get_file_size(fp: str) -> int | None:
+        """Return byte size for a local path or gs:// URI, or None on failure."""
+        if fp.startswith("gs://"):
+            try:
+                b, bl = gcs.parse_gcs_uri(fp)
+                return gcs.get_blob_size(b, bl)
+            except Exception as exc:
+                logger.debug("Could not get GCS blob size for %s: %s", fp, exc)
+                return None
+        p = Path(fp)
+        if not p.exists():
+            return None
+        try:
+            return p.stat().st_size
+        except OSError:
+            return None
+
     for entry in forms:
         versions = entry.get("versions") or []
         latest = versions[0] if versions else None
@@ -611,19 +703,15 @@ def task_detect_anomalies(**context) -> dict:
 
         for key in ("file_path_original", "file_path_es", "file_path_pt"):
             fp = latest.get(key)
-            if not fp or not isinstance(fp, str) or fp.startswith("gs://"):
+            if not fp or not isinstance(fp, str):
                 continue
-            p = Path(fp)
-            if not p.exists():
-                continue
-            try:
-                size = p.stat().st_size
-            except OSError:
+            size = _get_file_size(fp)
+            if size is None:
                 continue
             if size < THRESHOLD_MIN_PDF_SIZE_BYTES:
-                tiny_pdfs.append({"file": str(p), "size_bytes": size})
+                tiny_pdfs.append({"file": fp, "size_bytes": size})
             elif size > THRESHOLD_MAX_PDF_SIZE_BYTES:
-                huge_pdfs.append({"file": str(p), "size_bytes": size})
+                huge_pdfs.append({"file": fp, "size_bytes": size})
     if tiny_pdfs:
         anomalies.append(
             {
@@ -929,6 +1017,7 @@ with DAG(
     t1b_gcs = PythonOperator(task_id="upload_forms_to_gcs", python_callable=task_upload_forms_to_gcs)
     t1c_db = PythonOperator(task_id="write_catalog_to_db", python_callable=task_write_catalog_to_db)
     t2_preprocess = PythonOperator(task_id="preprocess_data", python_callable=task_preprocess_data)
+    t2b_cleanup = PythonOperator(task_id="cleanup_local_forms", python_callable=task_cleanup_local_forms)
     t3_validate = PythonOperator(task_id="validate_catalog", python_callable=task_validate_catalog)
     t4_anomaly = PythonOperator(task_id="detect_anomalies", python_callable=task_detect_anomalies)
     t5_bias = PythonOperator(task_id="detect_bias", python_callable=task_detect_bias)
@@ -939,7 +1028,16 @@ with DAG(
         task_id="trigger_pretranslation",
         trigger_dag_id="form_pretranslation_dag",
     ).expand_kwargs(t6_prepare.output)
-    t7_summary = PythonOperator(task_id="log_summary", python_callable=task_log_summary)
+    t7_summary = PythonOperator(
+        task_id="log_summary",
+        python_callable=task_log_summary,
+        # "all_done" ensures this task runs even when trigger_pretranslation is
+        # SKIPPED (i.e. task_prepare_trigger_confs returned []).  Without this,
+        # the default "all_success" rule propagates the skip state, silently
+        # dropping the form_scrape_completed audit row and breaking the
+        # _prev_active_forms_count() baseline used by detect_anomalies.
+        trigger_rule="all_done",
+    )
     t8_manifest = PythonOperator(task_id="write_manifest", python_callable=task_write_manifest)
 
     (
@@ -947,6 +1045,7 @@ with DAG(
         >> t1b_gcs
         >> t1c_db
         >> t2_preprocess
+        >> t2b_cleanup
         >> t3_validate
         >> t4_anomaly
         >> t5_bias

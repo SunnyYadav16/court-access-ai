@@ -32,6 +32,7 @@ from typing import Annotated
 import httpx
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy import desc, func, select
+from sqlalchemy.orm import aliased
 
 from api.dependencies import CurrentUser, DBSession, require_verified_email
 from api.schemas.schemas import (
@@ -144,7 +145,16 @@ async def upload_document(
     start_time = now.isoformat()
 
     # ── Upload to GCS ────────────────────────────────────────────────────────
-    blob_name = f"{session_id}/{file.filename}"
+    import os
+    import re
+
+    # Sanitize filename to prevent path traversal
+    raw_name = os.path.basename(file.filename or "")
+    safe_name = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", raw_name)
+    if not safe_name or safe_name.startswith("."):
+        safe_name = f"document.{original_format}"
+
+    blob_name = f"{session_id}/{safe_name}"
     gcs_path = f"gs://{settings.gcs_bucket_uploads}/{blob_name}"
 
     try:
@@ -163,15 +173,19 @@ async def upload_document(
         ) from exc
 
     # ── Insert session row ───────────────────────────────────────────────────
-    # status='active' is the only valid starting value per the CHECK constraint:
-    # ('active', 'processing', 'completed', 'failed', 'ended')
+    # status='processing' matches the TranslationRequest status inserted below
+    # so GET /documents, GET /{session_id}, and DELETE all see a consistent state
+    # immediately.  Starting as 'active' would cause the polling endpoints to
+    # return PENDING even though the DAG has already been queued, and would
+    # allow DELETE to succeed while the DAG is running (the guard checks for
+    # 'processing').
     session_obj = SessionModel(
         session_id=session_id,
         user_id=user.user_id,
         type="document",
         target_language=nllb_target,
         input_file_gcs_path=gcs_path,
-        status="active",
+        status="processing",
         created_at=now,
     )
     db.add(session_obj)
@@ -193,7 +207,7 @@ async def upload_document(
         user.user_id,
         action_type="document_upload",
         details={
-            "filename": file.filename,
+            "filename": safe_name,
             "target_language": lang,
             "gcs_path": gcs_path,
             "file_size_bytes": len(contents),
@@ -221,7 +235,7 @@ async def upload_document(
                         "gcs_input_path": gcs_path,
                         "target_lang": lang,
                         "nllb_target": nllb_target,
-                        "filename": file.filename,
+                        "filename": safe_name,
                         "start_time": start_time,
                         "original_format": original_format,
                     }
@@ -236,9 +250,23 @@ async def upload_document(
                 resp.json().get("dag_run_id"),
             )
     except Exception as exc:
-        # Log but don't fail — the translation_request row is already in the DB
-        # with status='processing'. An admin can re-trigger from the Airflow UI.
+        # Airflow is unreachable or rejected the trigger.  Mark both the
+        # TranslationRequest and Session as 'failed' so the row is never
+        # permanently stuck as 'processing', then surface a 502 to the caller.
         logger.error("Airflow trigger failed for session=%s: %s", session_id, exc)
+        err_msg = f"DAG trigger failed: {exc}"
+        request_obj.status = "failed"
+        request_obj.error_message = err_msg
+        session_obj.status = "failed"
+        try:
+            await db.commit()
+        except Exception as commit_exc:
+            logger.error("Failed to persist trigger-failure state for session=%s: %s", session_id, commit_exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="File uploaded successfully but the translation pipeline could not be started. "
+            "Please try again or contact support.",
+        ) from exc
 
     return DocumentResponse(
         session_id=session_id,
@@ -388,10 +416,28 @@ async def list_documents(
     total = count_result.scalar_one()
 
     # ── Paginated rows ───────────────────────────────────────────────────────
+    # Use a window-function subquery to pick only the *latest* TranslationRequest
+    # per session_id.  A plain JOIN would return multiple rows per session when
+    # retranslate creates a second TranslationRequest, causing len(items) != total.
+    ranked_tr = select(
+        TranslationRequest,
+        func.row_number()
+        .over(
+            partition_by=TranslationRequest.session_id,
+            order_by=desc(TranslationRequest.created_at),
+        )
+        .label("rn"),
+    ).subquery("ranked_tr")
+    latest_tr = aliased(TranslationRequest, ranked_tr)
+
     result = await db.execute(
-        select(SessionModel, TranslationRequest)
-        .join(TranslationRequest, TranslationRequest.session_id == SessionModel.session_id)
-        .where(SessionModel.user_id == user.user_id, SessionModel.type == "document")
+        select(SessionModel, latest_tr)
+        .join(ranked_tr, ranked_tr.c.session_id == SessionModel.session_id)
+        .where(
+            SessionModel.user_id == user.user_id,
+            SessionModel.type == "document",
+            ranked_tr.c.rn == 1,
+        )
         .order_by(desc(SessionModel.created_at))
         .offset((page - 1) * page_size)
         .limit(page_size)
@@ -607,7 +653,21 @@ async def retranslate_document(
                 resp.json().get("dag_run_id"),
             )
     except Exception as exc:
+        # Same pattern as upload_document: mark failed so the row is never
+        # left permanently stuck as 'processing'.
         logger.error("Airflow retranslate trigger failed for session=%s: %s", session_id, exc)
+        err_msg = f"DAG retranslate trigger failed: {exc}"
+        request_obj.status = "failed"
+        request_obj.error_message = err_msg
+        try:
+            await db.commit()
+        except Exception as commit_exc:
+            logger.error("Failed to persist retranslate trigger-failure for session=%s: %s", session_id, commit_exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Re-translation request saved but the pipeline could not be started. "
+            "Please try again or contact support.",
+        ) from exc
 
     return DocumentResponse(
         session_id=session_id,

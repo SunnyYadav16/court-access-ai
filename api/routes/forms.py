@@ -117,13 +117,22 @@ async def trigger_form_scraper(
             detail="Airflow trigger response did not include dag_run_id.",
         )
 
-    await write_audit(
-        db,
-        user_id=user.user_id,
-        action_type="form_scrape_triggered",
-        details={"dag_run_id": dag_run_id},
-    )
-    await db.commit()
+    # Best-effort audit — the DAG has already been triggered successfully.
+    # A DB failure here must not surface as a 500 to the client.
+    try:
+        await write_audit(
+            db,
+            user_id=user.user_id,
+            action_type="form_scrape_triggered",
+            details={"dag_run_id": dag_run_id},
+        )
+        await db.commit()
+    except Exception as exc:
+        logger.error(
+            "Audit write failed for form_scrape_triggered (dag_run_id=%s): %s",
+            dag_run_id,
+            exc,
+        )
 
     return TriggerScraperResponse(
         dag_run_id=dag_run_id,
@@ -235,10 +244,12 @@ async def get_form(form_id: uuid.UUID, db: DBSession) -> FormResponse:
     form = await db_queries_forms.get_form_by_id(db, form_id)
     if not form:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Form not found")
-    # Generate signed URLs for the latest version only (versions[0]) as per spec.
+    # Generate signed URLs for the latest version only.
+    # Use max() by version number — versions[0] is insertion-order dependent
+    # and may not be the highest version when the ORM loads the relationship.
     versions = getattr(form, "versions", []) or []
     if versions:
-        v0 = versions[0]
+        latest = max(versions, key=lambda v: v.version)
 
         def _sign(path: str | None) -> str | None:
             if not path or not isinstance(path, str) or not path.startswith("gs://"):
@@ -251,9 +262,9 @@ async def get_form(form_id: uuid.UUID, db: DBSession) -> FormResponse:
                 settings.gcp_service_account_json,
             )
 
-        v0.signed_url_original = _sign(getattr(v0, "file_path_original", None))
-        v0.signed_url_es = _sign(getattr(v0, "file_path_es", None))
-        v0.signed_url_pt = _sign(getattr(v0, "file_path_pt", None))
+        latest.signed_url_original = _sign(getattr(latest, "file_path_original", None))
+        latest.signed_url_es = _sign(getattr(latest, "file_path_es", None))
+        latest.signed_url_pt = _sign(getattr(latest, "file_path_pt", None))
 
     return form
 

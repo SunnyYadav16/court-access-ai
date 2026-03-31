@@ -223,6 +223,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      # Wait for airflow-init to finish before running alembic migrations, so
+      # the two init processes do not race to write the schema simultaneously.
+      airflow-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   # ── Airflow: API Server (UI + REST API) ────────────────────────────────────

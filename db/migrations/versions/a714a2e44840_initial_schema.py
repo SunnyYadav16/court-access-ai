@@ -279,13 +279,18 @@ def upgrade() -> None:
     op.create_index("idx_audit_logs_session_id", "audit_logs", ["session_id"], unique=False)
     op.create_index("idx_audit_logs_user_id", "audit_logs", ["user_id"], unique=False)
     op.execute("""
-    INSERT INTO roles (role_name, description) VALUES
-    ('public', 'Default role, basic document translation and form access'),
-    ('court_official', 'Real-time speech translation access'),
-    ('interpreter', 'Side-by-side translation review and correction'),
-    ('admin', 'Full system access, user management, monitoring')
+    INSERT INTO roles (role_id, role_name, description) VALUES
+    (1, 'public',         'Default role, basic document translation and form access'),
+    (2, 'court_official', 'Real-time speech translation access'),
+    (3, 'interpreter',    'Side-by-side translation review and correction'),
+    (4, 'admin',          'Full system access, user management, monitoring')
     ON CONFLICT (role_name) DO NOTHING
     """)
+
+    # Advance the sequence past the highest explicitly-seeded role_id so that
+    # future INSERT statements (without an explicit role_id) never collide.
+    # is_called=true means the next nextval() call returns MAX(role_id)+1.
+    op.execute("SELECT setval('roles_role_id_seq', (SELECT MAX(role_id) FROM roles), true)")
 
     op.execute("""
        INSERT INTO users (user_id, email, name, role_id, firebase_uid, auth_provider, email_verified, mfa_enabled)
