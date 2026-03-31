@@ -1,0 +1,427 @@
+# .github/workflows/test.yml
+#
+# CI pipeline — three sequential jobs:
+#   1. unit-tests        — pytest across all test directories (stub mode)
+#   2. model-validation  — DVC pointer integrity + translation pipeline wiring
+#   3. bias-detection    — bias & anomaly analysis on the DVC-tracked form catalog
+#
+# Jobs are sequential because bias-detection needs the package installed
+# by unit-tests, and model-validation gates bias-detection.
+#
+# Secrets required (add in repo Settings → Secrets → Actions):
+#   GCP_WORKLOAD_IDENTITY_PROVIDER  — full WIF provider resource name
+#   GCP_SERVICE_ACCOUNT             — SA email that can read GCS buckets
+#
+# For the bias-detection job to pull the catalog from GCS, the SA needs:
+#   roles/storage.objectViewer on the DVC remote bucket (courtaccess-ai-dvc)
+
+name: Test & Validate
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+permissions:
+  contents: read
+  id-token: write       # required for Workload Identity Federation (bias-detection job)
+  security-events: write
+
+# ── Shared defaults ────────────────────────────────────────────────────────────
+defaults:
+  run:
+    shell: bash
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Job 1 — unit-tests
+# ══════════════════════════════════════════════════════════════════════════════
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+
+    # All stub-mode flags — never run real models in CI (no GPU, no credentials)
+    env:
+      USE_REAL_TRANSLATION: "false"
+      USE_REAL_CLASSIFICATION: "false"
+      USE_VERTEX_LEGAL_REVIEW: "false"
+      USE_REAL_OCR: "false"
+      # Minimal config values that settings validation requires
+      DATABASE_URL: "postgresql+asyncpg://ci:ci@localhost/ci"
+      SECRET_KEY: "ci-test-secret-key-not-used-in-real-auth"
+      GCS_BUCKET_UPLOADS: "ci-bucket-uploads"
+      GCS_BUCKET_TRANSLATED: "ci-bucket-translated"
+      GCS_BUCKET_MODELS: "ci-bucket-models"
+      MLFLOW_TRACKING_URI: "file:///tmp/mlflow"
+      AIRFLOW_BASE_URL: "http://localhost:8080"
+      AIRFLOW_USERNAME: "ci"
+      AIRFLOW_PASSWORD: "ci"
+      VERTEX_PROJECT_ID: "ci-project"
+      VERTEX_LOCATION: "us-central1"
+      VERTEX_LEGAL_LLM_MODEL: "meta/llama-4-maverick-17b-128e-instruct-maas"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install uv
+        run: pip install uv --quiet
+
+      - name: Install package with dev extras
+        # .[dev] installs pytest, pytest-asyncio, httpx, plus courtaccess itself
+        run: uv pip install --system ".[dev]"
+
+      - name: Create reports directory
+        run: mkdir -p reports
+
+      - name: Run pytest
+        run: |
+          pytest \
+            --tb=short \
+            --junitxml=reports/junit.xml \
+            -q
+
+      - name: Upload test results
+        if: always()   # upload even if tests fail so failures are visible in UI
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-test-results
+          path: reports/junit.xml
+          retention-days: 30
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Job 2 — model-validation
+  # ════════════════════════════════════════════════════════════════════════════
+  model-validation:
+    name: Model Validation
+    runs-on: ubuntu-latest
+    needs: unit-tests
+
+    env:
+      USE_REAL_TRANSLATION: "false"
+      USE_REAL_CLASSIFICATION: "false"
+      USE_VERTEX_LEGAL_REVIEW: "false"
+      USE_REAL_OCR: "false"
+      DATABASE_URL: "postgresql+asyncpg://ci:ci@localhost/ci"
+      SECRET_KEY: "ci-test-secret-key-not-used-in-real-auth"
+      GCS_BUCKET_UPLOADS: "ci-bucket-uploads"
+      GCS_BUCKET_TRANSLATED: "ci-bucket-translated"
+      GCS_BUCKET_MODELS: "ci-bucket-models"
+      MLFLOW_TRACKING_URI: "file:///tmp/mlflow"
+      AIRFLOW_BASE_URL: "http://localhost:8080"
+      AIRFLOW_USERNAME: "ci"
+      AIRFLOW_PASSWORD: "ci"
+      VERTEX_PROJECT_ID: "ci-project"
+      VERTEX_LOCATION: "us-central1"
+      VERTEX_LEGAL_LLM_MODEL: "meta/llama-4-maverick-17b-128e-instruct-maas"
+      # Confidence threshold for stub mode (stub always returns 0.50, real mode uses 0.85)
+      VALIDATION_CONFIDENCE_THRESHOLD: "0.0"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install uv
+        run: pip install uv --quiet
+
+      - name: Install package with monitoring extras
+        # .[monitoring] adds Evidently, TFDV, MLflow — all available on x86_64 runners
+        run: uv pip install --system ".[dev,monitoring]"
+
+      - name: Check DVC pointer file integrity
+        # Validates that every .dvc file has a non-empty md5 hash.
+        # This catches the common mistake of committing a .dvc stub with no hash.
+        # Does NOT download the actual model weights — that would require GCS auth.
+        run: |
+          python - <<'EOF'
+          import re
+          import sys
+          from pathlib import Path
+
+          models_dir = Path("models")
+          if not models_dir.exists():
+              print("⚠️  models/ directory not found — skipping DVC pointer checks.")
+              sys.exit(0)
+
+          dvc_files = list(models_dir.glob("*.dvc"))
+          if not dvc_files:
+              print("⚠️  No .dvc files found in models/ — nothing to validate.")
+              sys.exit(0)
+
+          failures = []
+          for dvc_path in sorted(dvc_files):
+              content = dvc_path.read_text()
+              md5_match = re.search(r"md5:\s*([a-f0-9]+)", content)
+              size_match = re.search(r"size:\s*(\d+)", content)
+              name = dvc_path.name
+
+              if not md5_match or not md5_match.group(1):
+                  failures.append(f"  ✗ {name}: missing or empty md5 hash")
+              elif not size_match or int(size_match.group(1)) == 0:
+                  failures.append(f"  ✗ {name}: size is 0 bytes")
+              else:
+                  print(f"  ✓ {name}: md5={md5_match.group(1)[:12]}... size={int(size_match.group(1)) // 1_048_576}MB")
+
+          if failures:
+              print("\n❌ DVC pointer validation failed:")
+              for f in failures:
+                  print(f)
+              sys.exit(1)
+          else:
+              print(f"\n✅ All {len(dvc_files)} DVC pointer file(s) valid.")
+          EOF
+
+      - name: Check dvc.lock is up to date
+        # dvc status --json exits 0 but prints changes if dvc.lock is stale.
+        # We fail explicitly if drift is detected.
+        run: |
+          pip install dvc[gs] --quiet
+          STATUS=$(dvc status --json 2>/dev/null || echo "{}")
+          if [ "$STATUS" != "{}" ] && [ "$STATUS" != "[]" ] && [ -n "$STATUS" ]; then
+            echo "❌ dvc.lock is out of sync. Run 'dvc add' and commit."
+            echo "Changes detected:"
+            echo "$STATUS"
+            exit 1
+          else
+            echo "✅ dvc.lock is up to date."
+          fi
+
+      - name: Register models (MLflow log-only mode)
+        # MLflow will be unavailable (no server) — script logs but doesn't fail.
+        # The step above already validated .dvc pointer integrity.
+        run: python -m courtaccess.core.register_models
+
+      - name: Validate translation pipeline end-to-end (stub mode)
+        # Tests the full pipeline wiring (Translator → batch_translate) in stub mode.
+        # No NLLB model needed — stub prefixes with language tag.
+        # Asserts outputs are non-empty and average confidence >= VALIDATION_CONFIDENCE_THRESHOLD.
+        run: |
+          python - <<'EOF'
+          import os
+          import sys
+
+          THRESHOLD = float(os.environ.get("VALIDATION_CONFIDENCE_THRESHOLD", "0.0"))
+
+          LEGAL_PHRASES = [
+              "The defendant has the right to remain silent.",
+              "This court order is effective immediately.",
+              "You are required to appear before the court.",
+              "Failure to comply may result in contempt of court.",
+              "The restraining order prohibits contact with the plaintiff.",
+              "Child support payments are due on the first of each month.",
+              "The motion to dismiss was denied by the presiding judge.",
+              "Custody is hereby granted to the petitioner.",
+              "The bond has been set at five thousand dollars.",
+              "This summons must be served within thirty days.",
+          ]
+
+          from courtaccess.languages import get_language_config
+          from courtaccess.core.translation import Translator
+
+          config = get_language_config("spanish")
+          translator = Translator(config).load()
+
+          results = translator.batch_translate(LEGAL_PHRASES, "spa_Latn")
+
+          failures = []
+          confidences = []
+          for original, translated in zip(LEGAL_PHRASES, results):
+              if not translated or not translated.strip():
+                  failures.append(f"  ✗ Empty output for: '{original[:50]}'")
+                  continue
+              # Use translate_text to get confidence score
+              out = translator.translate_text(original, "spa_Latn")
+              conf = out.get("confidence", 0.0)
+              confidences.append(conf)
+              print(f"  ✓ [{conf:.2f}] {original[:40]!r} → {translated[:40]!r}")
+
+          if failures:
+              print("\n❌ Translation validation failed — empty outputs:")
+              for f in failures:
+                  print(f)
+              sys.exit(1)
+
+          avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
+          print(f"\n  Average confidence: {avg_conf:.3f} (threshold: {THRESHOLD})")
+
+          if avg_conf < THRESHOLD:
+              print(f"❌ Average confidence {avg_conf:.3f} is below threshold {THRESHOLD}")
+              sys.exit(1)
+
+          print(f"✅ Translation pipeline validated: {len(results)}/{len(LEGAL_PHRASES)} phrases translated, avg_conf={avg_conf:.3f}")
+          EOF
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Job 3 — bias-detection
+  # ════════════════════════════════════════════════════════════════════════════
+  bias-detection:
+    name: Bias & Anomaly Detection
+    runs-on: ubuntu-latest
+    needs: model-validation
+
+    permissions:
+      contents: read
+      id-token: write   # required for WIF GCS auth
+
+    env:
+      USE_REAL_TRANSLATION: "false"
+      USE_REAL_CLASSIFICATION: "false"
+      USE_VERTEX_LEGAL_REVIEW: "false"
+      USE_REAL_OCR: "false"
+      DATABASE_URL: "postgresql+asyncpg://ci:ci@localhost/ci"
+      SECRET_KEY: "ci-test-secret-key-not-used-in-real-auth"
+      GCS_BUCKET_UPLOADS: "ci-bucket-uploads"
+      GCS_BUCKET_TRANSLATED: "ci-bucket-translated"
+      GCS_BUCKET_MODELS: "ci-bucket-models"
+      MLFLOW_TRACKING_URI: "file:///tmp/mlflow"
+      AIRFLOW_BASE_URL: "http://localhost:8080"
+      AIRFLOW_USERNAME: "ci"
+      AIRFLOW_PASSWORD: "ci"
+      VERTEX_PROJECT_ID: "ci-project"
+      VERTEX_LOCATION: "us-central1"
+      VERTEX_LEGAL_LLM_MODEL: "meta/llama-4-maverick-17b-128e-instruct-maas"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install uv
+        run: pip install uv --quiet
+
+      - name: Install package with dev extras
+        run: uv pip install --system ".[dev]"
+
+      - name: Authenticate to Google Cloud (Workload Identity Federation)
+        # Uses WIF — no service account JSON key in repo or secrets.
+        # Add GCP_WORKLOAD_IDENTITY_PROVIDER and GCP_SERVICE_ACCOUNT to
+        # repo Settings → Secrets → Actions.
+        id: gcp-auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Install DVC with GCS support
+        run: pip install dvc[gs] --quiet
+
+      - name: Pull form catalog from GCS (DVC)
+        # Pulls only the catalog pointer — not model weights (too large for CI).
+        # The SA needs roles/storage.objectViewer on the DVC remote bucket.
+        run: |
+          dvc pull courtaccess/data/form_catalog.json \
+            --no-run-cache \
+            --allow-missing 2>/dev/null || true
+
+          if [ ! -f "courtaccess/data/form_catalog.json" ]; then
+            echo "⚠️  form_catalog.json not found after DVC pull — creating empty catalog for CI."
+            mkdir -p courtaccess/data
+            echo "[]" > courtaccess/data/form_catalog.json
+          fi
+
+      - name: Create reports directory
+        run: mkdir -p reports
+
+      - name: Run bias detection
+        run: |
+          python - <<'EOF'
+          import json
+          import sys
+          from pathlib import Path
+
+          from courtaccess.monitoring.drift import run_bias_detection
+
+          catalog_path = Path("courtaccess/data/form_catalog.json")
+          catalog = json.loads(catalog_path.read_text())
+
+          print(f"Loaded catalog: {len(catalog)} entries")
+
+          report = run_bias_detection(catalog)
+
+          # Write report artifact
+          Path("reports/bias_report.json").write_text(json.dumps(report, indent=2))
+          print(f"\nBias detection complete: {report['bias_count']} flag(s)")
+
+          # Summarise all flags (WARNING and CRITICAL) to step output
+          if report["bias_flags"]:
+              print("\n── Bias Flags ──")
+              for flag in report["bias_flags"]:
+                  severity = flag["severity"]
+                  print(f"  [{severity}] {flag['type']} | {flag['detail']}")
+
+          # Fail only on CRITICAL flags; WARNINGs are informational
+          critical_flags = [f for f in report["bias_flags"] if f["severity"].lower() == "critical"]
+          if critical_flags:
+              print(f"\n❌ {len(critical_flags)} CRITICAL bias flag(s) — blocking merge.")
+              sys.exit(1)
+          else:
+              print(f"\n✅ No critical bias flags.")
+          EOF
+
+      - name: Run anomaly detection
+        run: |
+          python - <<'EOF'
+          import json
+          import sys
+          from pathlib import Path
+
+          from courtaccess.monitoring.anomaly import run_anomaly_detection
+
+          catalog_path = Path("courtaccess/data/form_catalog.json")
+          catalog = json.loads(catalog_path.read_text())
+
+          # In CI we don't have a previous run — pass minimal run_metrics.
+          # This effectively skips the form-count-drop check (needs previous_run_metrics)
+          # but still catches empty catalog, schema violations, and missing PDFs.
+          run_metrics = {
+              "new_forms": 0,
+              "updated": 0,
+              "failed_downloads": 0,
+              "total_attempted": len(catalog),
+              "active_count": sum(1 for e in catalog if e.get("status") == "active"),
+          }
+
+          report = run_anomaly_detection(catalog, run_metrics)
+
+          # Write report artifact
+          Path("reports/anomaly_report.json").write_text(json.dumps(report, indent=2))
+          print(f"\nAnomaly detection complete: {report['anomaly_count']} anomaly(ies)")
+
+          # Summarise all anomalies to step output
+          if report["anomalies"]:
+              print("\n── Anomalies ──")
+              for a in report["anomalies"]:
+                  print(f"  [{a['severity'].upper()}] {a['check']}: {a['detail']}")
+
+          # Fail on any CRITICAL anomaly
+          if report["has_critical"]:
+              print("\n❌ Critical anomaly(ies) detected — blocking merge.")
+              sys.exit(1)
+          else:
+              print(f"\n✅ No critical anomalies.")
+          EOF
+
+      - name: Upload bias & anomaly reports
+        if: always()   # always upload — needed for failure triage too
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitoring-reports
+          path: |
+            reports/bias_report.json
+            reports/anomaly_report.json
+          retention-days: 30

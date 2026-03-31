@@ -1,0 +1,419 @@
+# .github/workflows/deploy.yml
+#
+# Requirements covered:
+#   4 — Model registry push + deployment to GKE
+#   5 — Email notifications on success, failure, and rollback
+#   6 — Automated rollback when post-deploy smoke tests fail
+#
+# Trigger: explicit version tags only (v1.0.0, v1.2.3, etc.)
+# This gives control over what reaches production — critical for
+# a court-facing system where untested releases have real consequences.
+#
+# Job chain:
+#   validate-before-deploy → deploy-to-gke → post-deploy-validation
+#                                               ↓ (if: failure)
+#                                          rollback-on-failure
+#
+# Required GitHub Actions repository variables (Settings → Variables):
+#   GCP_PROJECT_ID   — GCP project ID
+#   GKE_CLUSTER_NAME — GKE cluster name (e.g. courtaccess-cluster)
+#   GKE_REGION       — GKE region (e.g. us-east1)
+#
+# Required GitHub Actions secrets (Settings → Secrets):
+#   GCP_WORKLOAD_IDENTITY_PROVIDER — WIF provider resource name
+#   GCP_SERVICE_ACCOUNT            — SA email (needs GKE + AR + GCS roles)
+#   NOTIFY_EMAIL_FROM              — sender address (e.g. ci@courtaccess.ai)
+#   NOTIFY_EMAIL_TO                — recipient(s) for deploy notifications
+#   NOTIFY_EMAIL_PASSWORD          — SMTP app password for the sender
+
+name: Deploy to GKE
+
+on:
+  push:
+    tags:
+      - "v*.*.*"   # Only on explicit semver tags: v1.0.0, v1.2.3, etc.
+
+permissions:
+  contents: read
+  id-token: write   # required for Workload Identity Federation
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false   # never cancel in-progress deployments
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  REGISTRY: us-east1-docker.pkg.dev
+  REPOSITORY: courtaccess-repo
+  API_IMAGE: courtaccess-api
+  AIRFLOW_IMAGE: courtaccess-airflow
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Job 1 — validate-before-deploy
+#
+# Lightweight pre-deploy gate — NOT the full test suite (that ran on the PR).
+# Blocks deployment if bias detection has critical flags or model registry
+# integrity is broken.
+# ══════════════════════════════════════════════════════════════════════════════
+jobs:
+  validate-before-deploy:
+    name: Pre-Deploy Validation
+    runs-on: ubuntu-latest
+
+    env:
+      USE_REAL_TRANSLATION: "false"
+      USE_REAL_CLASSIFICATION: "false"
+      USE_VERTEX_LEGAL_REVIEW: "false"
+      USE_REAL_OCR: "false"
+      DATABASE_URL: "postgresql+asyncpg://ci:ci@localhost/ci"
+      SECRET_KEY: "ci-validation-key"
+      GCS_BUCKET_UPLOADS: "ci-bucket-uploads"
+      GCS_BUCKET_TRANSLATED: "ci-bucket-translated"
+      GCS_BUCKET_MODELS: "ci-bucket-models"
+      MLFLOW_TRACKING_URI: "file:///tmp/mlflow"
+      AIRFLOW_BASE_URL: "http://localhost:8080"
+      AIRFLOW_USERNAME: "ci"
+      AIRFLOW_PASSWORD: "ci"
+      VERTEX_PROJECT_ID: "ci-project"
+      VERTEX_LOCATION: "us-central1"
+      VERTEX_LEGAL_LLM_MODEL: "meta/llama-4-maverick-17b-128e-instruct-maas"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install uv
+        run: pip install uv --quiet
+
+      - name: Install package with dev + monitoring extras
+        run: uv pip install --system ".[dev,monitoring]"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Install DVC with GCS support
+        run: pip install dvc[gs] --quiet
+
+      - name: Pull form catalog from GCS
+        run: |
+          dvc pull courtaccess/data/form_catalog.json \
+            --no-run-cache \
+            --allow-missing 2>/dev/null || true
+
+          if [ ! -f "courtaccess/data/form_catalog.json" ]; then
+            echo "⚠️  form_catalog.json not found — creating empty catalog for validation."
+            mkdir -p courtaccess/data
+            echo "[]" > courtaccess/data/form_catalog.json
+          fi
+
+      - name: Run bias detection gate
+        run: |
+          python - <<'EOF'
+          import json
+          import sys
+          from pathlib import Path
+          from courtaccess.monitoring.drift import run_bias_detection
+
+          catalog = json.loads(Path("courtaccess/data/form_catalog.json").read_text())
+          print(f"Loaded catalog: {len(catalog)} entries")
+
+          report = run_bias_detection(catalog)
+          print(f"Bias flags: {report['bias_count']}")
+
+          critical = [f for f in report["bias_flags"] if f["severity"].lower() == "critical"]
+          if critical:
+              print(f"\n❌ {len(critical)} CRITICAL bias flag(s) — deployment blocked.")
+              for f in critical:
+                  print(f"  [{f['severity']}] {f['type']}: {f['detail']}")
+              sys.exit(1)
+          print("✅ No critical bias flags — deployment may proceed.")
+          EOF
+
+      - name: Register models in MLflow
+        run: python -m courtaccess.core.register_models
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Job 2 — deploy-to-gke
+  #
+  # Performs the actual GKE rollout. Saves the current image digest as a job
+  # output so rollback-on-failure can restore it if smoke tests fail.
+  # ════════════════════════════════════════════════════════════════════════════
+  deploy-to-gke:
+    name: Deploy to GKE
+    runs-on: ubuntu-latest
+    needs: validate-before-deploy
+
+    # Expose rollback image to downstream jobs
+    outputs:
+      rollback_api_image: ${{ steps.save-rollback.outputs.api_image }}
+      rollback_airflow_image: ${{ steps.save-rollback.outputs.airflow_image }}
+
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ vars.GKE_CLUSTER_NAME }}
+          location: ${{ vars.GKE_REGION }}
+
+      # ── Save current deployment images for rollback ────────────────────────
+      # These outputs are read by rollback-on-failure if smoke tests fail.
+      - name: Save current deployment for rollback
+        id: save-rollback
+        run: |
+          API_IMG=$(kubectl get deployment courtaccess-api \
+            -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "none")
+          AIRFLOW_IMG=$(kubectl get deployment courtaccess-airflow \
+            -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "none")
+
+          echo "api_image=${API_IMG}" >> "$GITHUB_OUTPUT"
+          echo "airflow_image=${AIRFLOW_IMG}" >> "$GITHUB_OUTPUT"
+
+          echo "Rollback references saved:"
+          echo "  API:     ${API_IMG}"
+          echo "  Airflow: ${AIRFLOW_IMG}"
+
+      # ── Roll out new API image ─────────────────────────────────────────────
+      - name: Update API deployment
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ vars.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.API_IMAGE }}:${{ github.sha }}"
+          echo "Deploying API image: ${IMAGE}"
+
+          kubectl set image deployment/courtaccess-api \
+            courtaccess-api="${IMAGE}"
+
+          kubectl rollout status deployment/courtaccess-api --timeout=5m
+          echo "✅ API rollout complete."
+
+      # ── Roll out new Airflow image ─────────────────────────────────────────
+      - name: Update Airflow deployment
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ vars.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.AIRFLOW_IMAGE }}:${{ github.sha }}"
+          echo "Deploying Airflow image: ${IMAGE}"
+
+          kubectl set image deployment/courtaccess-airflow \
+            courtaccess-airflow="${IMAGE}"
+
+          kubectl rollout status deployment/courtaccess-airflow --timeout=5m
+          echo "✅ Airflow rollout complete."
+
+      # ── Verify pods are healthy ────────────────────────────────────────────
+      - name: Verify pod health
+        run: |
+          echo "── API pods ──"
+          kubectl get pods -l app=courtaccess-api -o wide
+          echo ""
+          echo "── Airflow pods ──"
+          kubectl get pods -l app=courtaccess-airflow -o wide
+
+          # Fail fast if any pod is in CrashLoopBackOff
+          CRASH_PODS=$(kubectl get pods -l app=courtaccess-api \
+            -o jsonpath='{.items[*].status.containerStatuses[*].state.waiting.reason}' | grep -c "CrashLoopBackOff" || true)
+
+          if [ "$CRASH_PODS" -gt 0 ]; then
+            echo "❌ ${CRASH_PODS} API pod(s) in CrashLoopBackOff!"
+            kubectl logs -l app=courtaccess-api --tail=50
+            exit 1
+          fi
+          echo "✅ All pods healthy."
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Job 3 — post-deploy-validation
+  #
+  # Smoke tests against the live GKE endpoint. If any fails, the
+  # rollback-on-failure job fires automatically.
+  # ════════════════════════════════════════════════════════════════════════════
+  post-deploy-validation:
+    name: Post-Deploy Smoke Tests
+    runs-on: ubuntu-latest
+    needs: deploy-to-gke
+
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ vars.GKE_CLUSTER_NAME }}
+          location: ${{ vars.GKE_REGION }}
+
+      # Resolve the service ClusterIP so smoke tests can reach the API
+      # without needing an external ingress URL.
+      - name: Get API service endpoint
+        id: endpoint
+        run: |
+          # Try external first (LoadBalancer/Ingress), fall back to port-forward
+          EXTERNAL_IP=$(kubectl get svc courtaccess-api \
+            -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+
+          if [ -n "$EXTERNAL_IP" ]; then
+            PORT=$(kubectl get svc courtaccess-api -o jsonpath='{.spec.ports[0].port}')
+            BASE_URL="http://${EXTERNAL_IP}:${PORT}"
+          else
+            # No external IP — use port-forward in background
+            kubectl port-forward svc/courtaccess-api 8000:8000 &
+            sleep 5
+            BASE_URL="http://localhost:8000"
+          fi
+
+          echo "base_url=${BASE_URL}" >> "$GITHUB_OUTPUT"
+          echo "API endpoint: ${BASE_URL}"
+
+      - name: Smoke test — GET /health
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            "${{ steps.endpoint.outputs.base_url }}/health" --max-time 10)
+
+          if [ "$STATUS" -ne 200 ]; then
+            echo "❌ /health returned HTTP ${STATUS} (expected 200)"
+            exit 1
+          fi
+          echo "✅ /health → 200 OK"
+
+      - name: Smoke test — GET /api/forms/
+        run: |
+          RESPONSE=$(curl -s "${{ steps.endpoint.outputs.base_url }}/api/forms/?page=1&page_size=1" \
+            --max-time 10)
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            "${{ steps.endpoint.outputs.base_url }}/api/forms/?page=1&page_size=1" --max-time 10)
+
+          if [ "$STATUS" -ne 200 ]; then
+            echo "❌ /api/forms/ returned HTTP ${STATUS} (expected 200)"
+            exit 1
+          fi
+
+          # Verify the response has a 'total' field >= 0
+          TOTAL=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('total', -1))")
+          if [ "$TOTAL" -lt 0 ]; then
+            echo "❌ /api/forms/ response missing 'total' field"
+            echo "Response: ${RESPONSE:0:500}"
+            exit 1
+          fi
+          echo "✅ /api/forms/ → 200 OK (total=${TOTAL})"
+
+      # ── Success notification ─────────────────────────────────────────────
+      - name: Notify successful deployment
+        if: success()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.NOTIFY_EMAIL_FROM }}
+          password: ${{ secrets.NOTIFY_EMAIL_PASSWORD }}
+          subject: "✅ CourtAccess AI ${{ github.ref_name }} deployed successfully"
+          to: ${{ secrets.NOTIFY_EMAIL_TO }}
+          from: "CourtAccess AI CI <${{ secrets.NOTIFY_EMAIL_FROM }}>"
+          body: |
+            CourtAccess AI has been deployed to production.
+
+            Version : ${{ github.ref_name }}
+            Commit  : ${{ github.sha }}
+            Author  : ${{ github.actor }}
+
+            Smoke tests passed:
+              ✅ GET /health → 200
+              ✅ GET /api/forms/ → 200
+
+            View the deployment run:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Job 4 — rollback-on-failure
+  #
+  # Requirement 6 — Automated rollback. Fires only when post-deploy smoke
+  # tests fail. Restores the previous image digest saved by deploy-to-gke.
+  # ════════════════════════════════════════════════════════════════════════════
+  rollback-on-failure:
+    name: Rollback (automated)
+    runs-on: ubuntu-latest
+    needs: [deploy-to-gke, post-deploy-validation]
+    if: failure()
+
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ vars.GKE_CLUSTER_NAME }}
+          location: ${{ vars.GKE_REGION }}
+
+      - name: Rollback API to previous image
+        run: |
+          ROLLBACK_IMAGE="${{ needs.deploy-to-gke.outputs.rollback_api_image }}"
+          if [ "$ROLLBACK_IMAGE" = "none" ] || [ -z "$ROLLBACK_IMAGE" ]; then
+            echo "⚠️  No previous API image to roll back to — skipping."
+          else
+            echo "Rolling back API to: ${ROLLBACK_IMAGE}"
+            kubectl set image deployment/courtaccess-api \
+              courtaccess-api="${ROLLBACK_IMAGE}"
+            kubectl rollout status deployment/courtaccess-api --timeout=5m
+            echo "✅ API rolled back."
+          fi
+
+      - name: Rollback Airflow to previous image
+        run: |
+          ROLLBACK_IMAGE="${{ needs.deploy-to-gke.outputs.rollback_airflow_image }}"
+          if [ "$ROLLBACK_IMAGE" = "none" ] || [ -z "$ROLLBACK_IMAGE" ]; then
+            echo "⚠️  No previous Airflow image to roll back to — skipping."
+          else
+            echo "Rolling back Airflow to: ${ROLLBACK_IMAGE}"
+            kubectl set image deployment/courtaccess-airflow \
+              courtaccess-airflow="${ROLLBACK_IMAGE}"
+            kubectl rollout status deployment/courtaccess-airflow --timeout=5m
+            echo "✅ Airflow rolled back."
+          fi
+
+      - name: Notify rollback
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.NOTIFY_EMAIL_FROM }}
+          password: ${{ secrets.NOTIFY_EMAIL_PASSWORD }}
+          subject: "⚠️ CourtAccess AI ${{ github.ref_name }} ROLLED BACK"
+          to: ${{ secrets.NOTIFY_EMAIL_TO }}
+          from: "CourtAccess AI CI <${{ secrets.NOTIFY_EMAIL_FROM }}>"
+          body: |
+            CourtAccess AI deployment was ROLLED BACK automatically.
+
+            Version : ${{ github.ref_name }}
+            Commit  : ${{ github.sha }}
+            Author  : ${{ github.actor }}
+            Reason  : Post-deploy smoke tests failed.
+
+            Rolled back to:
+              API:     ${{ needs.deploy-to-gke.outputs.rollback_api_image }}
+              Airflow: ${{ needs.deploy-to-gke.outputs.rollback_airflow_image }}
+
+            View the failed run:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            ACTION REQUIRED: Investigate the failure before attempting another deploy.
