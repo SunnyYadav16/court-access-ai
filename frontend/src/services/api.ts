@@ -37,28 +37,36 @@ export interface RoleSelectionResponse {
 }
 
 export interface DocumentUploadResponse {
-  document_id: string;
-  filename: string;
-  status: string;
-  target_languages: string[];
+  session_id: string;        // polling key
+  request_id: string;
+  status: string;            // always "processing"
+  gcs_input_path: string;
+  target_language: string;   // "es" | "pt"
   created_at: string;
+  estimated_completion_seconds: number;
 }
 
 export interface DocumentStatus {
-  document_id: string;
-  filename: string;
-  status: string;
-  target_languages: string[];
-  translations: Translation[];
+  session_id: string;
+  status: string;            // "pending"|"processing"|"translated"|"error"|"rejected"
+  target_language: string;
   created_at: string;
-  updated_at: string;
+  completed_at: string | null;
+  signed_url: string | null;
+  signed_url_expires_at: string | null;
+  gcs_output_path: string | null;
+  avg_confidence_score: number | null;
+  llama_corrections_count: number;
+  processing_time_seconds: number | null;
+  error_message: string | null;
 }
 
-export interface Translation {
-  language: string;
-  status: string;
-  file_url?: string;
-  error?: string;
+export interface PipelineStep {
+  step_name: string;
+  status: string;       // "running"|"success"|"failed"|"skipped"
+  detail: string;
+  metadata: Record<string, unknown>;
+  updated_at: string;
 }
 
 export interface DocumentListResponse {
@@ -191,19 +199,19 @@ export const documentsApi = {
   /**
    * Upload a PDF file for translation.
    * @param file — PDF File object
-   * @param targetLanguages — e.g. ["es", "pt"]
+   * @param targetLanguage — "es" or "pt" (single language per pipeline run)
    * @param notes — optional submitter notes
    * @param onProgress — upload progress callback (0–100)
    */
   upload: (
     file: File,
-    targetLanguages: string[] = ["es", "pt"],
+    targetLanguage: string = "es",
     notes: string | null = null,
     onProgress?: (progress: number) => void
   ): Promise<DocumentUploadResponse> => {
     const form = new FormData();
     form.append("file", file);
-    form.append("target_languages", targetLanguages.join(","));
+    form.append("target_language", targetLanguage);  // matches Form field name in backend
     if (notes) form.append("notes", notes);
     return api
       .post<DocumentUploadResponse>("/documents/upload", form, {
@@ -217,17 +225,30 @@ export const documentsApi = {
       .then((r) => r.data);
   },
 
-  /** Get translation status for a document. */
-  status: (documentId: string): Promise<DocumentStatus> =>
-    api.get<DocumentStatus>(`/documents/${documentId}`).then((r) => r.data),
+  /** Get translation status for a session. */
+  status: (sessionId: string): Promise<DocumentStatus> =>
+    api.get<DocumentStatus>(`/documents/${sessionId}`).then((r) => r.data),
+
+  /** Get individual pipeline step progress — drives the live progress screen. */
+  steps: (sessionId: string): Promise<PipelineStep[]> =>
+    api.get<PipelineStep[]>(`/documents/${sessionId}/steps`).then((r) => r.data),
+
+  /**
+   * Re-translate an already-uploaded document into a second language.
+   * The backend re-uses the original GCS input file and creates a new request_id.
+   */
+  retranslate: (sessionId: string, targetLanguage: string): Promise<DocumentUploadResponse> =>
+    api
+      .post<DocumentUploadResponse>(`/documents/${sessionId}/retranslate`, { target_language: targetLanguage })
+      .then((r) => r.data),
 
   /** List the current user's documents. */
   list: (page: number = 1, pageSize: number = 20): Promise<DocumentListResponse> =>
     api.get<DocumentListResponse>("/documents/", { params: { page, page_size: pageSize } }).then((r) => r.data),
 
-  /** Delete a document and its translations. */
-  delete: (documentId: string): Promise<{ message: string }> =>
-    api.delete<{ message: string }>(`/documents/${documentId}`).then((r) => r.data),
+  /** Delete a document and its associated pipeline data. */
+  delete: (sessionId: string): Promise<void> =>
+    api.delete(`/documents/${sessionId}`).then(() => undefined),
 };
 
 // ══════════════════════════════════════════════════════════════════════════════

@@ -119,7 +119,7 @@ Llama 4 Maverick: NO local weights — called via Vertex AI API
 | **DVC file** | None — API-hosted model |
 | **Config env** | `VERTEX_PROJECT_ID`, `VERTEX_LOCATION`, `VERTEX_MODEL_ID` |
 | **Used by** | `courtaccess/core/legal_review.py`, `courtaccess/core/classify_document.py` |
-| **Toggle** | `USE_REAL_LEGAL_REVIEW=true` + `USE_VERTEX_LEGAL_REVIEW=true` |
+| **Toggle** | `USE_VERTEX_LEGAL_REVIEW=true` |
 | **Fallback** | Stub mode returns "OK" with 0.95 confidence |
 
 ## Setup Commands

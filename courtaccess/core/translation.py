@@ -121,27 +121,29 @@ class Translator:
         """
         Load all models into memory.
 
-        spaCy (en_core_web_lg) is ALWAYS loaded — it is needed for step 2
-        (proper noun protection) regardless of _use_real mode.
+        spaCy (en_core_web_lg) is loaded ONLY in real mode — it is needed for
+        step 2 (proper noun protection) but that step is never reached in stub
+        mode (translate_one returns early at step 0.5/stub check).
+
+        Skipping spaCy in stub mode saves 619 MB per task, which is critical
+        when many DAG runs fire in parallel (e.g. 22 forms x 2 languages).
 
         CTranslate2 tokenizer and translator are loaded only when
         _use_real=True. They are loaded once here and reused for all
         subsequent translate_one() calls — never reloaded per-call.
 
-        Logs load time for each model.
-
         Returns self for chaining: Translator(config).load()
         """
-        t0 = time.time()
-        import spacy
-
-        self._nlp = spacy.load("en_core_web_lg")
-        logger.info("spaCy en_core_web_lg loaded in %.2fs", time.time() - t0)
-
         if self._use_real:
+            t0 = time.time()
+            import spacy
+
+            self._nlp = spacy.load("en_core_web_lg")
+            logger.info("spaCy en_core_web_lg loaded in %.2fs", time.time() - t0)
+
             model_path = os.getenv(
                 "NLLB_MODEL_PATH",
-                "/opt/models/nllb-200-distilled-1.3B-ct2",
+                "/opt/airflow/models/nllb-200-distilled-1.3B-ct2",
             )
 
             t1 = time.time()
@@ -160,6 +162,8 @@ class Translator:
                 time.time() - t2,
                 device,
             )
+        else:
+            logger.debug("Stub mode — skipping spaCy/NLLB model load.")
 
         return self
 
@@ -475,11 +479,10 @@ class Translator:
         for text in texts:
             inputs = self._tokenizer(
                 text,
-                return_tensors="pt",
                 truncation=True,
                 max_length=512,
             )
-            token_ids = inputs["input_ids"][0].tolist()
+            token_ids = inputs["input_ids"]
             tokens = self._tokenizer.convert_ids_to_tokens(token_ids)
 
             out = self._ct2_translator.translate_batch(

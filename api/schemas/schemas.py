@@ -182,45 +182,62 @@ class UploadRequest(BaseModel):
 
 
 class DocumentResponse(BaseModel):
-    """Response after a successful document upload."""
+    """
+    Response returned immediately after a successful document upload.
+    session_id is the polling key for all subsequent /documents/* requests.
+    """
 
-    document_id: uuid.UUID
-    status: DocumentStatus
-    upload_path: str
+    session_id: uuid.UUID  # polling key — use for GET /documents/{session_id}
+    request_id: uuid.UUID  # the translation_request row for this language run
+    status: DocumentStatus  # always 'processing' on upload
+    gcs_input_path: str  # gs://courtaccess-ai-uploads/{session_id}/{filename}
+    target_language: str  # 'es' or 'pt'
     created_at: datetime
-    estimated_completion_seconds: int = Field(
-        default=300,
-        description="Estimated DAG processing time",
-    )
+    estimated_completion_seconds: int = Field(default=300)
 
 
 class TranslationStatusResponse(BaseModel):
-    """Status check response for an in-progress or completed translation."""
+    """
+    Returned by GET /documents/{session_id}.
+    Backed by a join of sessions + translation_requests.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
-    document_id: uuid.UUID
-    status: DocumentStatus
+    session_id: uuid.UUID
+    status: DocumentStatus  # mapped from translation_requests.status (see route)
+    target_language: str  # 'es' or 'pt'
     created_at: datetime
     completed_at: datetime | None = None
-    pii_findings_count: int = Field(
-        default=0,
-        description="Number of PII instances found (for HIPAA audit log); text not exposed",
-    )
-    translation_urls: dict[str, str] = Field(
-        default_factory=dict,
-        description="Signed GCS URLs keyed by language code, e.g. {'es': 'https://...', 'pt': 'https://...'}",
-    )
-    legal_review_status: dict[str, str] = Field(
-        default_factory=dict,
-        description="Legal review outcome per language: {'es': 'ok', 'pt': 'skipped'}",
-    )
-    needs_human_review: bool = True
+
+    # Output — populated once DAG reaches upload_to_gcs
+    signed_url: str | None = None
+    signed_url_expires_at: datetime | None = None
+    gcs_output_path: str | None = None
+
+    # Metrics — populated once DAG completes
+    avg_confidence_score: float | None = None
+    llama_corrections_count: int = 0
+    processing_time_seconds: float | None = None
+
+    # Error state
     error_message: str | None = None
 
 
+class PipelineStepResponse(BaseModel):
+    """One step row from pipeline_steps — returned by GET /documents/{session_id}/steps."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    step_name: str
+    status: str  # running | success | failed | skipped
+    detail: str
+    metadata: dict = Field(default_factory=dict)
+    updated_at: datetime
+
+
 class DocumentListResponse(BaseModel):
-    """Paginated list of documents for the current user."""
+    """Paginated list of document sessions for the current user."""
 
     items: list[TranslationStatusResponse]
     total: int
@@ -367,6 +384,9 @@ class FormVersionResponse(BaseModel):
     file_path_original: str
     file_path_es: str | None
     file_path_pt: str | None
+    signed_url_original: str | None = None
+    signed_url_es: str | None = None
+    signed_url_pt: str | None = None
     file_type_es: str | None
     file_type_pt: str | None
     created_at: datetime

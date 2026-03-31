@@ -299,6 +299,12 @@ class Session(Base):
     )
     audit_logs: Mapped[list[AuditLog]] = relationship("AuditLog", back_populates="session")
 
+    pipeline_steps: Mapped[list[PipelineStep]] = relationship(
+        "PipelineStep",
+        back_populates="session",
+        passive_deletes=True,
+    )
+
     # Constraints and indexes
     __table_args__ = (
         CheckConstraint("type IN ('realtime', 'document')", name="sessions_type_check"),
@@ -375,6 +381,12 @@ class TranslationRequest(Base):
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
+    )
+
+    error_message: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="Pipeline failure message shown in the frontend error state",
     )
 
     # Relationships
@@ -505,6 +517,11 @@ class FormCatalog(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+    last_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="Timestamp of last content change (hash change or new form). Not updated on rename or translation.",
+    )
 
     # Relationships
     versions: Mapped[list[FormVersion]] = relationship("FormVersion", back_populates="form")
@@ -612,3 +629,27 @@ class FormAppearance(Base):
 
     def __repr__(self) -> str:
         return f"<FormAppearance appearance_id={self.appearance_id!s} division={self.division!r}>"
+
+
+class PipelineStep(Base):
+    __tablename__ = "pipeline_steps"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sessions.session_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    step_name: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    detail: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    step_metadata: Mapped[dict | None] = mapped_column(JSONB, name="metadata", server_default="{}", nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    session: Mapped[Session] = relationship("Session", back_populates="pipeline_steps")
+
+    __table_args__ = (
+        UniqueConstraint("session_id", "step_name", name="pipeline_steps_session_step_key"),
+        CheckConstraint("status IN ('running', 'success', 'failed', 'skipped')", name="pipeline_steps_status_check"),
+        Index("idx_pipeline_steps_session_id", "session_id"),
+    )

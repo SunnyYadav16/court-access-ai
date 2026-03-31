@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     )
 
     # ── Application ───────────────────────────────────────────────────────────
-    app_env: str  # development | staging | production
+    app_env: str  # development | production
     debug: bool
     secret_key: str
     allowed_origins: str

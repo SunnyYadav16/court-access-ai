@@ -18,11 +18,11 @@ In production this will be queryable via the PostgreSQL FormCatalog table.
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
-from pathlib import Path
+from datetime import UTC, datetime
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
@@ -32,73 +32,111 @@ from api.schemas.schemas import (
     FormResponse,
     Language,
 )
+from courtaccess.core import gcs
+from courtaccess.core.config import get_settings
+from db.queries import forms as db_queries_forms
+from db.queries.audit import write_audit
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 router = APIRouter(prefix="/forms", tags=["forms"])
 
-# ── Catalog path (only used for local/dev file-backed reads) ──────────────────
-_CATALOG_PATH = Path("/opt/airflow/courtaccess/data/form_catalog.json")
-
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Helpers
+# POST /forms/scraper/trigger — admin only
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def _load_catalog() -> list[dict]:
-    """Load the form catalog from disk (dev) or DB (production)."""
-    if not _CATALOG_PATH.exists():
-        logger.warning("Catalog file not found at %s — returning empty list", _CATALOG_PATH)
-        return []
-    try:
-        with open(_CATALOG_PATH, encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        logger.error("Could not load catalog: %s", exc)
-        return []
+class TriggerScraperRequest(BaseModel):
+    force: bool = False
 
 
-def _form_to_response(entry: dict) -> FormResponse:
-    """Convert a raw catalog dict into a FormResponse."""
-    versions = entry.get("versions", [])
-    latest_v = versions[0] if versions else None
+class TriggerScraperResponse(BaseModel):
+    dag_run_id: str
+    triggered_at: datetime
 
-    from datetime import datetime
 
-    from api.schemas.schemas import FormAppearance, FormVersion
+@router.post(
+    "/scraper/trigger",
+    response_model=TriggerScraperResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Trigger form scraper DAG run",
+    description="Admin-only endpoint to trigger an immediate form_scraper_dag run via Airflow API.",
+)
+async def trigger_form_scraper(
+    payload: TriggerScraperRequest,
+    user: CurrentUser,
+    db: DBSession,
+    _: dict = Depends(require_role("admin")),  # noqa: B008
+) -> TriggerScraperResponse:
+    """
+    Trigger `form_scraper_dag` in Airflow with the acting admin user_id.
 
-    return FormResponse(
-        form_id=uuid.UUID(entry["form_id"]) if isinstance(entry.get("form_id"), str) else entry["form_id"],
-        form_name=entry.get("form_name", ""),
-        form_slug=entry.get("form_slug", ""),
-        source_url=entry.get("source_url", ""),
-        status=entry.get("status", "unknown"),
-        current_version=entry.get("current_version", 1),
-        needs_human_review=entry.get("needs_human_review", True),
-        languages_available=entry.get("languages_available", []),
-        appearances=[
-            FormAppearance(
-                division=a.get("division", ""),
-                section_heading=a.get("section_heading", ""),
-            )
-            for a in entry.get("appearances", [])
-        ],
-        latest_version=FormVersion(
-            version=latest_v.get("version", 1),
-            content_hash=latest_v.get("content_hash", ""),
-            file_url_original=None,  # TODO: generate signed GCS URL
-            file_url_es=None,  # TODO: generate signed GCS URL
-            file_url_pt=None,  # TODO: generate signed GCS URL
-            created_at=datetime.fromisoformat(latest_v["created_at"].rstrip("Z"))
-            if latest_v and latest_v.get("created_at")
-            else datetime.utcnow(),
+    Note:
+      - `force` is accepted for forward compatibility but not sent to Airflow
+        yet. Current DAG behavior is unchanged.
+      - The regular Monday schedule remains unaffected.
+    """
+    _ = payload.force
+
+    if not settings.airflow_base_url or not settings.airflow_username or not settings.airflow_password:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Airflow configuration is missing. Cannot trigger scraper DAG.",
         )
-        if latest_v
-        else None,
-        last_scraped_at=(
-            datetime.fromisoformat(entry["last_scraped_at"].rstrip("Z")) if entry.get("last_scraped_at") else None
-        ),
+
+    url = f"{settings.airflow_base_url}/api/v2/dags/form_scraper_dag/dagRuns"
+    triggered_at = datetime.now(tz=UTC)
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                url,
+                auth=(settings.airflow_username, settings.airflow_password),
+                json={"conf": {"triggered_by_user_id": str(user.user_id)}},
+            )
+            resp.raise_for_status()
+    except httpx.RequestError as exc:
+        logger.error("Airflow unreachable while triggering form_scraper_dag: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Airflow is unreachable. Please try again in a moment.",
+        ) from exc
+    except httpx.HTTPStatusError as exc:
+        logger.error("Airflow trigger failed with status %s: %s", exc.response.status_code, exc.response.text)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Airflow rejected the trigger request.",
+        ) from exc
+
+    dag_run_id = resp.json().get("dag_run_id")
+    if not dag_run_id:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Airflow trigger response did not include dag_run_id.",
+        )
+
+    # Best-effort audit — the DAG has already been triggered successfully.
+    # A DB failure here must not surface as a 500 to the client.
+    try:
+        await write_audit(
+            db,
+            user_id=user.user_id,
+            action_type="form_scrape_triggered",
+            details={"dag_run_id": dag_run_id},
+        )
+        await db.commit()
+    except Exception as exc:
+        logger.error(
+            "Audit write failed for form_scrape_triggered (dag_run_id=%s): %s",
+            dag_run_id,
+            exc,
+        )
+
+    return TriggerScraperResponse(
+        dag_run_id=dag_run_id,
+        triggered_at=triggered_at,
     )
 
 
@@ -113,19 +151,8 @@ def _form_to_response(entry: dict) -> FormResponse:
     summary="List all court divisions",
     description="Returns a sorted list of all court division names that have forms in the catalog.",
 )
-async def list_divisions() -> list[str]:
-    """
-    Return all unique division names from the catalog.
-
-    TODO (production): Replace with indexed DB query.
-    """
-    catalog = _load_catalog()
-    divisions: set[str] = set()
-    for entry in catalog:
-        for app in entry.get("appearances", []):
-            if div := app.get("division"):
-                divisions.add(div)
-    return sorted(divisions)
+async def list_divisions(db: DBSession) -> list[str]:
+    return await db_queries_forms.list_divisions(db)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -143,6 +170,7 @@ async def list_divisions() -> list[str]:
     ),
 )
 async def list_forms(
+    db: DBSession,
     q: str | None = Query(default=None, max_length=200, description="Keyword search over form names"),
     division: str | None = Query(default=None, description="Filter by court division"),
     language: Language | None = Query(default=None, description="Only return forms with this language available"),  # noqa: B008
@@ -166,42 +194,27 @@ async def list_forms(
       - Add full-text search index on form_name
       - Generate signed GCS URLs for file_url_* fields
     """
-    catalog = _load_catalog()
     filters_applied: dict[str, str] = {}
-
-    results = catalog
-
-    # ── Status filter ────────────────────────────────────────────────────────
     if status_filter:
-        results = [e for e in results if e.get("status") == status_filter]
         filters_applied["status"] = status_filter
-
-    # ── Division filter ──────────────────────────────────────────────────────
     if division:
-        div_lower = division.lower()
-        results = [
-            e for e in results if any(div_lower in a.get("division", "").lower() for a in e.get("appearances", []))
-        ]
         filters_applied["division"] = division
-
-    # ── Language filter ──────────────────────────────────────────────────────
-    if language and language != Language.ENGLISH:
-        lang_field = f"file_path_{language.value}"
-        results = [e for e in results if e.get("versions") and e["versions"][0].get(lang_field)]
+    if language:
         filters_applied["language"] = language.value
-
-    # ── Keyword filter ───────────────────────────────────────────────────────
     if q:
-        q_lower = q.lower()
-        results = [e for e in results if q_lower in e.get("form_name", "").lower()]
         filters_applied["q"] = q
 
-    total = len(results)
-    start = (page - 1) * page_size
-    page_results = results[start : start + page_size]
-
+    items, total = await db_queries_forms.list_forms(
+        db,
+        status=status_filter,
+        division=division,
+        language=(language.value if language else None),
+        q=q,
+        page=page,
+        page_size=page_size,
+    )
     return FormListResponse(
-        items=[_form_to_response(e) for e in page_results],
+        items=items,
         total=total,
         page=page,
         page_size=page_size,
@@ -220,7 +233,7 @@ async def list_forms(
     summary="Get a single court form",
     description="Return full metadata and signed download URLs for a single court form.",
 )
-async def get_form(form_id: uuid.UUID) -> FormResponse:
+async def get_form(form_id: uuid.UUID, db: DBSession) -> FormResponse:
     """
     Look up a form by form_id.
 
@@ -228,15 +241,32 @@ async def get_form(form_id: uuid.UUID) -> FormResponse:
       - Query FormCatalog DB table by form_id (indexed lookup)
       - Generate signed 1-hour GCS URLs for PDF downloads
     """
-    catalog = _load_catalog()
-    entry = next(
-        (e for e in catalog if e.get("form_id") == str(form_id)),
-        None,
-    )
-    if not entry:
+    form = await db_queries_forms.get_form_by_id(db, form_id)
+    if not form:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Form not found")
+    # Generate signed URLs for the latest version only.
+    # Use max() by version number — versions[0] is insertion-order dependent
+    # and may not be the highest version when the ORM loads the relationship.
+    versions = getattr(form, "versions", []) or []
+    if versions:
+        latest = max(versions, key=lambda v: v.version)
 
-    return _form_to_response(entry)
+        def _sign(path: str | None) -> str | None:
+            if not path or not isinstance(path, str) or not path.startswith("gs://"):
+                return None
+            b, bl = gcs.parse_gcs_uri(path)
+            return gcs.generate_signed_url(
+                b,
+                bl,
+                settings.signed_url_expiry_seconds,
+                settings.gcp_service_account_json,
+            )
+
+        latest.signed_url_original = _sign(getattr(latest, "file_path_original", None))
+        latest.signed_url_es = _sign(getattr(latest, "file_path_es", None))
+        latest.signed_url_pt = _sign(getattr(latest, "file_path_pt", None))
+
+    return form
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -264,9 +294,9 @@ async def submit_form_review(
     form_id: uuid.UUID,
     decision: ReviewDecision,
     user: CurrentUser,
+    db: DBSession,
     _: dict = Depends(require_role("court_official", "admin")),  # noqa: B008
-    db: DBSession = None,
-) -> dict:
+) -> FormResponse:
     """
     Record a human review decision.
 
@@ -275,24 +305,14 @@ async def submit_form_review(
       - Update FormCatalog.needs_human_review and last_reviewed_by
       - Write review decision back into form_catalog.json on disk
     """
-    catalog = _load_catalog()
-    entry = next((e for e in catalog if e.get("form_id") == str(form_id)), None)
-    if not entry:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Form not found")
-
-    logger.info(
-        "Form review submitted: form_id=%s approved=%s reviewer=%s notes=%s",
-        form_id,
-        decision.approved,
-        user.user_id,
-        decision.reviewer_notes,
+    updated = await db_queries_forms.submit_form_review(
+        db,
+        form_id=form_id,
+        approved=decision.approved,
+        reviewer_user_id=user.user_id,
+        notes=decision.reviewer_notes,
     )
-
-    # TODO: persist to DB/disk
-    return {
-        "form_id": str(form_id),
-        "approved": decision.approved,
-        "reviewed_by": str(user.user_id),
-        "notes": decision.reviewer_notes,
-        "message": "Review decision recorded (STUB — not yet persisted)",
-    }
+    if updated is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Form not found")
+    await db.commit()
+    return updated

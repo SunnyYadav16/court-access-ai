@@ -4,7 +4,7 @@ courtaccess/core/legal_review.py
 LegalReviewer class for Llama-based legal terminology verification.
 
 Provider priority (controlled by env vars):
-  1. Vertex AI — Llama 4 Maverick (USE_VERTEX_LEGAL_REVIEW=true + USE_REAL_LEGAL_REVIEW=true)
+  1. Vertex AI — Llama 4 Maverick (USE_VERTEX_LEGAL_REVIEW=true)
   2. Stub      — always returns OK (default)
 
 Translation cache (Redis-backed):
@@ -62,15 +62,11 @@ class LegalReviewer:
         self.glossary = glossary or {}
         self.verification_mode = verification_mode  # "document" | "audio"
 
-        self._use_real = os.getenv("USE_REAL_LEGAL_REVIEW", "false").lower() == "true"
         self._use_vertex = os.getenv("USE_VERTEX_LEGAL_REVIEW", "false").lower() == "true"
 
-        self._vertex_project = os.getenv("VERTEX_PROJECT_ID", "")
-        self._vertex_location = os.getenv("VERTEX_LOCATION", "us-east5")
-        self._vertex_model = os.getenv(
-            "VERTEX_MODEL_ID",
-            "meta/llama-4-maverick-17b-128e-instruct-maas",
-        )
+        self._vertex_project_id = os.getenv("VERTEX_PROJECT_ID", "")
+        self._vertex_location = os.getenv("VERTEX_LOCATION", "")
+        self.vertex_legal_llm_model = os.getenv("VERTEX_LEGAL_LLM_MODEL", "")
         self._gcp_sa_json = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "")
 
         self._vertex_credentials = None
@@ -102,7 +98,7 @@ class LegalReviewer:
         if not original_spans:
             return translated_spans
 
-        if not (self._use_real and self._use_vertex and self._vertex_project):
+        if not (self._use_vertex and self._vertex_project_id):
             return translated_spans
 
         if self.verification_mode == "document":
@@ -137,7 +133,7 @@ class LegalReviewer:
         Review a single translated text for legal accuracy.
         Returns output contract dict: {status, corrections}
         """
-        if not (self._use_real and self._use_vertex and self._vertex_project):
+        if not (self._use_vertex and self._vertex_project_id):
             return self._stub_review(text)
         return self._vertex_review(text)
 
@@ -304,11 +300,22 @@ class LegalReviewer:
             try:
                 client = self._get_vertex_client()
                 resp = client.chat.completions.create(
-                    model=self._vertex_model,
+                    model=self.vertex_legal_llm_model,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0,
-                    max_tokens=2048,
+                    max_tokens=32768,
                 )
+
+                # ── Truncation check — must come before JSON parse ────────
+                finish_reason = resp.choices[0].finish_reason
+                if finish_reason == "length":
+                    logger.warning(
+                        "Vertex response truncated (finish_reason=length) — "
+                        "response exceeded max_tokens for batch of %d items. "
+                        "Returning NLLB output.",
+                        len(original_batch),
+                    )
+                    return translated_batch
 
                 # ── Bad response checks (no retry) ────────────────────────
                 raw = resp.choices[0].message.content
@@ -340,6 +347,12 @@ class LegalReviewer:
                 err = str(exc)
                 last_exc = exc
 
+                # Programming errors are bugs — re-raise immediately so they
+                # are visible in logs and fail the task properly rather than
+                # being silently swallowed and reported as "success".
+                if isinstance(exc, (AttributeError, TypeError, NameError)):
+                    raise
+
                 # Token expiry — refresh and retry immediately (no backoff sleep)
                 if any(c in err for c in ["401", "UNAUTHENTICATED", "ACCESS_TOKEN_EXPIRED"]):
                     logger.warning(
@@ -367,7 +380,7 @@ class LegalReviewer:
                     time.sleep(wait)
                     continue
 
-                # Non-retryable unknown error — log and give up immediately
+                # Non-retryable external error — log and give up immediately
                 logger.error("Vertex non-retryable error: %s", exc)
                 return translated_batch
 
@@ -403,28 +416,39 @@ class LegalReviewer:
     def _get_vertex_client(self):
         """
         Build OpenAI-compatible Vertex AI client.
-        Refreshes service account credentials on each call.
-        Source: Cell 0 of Colab script.
+
+        Auth strategy:
+          - Local dev: reads GCP_SERVICE_ACCOUNT_JSON and uses a service-account key.
+          - Production (Cloud Run / GCE): GCP_SERVICE_ACCOUNT_JSON is absent;
+            falls back to Application Default Credentials (ADC) provided
+            automatically by the attached service account — no key file needed.
         """
+        import google.auth
         import google.auth.transport.requests
-        from google.oauth2 import service_account
         from openai import OpenAI
 
-        if not self._gcp_sa_json:
-            raise OSError("GCP_SERVICE_ACCOUNT_JSON not set. Add to .env for local dev or Secret Manager on GCP.")
+        if self._gcp_sa_json:
+            # Local dev — explicit SA JSON key
+            from google.oauth2 import service_account
 
-        if self._vertex_credentials is None:
-            self._vertex_credentials = service_account.Credentials.from_service_account_info(
-                json.loads(self._gcp_sa_json),
-                scopes=["https://www.googleapis.com/auth/cloud-platform"],
-            )
+            if self._vertex_credentials is None:
+                self._vertex_credentials = service_account.Credentials.from_service_account_info(
+                    json.loads(self._gcp_sa_json),
+                    scopes=["https://www.googleapis.com/auth/cloud-platform"],
+                )
+        else:
+            # Production — use ADC (attached service account on GCE/Cloud Run)
+            if self._vertex_credentials is None:
+                self._vertex_credentials, _ = google.auth.default(
+                    scopes=["https://www.googleapis.com/auth/cloud-platform"]
+                )
 
         self._vertex_credentials.refresh(google.auth.transport.requests.Request())
 
         return OpenAI(
             base_url=(
                 f"https://{self._vertex_location}-aiplatform.googleapis.com/v1"
-                f"/projects/{self._vertex_project}"
+                f"/projects/{self._vertex_project_id}"
                 f"/locations/{self._vertex_location}/endpoints/openapi"
             ),
             api_key=self._vertex_credentials.token,

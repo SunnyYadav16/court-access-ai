@@ -104,11 +104,15 @@ USER airflow
 # This is required — without it, every DAG fails with ModuleNotFoundError.
 COPY --chown=airflow:root pyproject.toml uv.lock /opt/airflow/
 COPY --chown=airflow:root courtaccess/ /opt/airflow/courtaccess/
+COPY --chown=airflow:root db/ /opt/airflow/db/
 
 RUN uv pip install '/opt/airflow/[airflow]'
 
 # Upgrade DVC with GCS support (base dvc from pyproject.toml lacks [gs] extras)
 RUN uv pip install "dvc[gs]>=3.50.0"
+
+# # spaCy model — required by Translator.load() for proper noun protection
+RUN python -m spacy download en_core_web_lg
 
 # Install Playwright's Chromium browser for the form scraper
 RUN playwright install chromium

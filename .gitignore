@@ -164,10 +164,6 @@ dvc_storage/
 # GCP configuration directory (contains service account keys)
 .config/
 
-# ── DVC-tracked data (actual data ignored, pointer files allowed) ─────────────
-courtaccess/data/*
-!courtaccess/data/*.dvc
-
 # ── Downloaded court forms (DVC-tracked, NOT git) ─────────────────────────────
 /forms/
 
