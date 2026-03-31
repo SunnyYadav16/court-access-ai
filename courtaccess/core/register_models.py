@@ -201,6 +201,8 @@ def register_models(project_root: str = ".") -> list[dict]:
             "[LOG-ONLY] Model 'llama-4-maverick': Vertex AI endpoint at %s/%s",
             settings.vertex_project_id,
             settings.vertex_legal_llm_model,
+            settings.vertex_project_id,
+            settings.vertex_legal_llm_model,
         )
 
     results.append(llama_info)
