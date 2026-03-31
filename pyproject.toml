@@ -76,8 +76,11 @@ torch = [
 ]
 
 # Full local development install
+# Note: audio extra is intentionally excluded — pyaudio requires portaudio19-dev
+# (a native system library) which is unavailable in CI and headless Docker containers.
+# Install audio separately on native machines: uv pip install ".[audio]"
 dev = [
-    "courtaccess[airflow,audio,torch]",
+    "courtaccess[airflow,torch]",
     "pytest>=9.0.2",
     "pytest-asyncio>=0.23.0",
     "httpx>=0.27.0",
