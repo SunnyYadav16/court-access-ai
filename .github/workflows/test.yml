@@ -244,64 +244,10 @@ jobs:
         run: python -m courtaccess.core.register_models
 
       - name: Validate translation pipeline end-to-end (stub mode)
-        # Tests the full pipeline wiring (Translator → batch_translate) in stub mode.
-        # No NLLB model needed — stub prefixes with language tag.
-        # Asserts outputs are non-empty and average confidence >= VALIDATION_CONFIDENCE_THRESHOLD.
-        run: |
-          python - <<'EOF'
-          import os
-          import sys
-
-          THRESHOLD = float(os.environ.get("VALIDATION_CONFIDENCE_THRESHOLD", "0.0"))
-
-          LEGAL_PHRASES = [
-              "The defendant has the right to remain silent.",
-              "This court order is effective immediately.",
-              "You are required to appear before the court.",
-              "Failure to comply may result in contempt of court.",
-              "The restraining order prohibits contact with the plaintiff.",
-              "Child support payments are due on the first of each month.",
-              "The motion to dismiss was denied by the presiding judge.",
-              "Custody is hereby granted to the petitioner.",
-              "The bond has been set at five thousand dollars.",
-              "This summons must be served within thirty days.",
-          ]
-
-          from courtaccess.languages import get_language_config
-          from courtaccess.core.translation import Translator
-
-          config = get_language_config("spanish")
-          translator = Translator(config).load()
-
-          results = translator.batch_translate(LEGAL_PHRASES, "spa_Latn")
-
-          failures = []
-          confidences = []
-          for original, translated in zip(LEGAL_PHRASES, results):
-              if not translated or not translated.strip():
-                  failures.append(f"  ✗ Empty output for: '{original[:50]}'")
-                  continue
-              # Use translate_text to get confidence score
-              out = translator.translate_text(original, "spa_Latn")
-              conf = out.get("confidence", 0.0)
-              confidences.append(conf)
-              print(f"  ✓ [{conf:.2f}] {original[:40]!r} → {translated[:40]!r}")
-
-          if failures:
-              print("\n❌ Translation validation failed — empty outputs:")
-              for f in failures:
-                  print(f)
-              sys.exit(1)
-
-          avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
-          print(f"\n  Average confidence: {avg_conf:.3f} (threshold: {THRESHOLD})")
-
-          if avg_conf < THRESHOLD:
-              print(f"❌ Average confidence {avg_conf:.3f} is below threshold {THRESHOLD}")
-              sys.exit(1)
-
-          print(f"✅ Translation pipeline validated: {len(results)}/{len(LEGAL_PHRASES)} phrases translated, avg_conf={avg_conf:.3f}")
-          EOF
+        # Runs the fixed 20-phrase validation set against the NLLB + Llama
+        # pipeline in stub mode and logs metrics to MLflow (file:///tmp/mlflow).
+        # Exits non-zero if nllb_avg_confidence < VALIDATION_CONFIDENCE_THRESHOLD.
+        run: python -m courtaccess.core.validate_models
 
   # ════════════════════════════════════════════════════════════════════════════
   # Job 3 — bias-detection

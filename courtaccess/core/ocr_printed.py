@@ -73,16 +73,14 @@ class OCREngine:
     Models are loaded once in load() and reused for all calls.
     """
 
-    # Source: Cell 2 OCR_CONFIDENCE = 0.35
-    OCR_CONFIDENCE_THRESHOLD: float = 0.35
-
     # Source: Cell 9 — 300 DPI render for PaddleOCR
     RENDER_DPI: int = 300
 
     # ── Initialisation ────────────────────────────────────────────────────────
 
     def __init__(self) -> None:
-        self._use_real = os.getenv("USE_REAL_OCR", "false").lower() == "true"
+        self.OCR_CONFIDENCE_THRESHOLD = float(os.getenv("OCR_CONFIDENCE_THRESHOLD"))
+        self._use_real = str(os.getenv("USE_REAL_OCR")).lower() == "true"
         self._paddle = None
         self._tesseract_available = False
 

@@ -34,6 +34,7 @@ JSON schema per form:
 import hashlib
 import io
 import logging
+import os
 import time
 import uuid
 import zipfile
@@ -61,10 +62,10 @@ PROJECT_DIR = DAGS_DIR.parent
 FORMS_DIR = PROJECT_DIR / "forms"
 
 # ── Batch download settings ───────────────────────────────────────────────────
-BATCH_SIZE = 10  # Number of PDFs to download per batch
-BATCH_SLEEP_SEC = 15  # Seconds to sleep between batches
-PRE_DOWNLOAD_SLEEP = 60  # Seconds to sleep after scraping before downloading
-REQUEST_TIMEOUT = 30
+BATCH_SIZE = int(os.getenv("SCRAPER_BATCH_SIZE"))
+BATCH_SLEEP_SEC = int(os.getenv("SCRAPER_BATCH_SLEEP_SEC"))
+PRE_DOWNLOAD_SLEEP = int(os.getenv("SCRAPER_PRE_DOWNLOAD_SLEEP"))
+REQUEST_TIMEOUT = int(os.getenv("SCRAPER_REQUEST_TIMEOUT"))
 HEADERS = {
     # Mimic a real browser so mass.gov doesn't block us with a 403.
     "User-Agent": (

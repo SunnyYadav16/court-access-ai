@@ -10,11 +10,13 @@
 #   airflow — Airflow scheduler/workers with courtaccess package pre-installed
 #
 # Images are pushed to Google Artifact Registry:
-#   us-east1-docker.pkg.dev/{GCP_PROJECT_ID}/courtaccess-repo/courtaccess-api:{sha}
-#   us-east1-docker.pkg.dev/{GCP_PROJECT_ID}/courtaccess-repo/courtaccess-airflow:{sha}
+#   {GCP_ARTIFACT_REGISTRY}/{GCP_PROJECT_ID}/{GCP_ARTIFACT_REPOSITORY}/courtaccess-api:{sha}
+#   {GCP_ARTIFACT_REGISTRY}/{GCP_PROJECT_ID}/{GCP_ARTIFACT_REPOSITORY}/courtaccess-airflow:{sha}
 #
 # Required GitHub Actions repository variables (Settings → Variables → Actions):
-#   GCP_PROJECT_ID  — GCP project ID (non-sensitive, use vars not secrets)
+#   GCP_PROJECT_ID           — GCP project ID (non-sensitive, use vars not secrets)
+#   GCP_ARTIFACT_REGISTRY    — Registry location (e.g., us-east1-docker.pkg.dev)
+#   GCP_ARTIFACT_REPOSITORY  — Repository name (e.g., courtaccess-repo)
 #
 # Required GitHub Actions secrets (Settings → Secrets → Actions):
 #   GCP_WORKLOAD_IDENTITY_PROVIDER — full WIF provider resource name
@@ -24,10 +26,10 @@
 #   NOTIFY_EMAIL_PASSWORD          — SMTP password for the sender account
 #
 # Artifact Registry setup (one-time):
-#   gcloud artifacts repositories create courtaccess-repo \
+#   gcloud artifacts repositories create $GCP_ARTIFACT_REPOSITORY \
 #     --repository-format=docker --location=us-east1
-#   gcloud projects add-iam-policy-binding $PROJECT_ID \
-#     --member="serviceAccount:{SA}" \
+#   gcloud projects add-iam-policy-binding $GCP_PROJECT_ID \
+#     --member="serviceAccount:${GCP_SERVICE_ACCOUNT}" \
 #     --role="roles/artifactregistry.writer"
 
 name: Build & Push Images
@@ -50,8 +52,8 @@ defaults:
     shell: bash
 
 env:
-  REGISTRY: us-east1-docker.pkg.dev
-  REPOSITORY: courtaccess-repo
+  REGISTRY: ${{ vars.GCP_ARTIFACT_REGISTRY }}
+  REPOSITORY: ${{ vars.GCP_ARTIFACT_REPOSITORY }}
   API_IMAGE: courtaccess-api
   AIRFLOW_IMAGE: courtaccess-airflow
 
@@ -95,7 +97,8 @@ jobs:
         id: tags
         run: |
           SHORT_SHA="${GITHUB_SHA::7}"
-          BASE="${{ env.REGISTRY }}/${{ vars.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}"
+          PROJECT_ID="${{ vars.GCP_PROJECT_ID }}"
+          BASE="${{ env.REGISTRY }}/${PROJECT_ID}/${{ env.REPOSITORY }}"
           echo "short_sha=${SHORT_SHA}"                                        >> "$GITHUB_OUTPUT"
           echo "api_tag=${BASE}/${{ env.API_IMAGE }}:${SHORT_SHA}"             >> "$GITHUB_OUTPUT"
           echo "api_latest=${BASE}/${{ env.API_IMAGE }}:latest"                >> "$GITHUB_OUTPUT"

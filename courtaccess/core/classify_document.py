@@ -37,11 +37,11 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_USE_REAL = os.getenv("USE_REAL_CLASSIFICATION", "false").lower() == "true"
-_VERTEX_PROJECT_ID = os.getenv("VERTEX_PROJECT_ID", "")
-_VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", "")
-_VERTEX_MODEL = os.getenv("VERTEX_LEGAL_LLM_MODEL", "")
-_GCP_SA_JSON = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "")
+_USE_REAL = str(os.getenv("USE_REAL_CLASSIFICATION")).lower() == "true"
+_VERTEX_PROJECT_ID = os.getenv("VERTEX_PROJECT_ID")
+_VERTEX_LOCATION = os.getenv("VERTEX_LOCATION")
+_VERTEX_MODEL = os.getenv("VERTEX_LEGAL_LLM_MODEL")
+_GCP_SA_JSON = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
 _MAX_PAGES = 3  # only classify first 3 pages
 
 
@@ -73,7 +73,18 @@ def classify_document(pdf_path: str) -> dict:
     if not Path(pdf_path).exists():
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
-    if _USE_REAL and _VERTEX_PROJECT_ID and _GCP_SA_JSON:
+    has_auth = bool(_GCP_SA_JSON)
+    if not has_auth:
+        import google.auth
+        import google.auth.exceptions
+
+        try:
+            google.auth.default()
+            has_auth = True
+        except google.auth.exceptions.DefaultCredentialsError:
+            pass
+
+    if _USE_REAL and _VERTEX_PROJECT_ID and has_auth:
         return _real_classify(pdf_path)
     return _stub_classify(pdf_path)
 

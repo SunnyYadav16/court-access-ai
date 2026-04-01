@@ -16,17 +16,11 @@ and flags significant imbalances.
 
 import logging
 import math
+import os
 from collections import Counter, defaultdict
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 logger = logging.getLogger(__name__)
-
-# ── Thresholds ────────────────────────────────────────────────────────────────
-# A division is "underserved" if its form count is below this fraction of the mean.
-UNDERSERVED_THRESHOLD = 0.5  # Less than 50% of average → flagged
-
-# A language is "underserved" if translation coverage is below this percentage.
-TRANSLATION_COVERAGE_THRESHOLD = 20  # Less than 20% coverage → flagged
 
 
 def _compute_stats(values: list[float]) -> dict:
@@ -51,24 +45,53 @@ def _compute_stats(values: list[float]) -> dict:
     }
 
 
-def run_bias_detection(catalog: list[dict]) -> dict:
+def run_bias_detection(
+    catalog: list[dict],
+    underserved_threshold: float | None = None,
+    translation_coverage_min: float | None = None,
+    language_gap_max: float | None = None,
+) -> dict:
     """
     Analyze the form catalog for coverage bias across divisions,
     languages, and section headings.
 
     Args:
         catalog: The full form catalog (list of dicts).
+        underserved_threshold: Override for BIAS_UNDERSERVED_THRESHOLD.
+        translation_coverage_min: Override for BIAS_TRANSLATION_COVERAGE_MIN.
+        language_gap_max: Override for BIAS_LANGUAGE_GAP_MAX.
 
     Returns:
         A bias report dict with sliced analysis and flagged imbalances.
     """
+    threshold_underserved = (
+        underserved_threshold if underserved_threshold is not None else float(os.getenv("BIAS_UNDERSERVED_THRESHOLD"))
+    )
+    threshold_translation = (
+        translation_coverage_min
+        if translation_coverage_min is not None
+        else float(os.getenv("BIAS_TRANSLATION_COVERAGE_MIN"))
+    )
+    threshold_language_gap = (
+        language_gap_max if language_gap_max is not None else float(os.getenv("BIAS_LANGUAGE_GAP_MAX"))
+    )
+
     # Only analyze active forms
     active_forms = [f for f in catalog if f.get("status") == "active"]
     total_active = len(active_forms)
 
     if total_active == 0:
         logger.warning("No active forms in catalog — skipping bias detection.")
-        return {"total_active": 0, "slices": {}, "bias_flags": []}
+        return {
+            "total_active": 0,
+            "slices": {},
+            "bias_flags": [],
+            "thresholds": {
+                "underserved_division_pct": threshold_underserved * 100,
+                "translation_coverage_min_pct": threshold_translation,
+                "language_gap_max_pct": threshold_language_gap,
+            },
+        }
 
     bias_flags: list[dict] = []
 
@@ -120,22 +143,22 @@ def run_bias_detection(catalog: list[dict]) -> dict:
         }
 
         # Flag underserved divisions (form count)
-        if total < mean_forms * UNDERSERVED_THRESHOLD:
+        if total < mean_forms * threshold_underserved:
             bias_flags.append(
                 {
                     "type": "underserved_division",
                     "dimension": "division",
                     "slice": div,
                     "severity": "WARNING",
-                    "detail": f"'{div}' has {total} forms — below {UNDERSERVED_THRESHOLD * 100:.0f}% "
+                    "detail": f"'{div}' has {total} forms — below {threshold_underserved * 100:.0f}% "
                     f"of the mean ({mean_forms:.0f}). May indicate incomplete scraping.",
                     "value": total,
-                    "threshold": round(mean_forms * UNDERSERVED_THRESHOLD, 1),
+                    "threshold": round(mean_forms * threshold_underserved, 1),
                 }
             )
 
         # Flag divisions with low ES translation coverage
-        if total > 0 and es_pct < TRANSLATION_COVERAGE_THRESHOLD:
+        if total > 0 and es_pct < threshold_translation:
             bias_flags.append(
                 {
                     "type": "low_translation_coverage",
@@ -145,12 +168,12 @@ def run_bias_detection(catalog: list[dict]) -> dict:
                     "detail": f"'{div}' has {es_pct}% Spanish coverage ({es_count}/{total}). "
                     f"LEP Spanish speakers in this division are underserved.",
                     "value": es_pct,
-                    "threshold": TRANSLATION_COVERAGE_THRESHOLD,
+                    "threshold": threshold_translation,
                 }
             )
 
         # Flag divisions with low PT translation coverage
-        if total > 0 and pt_pct < TRANSLATION_COVERAGE_THRESHOLD:
+        if total > 0 and pt_pct < threshold_translation:
             bias_flags.append(
                 {
                     "type": "low_translation_coverage",
@@ -160,7 +183,7 @@ def run_bias_detection(catalog: list[dict]) -> dict:
                     "detail": f"'{div}' has {pt_pct}% Portuguese coverage ({pt_count}/{total}). "
                     f"LEP Portuguese speakers in this division are underserved.",
                     "value": pt_pct,
-                    "threshold": TRANSLATION_COVERAGE_THRESHOLD,
+                    "threshold": threshold_translation,
                 }
             )
 
@@ -193,7 +216,7 @@ def run_bias_detection(catalog: list[dict]) -> dict:
 
     # Flag overall language gaps
     es_pt_gap = abs(es_overall_pct - pt_overall_pct)
-    if es_pt_gap > 30:
+    if es_pt_gap > threshold_language_gap:
         higher = "Spanish" if es_overall_pct > pt_overall_pct else "Portuguese"
         lower = "Portuguese" if higher == "Spanish" else "Spanish"
         bias_flags.append(
@@ -206,7 +229,7 @@ def run_bias_detection(catalog: list[dict]) -> dict:
                 f"while {lower} has {min(es_overall_pct, pt_overall_pct)}%. "
                 f"Gap of {es_pt_gap:.1f}% indicates unequal language support.",
                 "value": es_pt_gap,
-                "threshold": 30,
+                "threshold": threshold_language_gap,
             }
         )
 
@@ -284,9 +307,9 @@ def run_bias_detection(catalog: list[dict]) -> dict:
         "bias_flags": bias_flags,
         "bias_count": len(bias_flags),
         "thresholds": {
-            "underserved_division_pct": UNDERSERVED_THRESHOLD * 100,
-            "translation_coverage_min_pct": TRANSLATION_COVERAGE_THRESHOLD,
-            "language_gap_max_pct": 30,
+            "underserved_division_pct": threshold_underserved * 100,
+            "translation_coverage_min_pct": threshold_translation,
+            "language_gap_max_pct": threshold_language_gap,
         },
     }
 

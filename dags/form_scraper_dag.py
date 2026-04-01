@@ -37,16 +37,16 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = "/opt/airflow"
 
 # ── Runtime infra constants (DAGs use os.getenv directly) ────────────────────
-_GCS_BUCKET_FORMS = os.getenv("GCS_BUCKET_FORMS", "courtaccess-ai-forms")
+_GCS_BUCKET_FORMS = os.getenv("GCS_BUCKET_FORMS")
 AIRFLOW_SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000001"
 
 # ── Anomaly thresholds ───────────────────────────────────────────────────────
-THRESHOLD_FORM_DROP_PCT = 20  # Alert if active forms drop >20%
-THRESHOLD_MASS_NEW_FORMS = 50  # Alert if >50 new forms in one run
-THRESHOLD_DOWNLOAD_FAIL_PCT = 10  # Alert if >10% of forms fail to download
-THRESHOLD_MIN_PDF_SIZE_BYTES = 1024  # Alert if PDF is <1KB (likely error page)
-THRESHOLD_MAX_PDF_SIZE_BYTES = 50 * 1024 * 1024  # Alert if PDF is >50MB
-THRESHOLD_SCHEMA_ERRORS = 0  # Alert if any schema validation errors
+THRESHOLD_FORM_DROP_PCT = float(os.getenv("ANOMALY_FORM_DROP_PCT"))
+THRESHOLD_MASS_NEW_FORMS = int(os.getenv("ANOMALY_MASS_NEW_FORMS"))
+THRESHOLD_DOWNLOAD_FAIL_PCT = float(os.getenv("ANOMALY_DOWNLOAD_FAIL_PCT"))
+THRESHOLD_MIN_PDF_SIZE_BYTES = int(os.getenv("ANOMALY_MIN_PDF_SIZE_BYTES"))
+THRESHOLD_MAX_PDF_SIZE_BYTES = int(os.getenv("ANOMALY_MAX_PDF_SIZE_BYTES"))
+THRESHOLD_SCHEMA_ERRORS = int(os.getenv("ANOMALY_SCHEMA_ERRORS"))
 
 # ── DAG default args ──────────────────────────────────────────────────────────
 DEFAULT_ARGS = {
@@ -70,9 +70,23 @@ def _get_actor_id(context) -> str:
     - API-triggered run: use dag_run.conf["triggered_by_user_id"]
     - Scheduled run:     fall back to the fixed Airflow system user
     """
-    conf = (context.get("dag_run") or {}).conf or {}
-    actor_id = conf.get("triggered_by_user_id")
-    return actor_id if actor_id else AIRFLOW_SYSTEM_USER_ID
+    dag_run = context.get("dag_run")
+    if not dag_run or not getattr(dag_run, "conf", None):
+        return AIRFLOW_SYSTEM_USER_ID
+
+    actor_id = dag_run.conf.get("triggered_by_user_id")
+    if not actor_id:
+        return AIRFLOW_SYSTEM_USER_ID
+
+    try:
+        uuid.UUID(str(actor_id))
+        return actor_id
+    except ValueError:
+        logger.warning(
+            "Invalid triggered_by_user_id '%s' in dag_run.conf; falling back to AIRFLOW_SYSTEM_USER_ID.",
+            actor_id,
+        )
+        return AIRFLOW_SYSTEM_USER_ID
 
 
 def task_scrape_and_classify(**context) -> dict:
@@ -166,6 +180,7 @@ def task_upload_forms_to_gcs(**context) -> dict:
                 if not p.exists():
                     failed += 1
                     logger.warning("Local file missing (skip upload): %s", local_path)
+                    new_ver[key] = None
                     continue
 
                 try:
@@ -498,10 +513,19 @@ def task_validate_catalog(**context) -> dict:
         for j, ver in enumerate(versions):
             if j == 0 and entry["status"] == "active":
                 fp = ver.get("file_path_original")
-                if fp:
-                    # If DB already points at GCS, treat it as present.
+                if not fp:
+                    missing_pdfs += 1
+                    warnings.append(f"{prefix}: PDF missing (null/empty file_path)")
+                else:
                     if isinstance(fp, str) and fp.startswith("gs://"):
-                        pass
+                        try:
+                            b, bl = gcs.parse_gcs_uri(fp)
+                            if not gcs.blob_exists(b, bl):
+                                missing_pdfs += 1
+                                warnings.append(f"{prefix}: GCS blob not found for '{fp}'")
+                        except Exception as exc:
+                            missing_pdfs += 1
+                            warnings.append(f"{prefix}: GCS URI error '{fp}': {exc}")
                     elif not Path(fp).exists():
                         missing_pdfs += 1
                         warnings.append(f"{prefix}: PDF not found at '{fp}'")
@@ -634,6 +658,9 @@ def task_detect_anomalies(**context) -> dict:
     ti = context["ti"]
     result = ti.xcom_pull(task_ids="scrape_and_classify", key="scrape_result")
     metrics = ti.xcom_pull(task_ids="validate_catalog", key="validation_metrics")
+    dag_run_id = context.get("dag_run") or context.get("run_id") or "manual"
+    if hasattr(dag_run_id, "run_id"):
+        dag_run_id = dag_run_id.run_id
 
     if not result or not metrics:
         logger.warning("Missing scrape result or validation metrics — skipping anomaly detection.")
@@ -784,6 +811,36 @@ def task_detect_anomalies(**context) -> dict:
                 logger.warning("ANOMALY [%s]: %s", a["check"], a["message"])
         logger.info("Anomaly detection complete: %d anomaly(ies), severity: %s", len(anomalies), overall_severity)
 
+    # ── Log to MLflow (graceful fallback — DAG must never fail if MLflow is down) ──
+    try:
+        import mlflow as _mlflow
+
+        _mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI"))
+        _mlflow.set_experiment("courtaccess-bias-monitoring")
+
+        # Extract form_count_drop_pct from the anomalies list if present
+        drop_anomaly = next((a for a in anomalies if a.get("check") == "form_count_drop"), None)
+        form_count_drop_pct = 0.0
+        if drop_anomaly:
+            prev = drop_anomaly.get("prev", 0) or 0
+            curr = drop_anomaly.get("current", 0) or 0
+            form_count_drop_pct = ((prev - curr) / prev * 100) if prev > 0 else 0.0
+
+        with _mlflow.start_run(run_name=f"anomaly-detection-{dag_run_id}"):
+            _mlflow.log_metrics(
+                {
+                    "anomaly_count": float(len(anomalies)),
+                    "has_critical": float(has_critical),
+                    "form_count_drop_pct": float(form_count_drop_pct),
+                }
+            )
+        logger.info("Anomaly metrics logged to MLflow (experiment: courtaccess-bias-monitoring).")
+    except Exception as _mlflow_exc:
+        logger.warning(
+            "MLflow logging skipped for anomaly detection (MLflow unavailable): %s",
+            _mlflow_exc,
+        )
+
     context["ti"].xcom_push(key="anomaly_report", value=report)
     return report
 
@@ -792,6 +849,10 @@ def task_detect_bias(**context) -> dict:
     """Task 5 — Detect data coverage bias using data slicing."""
     logger.info("Starting bias detection / data slicing.")
     ti = context["ti"]
+    dag_run_id = context.get("dag_run") or context.get("run_id") or "manual"
+    if hasattr(dag_run_id, "run_id"):
+        dag_run_id = dag_run_id.run_id
+
     forms = (
         ti.xcom_pull(task_ids="preprocess_data", key="forms_preprocessed")
         or ti.xcom_pull(task_ids="scrape_and_classify", key="forms")
@@ -802,6 +863,44 @@ def task_detect_bias(**context) -> dict:
         return {"error": "catalog_missing"}
 
     report = run_bias_detection(forms)
+
+    # ── Log to MLflow (graceful fallback — DAG must never fail if MLflow is down) ──
+    try:
+        import mlflow as _mlflow
+
+        _mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI"))
+        _mlflow.set_experiment("courtaccess-bias-monitoring")
+
+        # Extract nested language coverage from the report
+        language_data = report.get("slices", {}).get("by_language", {}).get("data", {})
+        es_coverage = language_data.get("Spanish", {}).get("coverage_pct", 0.0)
+        pt_coverage = language_data.get("Portuguese", {}).get("coverage_pct", 0.0)
+        critical_count = sum(1 for f in report.get("bias_flags", []) if f.get("severity", "").upper() == "CRITICAL")
+        thresholds = report.get("thresholds", {})
+
+        with _mlflow.start_run(run_name=f"bias-detection-{dag_run_id}"):
+            _mlflow.log_metrics(
+                {
+                    "bias_flags_count": float(report.get("bias_count", 0)),
+                    "es_coverage_pct": float(es_coverage),
+                    "pt_coverage_pct": float(pt_coverage),
+                    "total_active_forms": float(report.get("total_active_forms", 0)),
+                    "critical_flags_count": float(critical_count),
+                }
+            )
+            _mlflow.log_params(
+                {
+                    "bias_underserved_threshold": str(thresholds.get("underserved_division_pct", "")),
+                    "bias_translation_coverage_min": str(thresholds.get("translation_coverage_min_pct", "")),
+                    "language_gap_max_pct": str(thresholds.get("language_gap_max_pct", "")),
+                }
+            )
+        logger.info("Bias metrics logged to MLflow (experiment: courtaccess-bias-monitoring).")
+    except Exception as _mlflow_exc:
+        logger.warning(
+            "MLflow logging skipped for bias detection (MLflow unavailable): %s",
+            _mlflow_exc,
+        )
 
     context["ti"].xcom_push(key="bias_report", value=report)
     return report
@@ -1031,14 +1130,19 @@ with DAG(
     t7_summary = PythonOperator(
         task_id="log_summary",
         python_callable=task_log_summary,
-        # "all_done" ensures this task runs even when trigger_pretranslation is
-        # SKIPPED (i.e. task_prepare_trigger_confs returned []).  Without this,
-        # the default "all_success" rule propagates the skip state, silently
-        # dropping the form_scrape_completed audit row and breaking the
-        # _prev_active_forms_count() baseline used by detect_anomalies.
-        trigger_rule="all_done",
+        # "none_failed" ensures this task runs even when trigger_pretranslation is
+        # SKIPPED (i.e. task_prepare_trigger_confs returned []), but blocks on
+        # upstream FAILED states. Without this, the default "all_success" rule
+        # propagates the skip state, silently dropping the form_scrape_completed
+        # audit row and breaking the _prev_active_forms_count() baseline used
+        # by detect_anomalies.
+        trigger_rule="none_failed",
     )
-    t8_manifest = PythonOperator(task_id="write_manifest", python_callable=task_write_manifest)
+    t8_manifest = PythonOperator(
+        task_id="write_manifest",
+        python_callable=task_write_manifest,
+        trigger_rule="none_failed",
+    )
 
     (
         t1_scrape

@@ -95,6 +95,35 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int
     algorithm: str
 
+    # ── Monitoring & Bias Thresholds ─────────────────────────────────────────
+    bias_underserved_threshold: float = 0.5
+    bias_translation_coverage_min: float = 20.0
+    bias_language_gap_max: float = 30.0
+
+    # ── Model & Extraction Overrides ──────────────────────────────────────────
+    ocr_confidence_threshold: float = 0.35
+    vertex_max_retries: int = 3
+    translation_hallucination_ratio_max: float = 2.5
+    translation_hallucination_ratio_min: float = 0.1
+
+    # ── Anomaly Detection Thresholds ────────────────────────────────────────
+    anomaly_form_drop_pct: float = 20.0
+    anomaly_mass_new_forms: int = 50
+    anomaly_download_fail_pct: float = 10.0
+    anomaly_min_pdf_size_bytes: int = 1024
+    anomaly_max_pdf_size_bytes: int = 50 * 1024 * 1024
+    anomaly_schema_errors: int = 0
+
+    # ── Scraper Tuning ────────────────────────────────────────────────────────
+    scraper_batch_size: int = 10
+    scraper_batch_sleep_sec: int = 15
+    scraper_pre_download_sleep: int = 60
+    scraper_request_timeout: int = 30
+
+    # ── Processor Tuning ──────────────────────────────────────────────────────
+    pdf_render_dpi: int = 300
+    validation_confidence_threshold: float = 0.85
+
 
 settings = Settings()
 

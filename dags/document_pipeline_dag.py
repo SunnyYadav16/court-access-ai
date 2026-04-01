@@ -62,13 +62,13 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-_GCS_BUCKET_UPLOADS = os.getenv("GCS_BUCKET_UPLOADS", "courtaccess-ai-uploads")
-_GCS_BUCKET_TRANSLATED = os.getenv("GCS_BUCKET_TRANSLATED", "courtaccess-ai-translated")
-_SIGNED_URL_EXPIRY = int(os.getenv("SIGNED_URL_EXPIRY_SECONDS", "3600"))
-_GCP_SA_JSON = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "")
+_GCS_BUCKET_UPLOADS = os.getenv("GCS_BUCKET_UPLOADS")
+_GCS_BUCKET_TRANSLATED = os.getenv("GCS_BUCKET_TRANSLATED")
+_SIGNED_URL_EXPIRY = int(os.getenv("SIGNED_URL_EXPIRY_SECONDS"))
+_GCP_SA_JSON = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
 
 # Strip +asyncpg — Airflow tasks run in sync processes, asyncpg is unusable here
-_DB_URL = os.getenv("DATABASE_URL", "").replace("+asyncpg", "")
+_DB_URL = os.getenv("DATABASE_URL").replace("+asyncpg", "")
 if not _DB_URL:
     raise RuntimeError(
         "DATABASE_URL is not set in the Airflow environment. Add it to &airflow-common-env in docker-compose.yml."
@@ -446,7 +446,7 @@ def task_ocr_printed_text(**context) -> dict:
     translatable = sum(1 for r in regions if not r.get("preserve", False))
     preserved = total - translatable
     avg_conf = sum(r.get("confidence", 1.0) for r in regions) / max(total, 1)
-    engine_label = "PaddleOCR" if os.getenv("USE_REAL_OCR", "false").lower() == "true" else "PyMuPDF"
+    engine_label = "PaddleOCR" if str(os.getenv("USE_REAL_OCR")).lower() == "true" else "PyMuPDF"
 
     _write_step(
         session_id,
@@ -687,7 +687,7 @@ def task_reconstruct_pdf(**context) -> dict:
     )
 
     # Copy output to mounted data dir for inspection (dev only)
-    if os.getenv("APP_ENV", "development") == "development":
+    if os.getenv("APP_ENV") == "development":
         shutil.copy2(output_path, f"/opt/airflow/data/output_{target_lang}.pdf")
 
     size_mb = round(Path(output_path).stat().st_size / 1_048_576, 2)

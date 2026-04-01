@@ -64,6 +64,7 @@ target_metadata = Base.metadata
 # Offline mode — generate SQL script without a live DB connection
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
     context.configure(

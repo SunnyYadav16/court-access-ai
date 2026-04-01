@@ -14,6 +14,7 @@ Validation steps:
 """
 
 import logging
+import os
 import re
 from pathlib import Path
 
@@ -29,7 +30,7 @@ MAGIC_BYTES = {
 }
 
 # ── Thresholds ────────────────────────────────────────────────────────────────
-MIN_VALID_PDF_SIZE = 1024  # Files under 1KB are almost certainly not real PDFs
+MIN_VALID_PDF_SIZE = int(os.getenv("ANOMALY_MIN_PDF_SIZE_BYTES"))
 
 
 def _detect_file_type(file_path: str) -> str | None:

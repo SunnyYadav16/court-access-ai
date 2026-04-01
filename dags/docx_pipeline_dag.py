@@ -57,13 +57,13 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-_GCS_BUCKET_UPLOADS = os.getenv("GCS_BUCKET_UPLOADS", "courtaccess-ai-uploads")
-_GCS_BUCKET_TRANSLATED = os.getenv("GCS_BUCKET_TRANSLATED", "courtaccess-ai-translated")
-_SIGNED_URL_EXPIRY = int(os.getenv("SIGNED_URL_EXPIRY_SECONDS", "3600"))
-_GCP_SA_JSON = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "")
+_GCS_BUCKET_UPLOADS = os.getenv("GCS_BUCKET_UPLOADS")
+_GCS_BUCKET_TRANSLATED = os.getenv("GCS_BUCKET_TRANSLATED")
+_SIGNED_URL_EXPIRY = int(os.getenv("SIGNED_URL_EXPIRY_SECONDS"))
+_GCP_SA_JSON = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
 
 # Strip +asyncpg — Airflow tasks run in sync processes, asyncpg is unusable here
-_DB_URL = os.getenv("DATABASE_URL", "").replace("+asyncpg", "")
+_DB_URL = os.getenv("DATABASE_URL").replace("+asyncpg", "")
 if not _DB_URL:
     raise RuntimeError(
         "DATABASE_URL is not set in the Airflow environment. Add it to &airflow-common-env in docker-compose.yml."
@@ -230,6 +230,8 @@ def task_validate_upload(**context) -> dict:
     Download DOCX from GCS, verify PK ZIP magic bytes, mark session as 'processing'.
     XCom → upload_meta (small dict, pushed directly)
     """
+    import re
+
     conf = context["dag_run"].conf or {}
     session_id = conf.get("session_id", str(uuid.uuid4()))
     request_id = conf.get("request_id", str(uuid.uuid4()))
@@ -237,7 +239,15 @@ def task_validate_upload(**context) -> dict:
     gcs_path = conf.get("gcs_input_path", "")
     target_lang = conf.get("target_lang", "es")
     nllb_target = conf.get("nllb_target", _NLLB_TARGET.get(target_lang, "spa_Latn"))
-    filename = conf.get("filename", "document.docx")
+
+    # Sanitize filename to prevent path traversal
+    raw_filename = conf.get("filename", "document.docx")
+    safe_name = os.path.basename(raw_filename)
+    safe_name = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", safe_name)
+    if not safe_name or safe_name.startswith("."):
+        safe_name = f"document_{uuid.uuid4().hex[:8]}.docx"
+    filename = safe_name
+
     start_time = conf.get("start_time", datetime.now(tz=UTC).isoformat())
     original_format = conf.get("original_format", "docx")
 
@@ -348,7 +358,7 @@ def task_translate_docx(**context) -> dict:
     )
 
     # Copy output to mounted data dir for inspection (dev only)
-    if os.getenv("APP_ENV", "development") == "development":
+    if os.getenv("APP_ENV") == "development":
         shutil.copy2(output_path, f"/opt/airflow/data/output_{target_lang}.docx")
 
     size_mb = round(Path(output_path).stat().st_size / 1_048_576, 2)
