@@ -34,6 +34,7 @@ JSON schema per form:
 import hashlib
 import io
 import logging
+import os
 import time
 import uuid
 import zipfile
@@ -42,8 +43,6 @@ from pathlib import Path
 
 import requests
 from playwright.sync_api import sync_playwright
-
-from courtaccess.core.config import settings
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 logger = logging.getLogger(__name__)
@@ -63,10 +62,10 @@ PROJECT_DIR = DAGS_DIR.parent
 FORMS_DIR = PROJECT_DIR / "forms"
 
 # ── Batch download settings ───────────────────────────────────────────────────
-BATCH_SIZE = settings.scraper_batch_size
-BATCH_SLEEP_SEC = settings.scraper_batch_sleep_sec
-PRE_DOWNLOAD_SLEEP = settings.scraper_pre_download_sleep
-REQUEST_TIMEOUT = settings.scraper_request_timeout
+BATCH_SIZE = int(os.getenv("SCRAPER_BATCH_SIZE"))
+BATCH_SLEEP_SEC = int(os.getenv("SCRAPER_BATCH_SLEEP_SEC"))
+PRE_DOWNLOAD_SLEEP = int(os.getenv("SCRAPER_PRE_DOWNLOAD_SLEEP"))
+REQUEST_TIMEOUT = int(os.getenv("SCRAPER_REQUEST_TIMEOUT"))
 HEADERS = {
     # Mimic a real browser so mass.gov doesn't block us with a 403.
     "User-Agent": (

@@ -419,7 +419,7 @@ def run_sensitivity_analysis(catalog_path: Path | None = None) -> dict[str, Any]
 
         from courtaccess.core.config import settings
 
-        tracking_uri = settings.mlflow_tracking_uri or os.getenv("MLFLOW_TRACKING_URI", "file:///tmp/mlflow")
+        tracking_uri = settings.mlflow_tracking_uri or os.getenv("MLFLOW_TRACKING_URI")
         _mlflow.set_tracking_uri(tracking_uri)
         _mlflow.set_experiment(EXPERIMENT_NAME)
         mlflow = _mlflow

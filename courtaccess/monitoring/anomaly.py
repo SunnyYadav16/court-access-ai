@@ -57,9 +57,9 @@ def run_anomaly_detection(
     Returns:
         Dict matching OUTPUT CONTRACT above.
     """
-    threshold_form_drop = float(os.getenv("ANOMALY_FORM_DROP_PCT", "20.0"))
-    threshold_mass_new = int(os.getenv("ANOMALY_MASS_NEW_FORMS", "50"))
-    threshold_download_fail = float(os.getenv("ANOMALY_DOWNLOAD_FAIL_PCT", "10.0"))
+    threshold_form_drop = float(os.getenv("ANOMALY_FORM_DROP_PCT"))
+    threshold_mass_new = int(os.getenv("ANOMALY_MASS_NEW_FORMS"))
+    threshold_download_fail = float(os.getenv("ANOMALY_DOWNLOAD_FAIL_PCT"))
 
     anomalies = []
 

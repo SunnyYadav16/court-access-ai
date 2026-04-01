@@ -37,11 +37,11 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_USE_REAL = os.getenv("USE_REAL_CLASSIFICATION", "false").lower() == "true"
-_VERTEX_PROJECT_ID = os.getenv("VERTEX_PROJECT_ID", "")
-_VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", "")
-_VERTEX_MODEL = os.getenv("VERTEX_LEGAL_LLM_MODEL", "")
-_GCP_SA_JSON = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "")
+_USE_REAL = str(os.getenv("USE_REAL_CLASSIFICATION")).lower() == "true"
+_VERTEX_PROJECT_ID = os.getenv("VERTEX_PROJECT_ID")
+_VERTEX_LOCATION = os.getenv("VERTEX_LOCATION")
+_VERTEX_MODEL = os.getenv("VERTEX_LEGAL_LLM_MODEL")
+_GCP_SA_JSON = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
 _MAX_PAGES = 3  # only classify first 3 pages
 
 

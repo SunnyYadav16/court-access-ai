@@ -27,7 +27,6 @@ import logging
 import os
 import time
 
-from courtaccess.core.config import settings
 from courtaccess.languages.base import LanguageConfig
 
 logger = logging.getLogger(__name__)
@@ -35,7 +34,6 @@ logger = logging.getLogger(__name__)
 _CACHE_VERSION = 1
 _CACHE_TTL_SECONDS = 86400 * 30  # 30 days
 
-_VERTEX_MAX_RETRIES = settings.vertex_max_retries
 _VERTEX_RETRY_BACKOFF = [1, 2, 4]  # seconds between attempts
 _VERTEX_RETRYABLE_HTTP = {429, 500, 502, 503, 504}
 _NOT_VERIFIED_PREFIX = "[NOT VERIFIED — Vertex AI unavailable]"
@@ -64,19 +62,20 @@ class LegalReviewer:
         self.glossary = glossary or {}
         self.verification_mode = verification_mode  # "document" | "audio"
 
-        self._use_vertex = os.getenv("USE_VERTEX_LEGAL_REVIEW", "false").lower() == "true"
+        self._vertex_max_retries = int(os.getenv("VERTEX_MAX_RETRIES"))
+        self._use_vertex = str(os.getenv("USE_VERTEX_LEGAL_REVIEW")).lower() == "true"
 
-        self._vertex_project_id = os.getenv("VERTEX_PROJECT_ID", "")
-        self._vertex_location = os.getenv("VERTEX_LOCATION", "")
-        self.vertex_legal_llm_model = os.getenv("VERTEX_LEGAL_LLM_MODEL", "")
-        self._gcp_sa_json = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "")
+        self._vertex_project_id = os.getenv("VERTEX_PROJECT_ID")
+        self._vertex_location = os.getenv("VERTEX_LOCATION")
+        self.vertex_legal_llm_model = os.getenv("VERTEX_LEGAL_LLM_MODEL")
+        self._gcp_sa_json = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
 
         self._vertex_credentials = None
         self._cache_hits = 0
         self._cache_misses = 0
 
         # Redis — lazy connection, graceful degradation
-        self._redis_url = os.getenv("REDIS_URL", "")
+        self._redis_url = os.getenv("REDIS_URL")
         self._redis = None
         self._redis_available = True  # set False on first connection failure
 
@@ -280,7 +279,7 @@ class LegalReviewer:
         """
         Vertex AI Llama 4 batch call with retry logic.
 
-        Retried (up to _VERTEX_MAX_RETRIES times):
+        Retried (up to self._vertex_max_retries times):
           - Network/service errors: ConnectionError, TimeoutError
           - HTTP status errors: 429, 500, 502, 503, 504
           - 401 token expiry: refreshes credentials, counts as one attempt
@@ -298,7 +297,7 @@ class LegalReviewer:
         prompt = self._build_verification_prompt(original_batch, translated_batch, snippet)
         last_exc = None
 
-        for attempt in range(_VERTEX_MAX_RETRIES):
+        for attempt in range(self._vertex_max_retries):
             try:
                 client = self._get_vertex_client()
                 resp = client.chat.completions.create(
@@ -360,7 +359,7 @@ class LegalReviewer:
                     logger.warning(
                         "Vertex token expired (attempt %d/%d) — refreshing",
                         attempt + 1,
-                        _VERTEX_MAX_RETRIES,
+                        self._vertex_max_retries,
                     )
                     self._vertex_credentials = None
                     continue
@@ -375,7 +374,7 @@ class LegalReviewer:
                     logger.warning(
                         "Vertex retryable error (attempt %d/%d, retrying in %ds): %s",
                         attempt + 1,
-                        _VERTEX_MAX_RETRIES,
+                        self._vertex_max_retries,
                         wait,
                         exc,
                     )
@@ -389,7 +388,7 @@ class LegalReviewer:
         # All retries exhausted
         logger.error(
             "Vertex AI unavailable after %d attempts: %s — returning NLLB output with warning",
-            _VERTEX_MAX_RETRIES,
+            self._vertex_max_retries,
             last_exc,
         )
         return [f"{_NOT_VERIFIED_PREFIX} {t}" for t in translated_batch]

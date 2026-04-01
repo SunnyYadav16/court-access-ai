@@ -30,7 +30,7 @@ from courtaccess.core.logger import get_logger
 
 logger = get_logger(__name__)
 
-_USE_REAL = os.getenv("USE_REAL_HANDWRITING_OCR", "false").lower() == "true"
+_USE_REAL = str(os.getenv("USE_REAL_HANDWRITING_OCR")).lower() == "true"
 _CONFIDENCE_THRESHOLD = 0.6  # Only process regions below this confidence
 
 
@@ -96,7 +96,7 @@ def _real_extract(
         from PIL import Image
         from transformers import AutoProcessor, Qwen2VLForConditionalGeneration
 
-        model_path = os.getenv("QWEN_VL_MODEL_PATH", "/opt/models/qwen2.5-vl")
+        model_path = os.getenv("QWEN_VL_MODEL_PATH")
         processor = AutoProcessor.from_pretrained(model_path)
         model = Qwen2VLForConditionalGeneration.from_pretrained(
             model_path,

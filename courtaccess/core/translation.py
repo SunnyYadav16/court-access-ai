@@ -112,7 +112,7 @@ class Translator:
         from courtaccess.core.config import settings
 
         self.config = config
-        self._use_real = os.getenv("USE_REAL_TRANSLATION", "false").lower() == "true"
+        self._use_real = str(os.getenv("USE_REAL_TRANSLATION")).lower() == "true"
         self._hallucination_max = settings.translation_hallucination_ratio_max
         self._hallucination_min = settings.translation_hallucination_ratio_min
         self._nlp = None  # spaCy — always loaded in load()

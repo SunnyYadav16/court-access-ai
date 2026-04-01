@@ -24,7 +24,6 @@ from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 
 from courtaccess.core import gcs
-from courtaccess.core.config import settings
 from courtaccess.core.validation import run_preprocessing
 from courtaccess.forms.scraper import run_scrape
 from courtaccess.monitoring.drift import run_bias_detection
@@ -38,16 +37,16 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = "/opt/airflow"
 
 # ── Runtime infra constants (DAGs use os.getenv directly) ────────────────────
-_GCS_BUCKET_FORMS = os.getenv("GCS_BUCKET_FORMS", "courtaccess-ai-forms")
+_GCS_BUCKET_FORMS = os.getenv("GCS_BUCKET_FORMS")
 AIRFLOW_SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000001"
 
 # ── Anomaly thresholds ───────────────────────────────────────────────────────
-THRESHOLD_FORM_DROP_PCT = settings.anomaly_form_drop_pct
-THRESHOLD_MASS_NEW_FORMS = settings.anomaly_mass_new_forms
-THRESHOLD_DOWNLOAD_FAIL_PCT = settings.anomaly_download_fail_pct
-THRESHOLD_MIN_PDF_SIZE_BYTES = settings.anomaly_min_pdf_size_bytes
-THRESHOLD_MAX_PDF_SIZE_BYTES = settings.anomaly_max_pdf_size_bytes
-THRESHOLD_SCHEMA_ERRORS = settings.anomaly_schema_errors
+THRESHOLD_FORM_DROP_PCT = float(os.getenv("ANOMALY_FORM_DROP_PCT"))
+THRESHOLD_MASS_NEW_FORMS = int(os.getenv("ANOMALY_MASS_NEW_FORMS"))
+THRESHOLD_DOWNLOAD_FAIL_PCT = float(os.getenv("ANOMALY_DOWNLOAD_FAIL_PCT"))
+THRESHOLD_MIN_PDF_SIZE_BYTES = int(os.getenv("ANOMALY_MIN_PDF_SIZE_BYTES"))
+THRESHOLD_MAX_PDF_SIZE_BYTES = int(os.getenv("ANOMALY_MAX_PDF_SIZE_BYTES"))
+THRESHOLD_SCHEMA_ERRORS = int(os.getenv("ANOMALY_SCHEMA_ERRORS"))
 
 # ── DAG default args ──────────────────────────────────────────────────────────
 DEFAULT_ARGS = {
@@ -792,7 +791,7 @@ def task_detect_anomalies(**context) -> dict:
     try:
         import mlflow as _mlflow
 
-        _mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "file:///tmp/mlflow"))
+        _mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI"))
         _mlflow.set_experiment("courtaccess-bias-monitoring")
 
         # Extract form_count_drop_pct from the anomalies list if present
@@ -845,7 +844,7 @@ def task_detect_bias(**context) -> dict:
     try:
         import mlflow as _mlflow
 
-        _mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "file:///tmp/mlflow"))
+        _mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI"))
         _mlflow.set_experiment("courtaccess-bias-monitoring")
 
         # Extract nested language coverage from the report

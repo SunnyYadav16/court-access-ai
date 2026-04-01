@@ -56,7 +56,7 @@ logger = logging.getLogger(__name__)
 
 # ── Paths (inside Docker container) ──────────────────────────────────────────
 PROJECT_ROOT = "/opt/airflow"
-_GCS_BUCKET_FORMS = os.getenv("GCS_BUCKET_FORMS", "courtaccess-ai-forms")
+_GCS_BUCKET_FORMS = os.getenv("GCS_BUCKET_FORMS")
 AIRFLOW_SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000001"
 
 # ── NLLB-200 language codes ───────────────────────────────────────────────────

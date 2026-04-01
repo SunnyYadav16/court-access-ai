@@ -65,17 +65,15 @@ def run_bias_detection(
         A bias report dict with sliced analysis and flagged imbalances.
     """
     threshold_underserved = (
-        underserved_threshold
-        if underserved_threshold is not None
-        else float(os.getenv("BIAS_UNDERSERVED_THRESHOLD", "0.5"))
+        underserved_threshold if underserved_threshold is not None else float(os.getenv("BIAS_UNDERSERVED_THRESHOLD"))
     )
     threshold_translation = (
         translation_coverage_min
         if translation_coverage_min is not None
-        else float(os.getenv("BIAS_TRANSLATION_COVERAGE_MIN", "20.0"))
+        else float(os.getenv("BIAS_TRANSLATION_COVERAGE_MIN"))
     )
     threshold_language_gap = (
-        language_gap_max if language_gap_max is not None else float(os.getenv("BIAS_LANGUAGE_GAP_MAX", "30.0"))
+        language_gap_max if language_gap_max is not None else float(os.getenv("BIAS_LANGUAGE_GAP_MAX"))
     )
 
     # Only analyze active forms
