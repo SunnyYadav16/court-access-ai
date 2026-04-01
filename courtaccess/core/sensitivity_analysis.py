@@ -42,7 +42,7 @@ import logging
 import math
 import os
 from contextlib import suppress
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -357,7 +357,7 @@ def run_input_characteristics(mlflow) -> dict[str, Any] | None:
         # ── Log to MLflow ─────────────────────────────────────────────────────
         if mlflow is not None:
             try:
-                date = datetime.utcnow().strftime("%Y-%m-%d")
+                date = datetime.now(UTC).strftime("%Y-%m-%d")
                 flat_metrics: dict[str, float] = {
                     "row_count": float(len(rows)),
                     "time_confidence_correlation": float(time_conf_corr) if time_conf_corr is not None else 0.0,

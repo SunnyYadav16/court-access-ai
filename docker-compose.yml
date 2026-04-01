@@ -113,6 +113,34 @@ x-airflow-common:
     PDF_RENDER_DPI: ${PDF_RENDER_DPI}
     VALIDATION_CONFIDENCE_THRESHOLD: ${VALIDATION_CONFIDENCE_THRESHOLD}
 
+    # ── Application ──
+    APP_ENV: ${APP_ENV}
+
+    # ── Database (sync psycopg2 — asyncpg is unusable in Airflow task processes) ──
+    DATABASE_URL: "postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}"
+
+    # ── Google Cloud / GCS ──
+    GCP_SERVICE_ACCOUNT_JSON: ${GCP_SERVICE_ACCOUNT_JSON}
+    GCS_BUCKET_UPLOADS: ${GCS_BUCKET_UPLOADS}
+    GCS_BUCKET_TRANSLATED: ${GCS_BUCKET_TRANSLATED}
+    SIGNED_URL_EXPIRY_SECONDS: ${SIGNED_URL_EXPIRY_SECONDS}
+
+    # ── Vertex AI ──
+    VERTEX_PROJECT_ID: ${VERTEX_PROJECT_ID}
+    VERTEX_LOCATION: ${VERTEX_LOCATION}
+    VERTEX_LEGAL_LLM_MODEL: ${VERTEX_LEGAL_LLM_MODEL}
+    LEGAL_VERIFY_TIMEOUT: ${LEGAL_VERIFY_TIMEOUT}
+
+    # ── Feature flags (controls stub vs real mode for every DAG task) ──
+    USE_REAL_CLASSIFICATION: ${USE_REAL_CLASSIFICATION}
+    USE_REAL_TRANSLATION: ${USE_REAL_TRANSLATION}
+    USE_VERTEX_LEGAL_REVIEW: ${USE_VERTEX_LEGAL_REVIEW}
+    USE_REAL_OCR: ${USE_REAL_OCR}
+    NLLB_MODEL_PATH: /opt/airflow/models/nllb-200-distilled-1.3B-ct2
+    WHISPER_MODEL_PATH: /opt/airflow/models/whisper-large-v3
+    PIPER_TTS_ES_PATH: /opt/airflow/models/piper-tts-es
+    PIPER_TTS_PT_PATH: /opt/airflow/models/piper-tts-pt
+
     # ── Additional pip packages (dev only — prefer Dockerfile for production) ──
     _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-}
 

@@ -61,6 +61,10 @@ jobs:
       DEBUG: "false"
       SECRET_KEY: "sensitivity-ci-key"
       ALLOWED_ORIGINS: "http://localhost:3000"
+      # ── GCP Auth Secrets (Exported for steps) ──
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER || '' }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT || '' }}
+
       # ── Database — set via secret for real DB, or leave empty to skip Sub-B ──
       DATABASE_URL: ${{ secrets.DATABASE_URL || '' }}
       POSTGRES_USER: "ci"
@@ -125,10 +129,10 @@ jobs:
         # still run with an empty catalog (logs a warning and continues).
         id: gcp-auth
         uses: google-github-actions/auth@v2
-        if: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
+        if: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
         with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
         continue-on-error: true
 
       - name: Install DVC with GCS support

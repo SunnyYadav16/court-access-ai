@@ -10,11 +10,13 @@
 #   airflow — Airflow scheduler/workers with courtaccess package pre-installed
 #
 # Images are pushed to Google Artifact Registry:
-#   us-east1-docker.pkg.dev/{GCP_PROJECT_ID}/courtaccess-repo/courtaccess-api:{sha}
-#   us-east1-docker.pkg.dev/{GCP_PROJECT_ID}/courtaccess-repo/courtaccess-airflow:{sha}
+#   {GCP_ARTIFACT_REGISTRY}/{GCP_PROJECT_ID}/{GCP_ARTIFACT_REPOSITORY}/courtaccess-api:{sha}
+#   {GCP_ARTIFACT_REGISTRY}/{GCP_PROJECT_ID}/{GCP_ARTIFACT_REPOSITORY}/courtaccess-airflow:{sha}
 #
 # Required GitHub Actions repository variables (Settings → Variables → Actions):
-#   GCP_PROJECT_ID  — GCP project ID (non-sensitive, use vars not secrets)
+#   GCP_PROJECT_ID           — GCP project ID (non-sensitive, use vars not secrets)
+#   GCP_ARTIFACT_REGISTRY    — Registry location (e.g., us-east1-docker.pkg.dev)
+#   GCP_ARTIFACT_REPOSITORY  — Repository name (e.g., courtaccess-repo)
 #
 # Required GitHub Actions secrets (Settings → Secrets → Actions):
 #   GCP_WORKLOAD_IDENTITY_PROVIDER — full WIF provider resource name
@@ -24,10 +26,10 @@
 #   NOTIFY_EMAIL_PASSWORD          — SMTP password for the sender account
 #
 # Artifact Registry setup (one-time):
-#   gcloud artifacts repositories create courtaccess-repo \
+#   gcloud artifacts repositories create $GCP_ARTIFACT_REPOSITORY \
 #     --repository-format=docker --location=us-east1
-#   gcloud projects add-iam-policy-binding $PROJECT_ID \
-#     --member="serviceAccount:{SA}" \
+#   gcloud projects add-iam-policy-binding $GCP_PROJECT_ID \
+#     --member="serviceAccount:${GCP_SERVICE_ACCOUNT}" \
 #     --role="roles/artifactregistry.writer"
 
 name: Build & Push Images

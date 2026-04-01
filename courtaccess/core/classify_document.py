@@ -73,7 +73,18 @@ def classify_document(pdf_path: str) -> dict:
     if not Path(pdf_path).exists():
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
-    if _USE_REAL and _VERTEX_PROJECT_ID and _GCP_SA_JSON:
+    has_auth = bool(_GCP_SA_JSON)
+    if not has_auth:
+        import google.auth
+        import google.auth.exceptions
+
+        try:
+            google.auth.default()
+            has_auth = True
+        except google.auth.exceptions.DefaultCredentialsError:
+            pass
+
+    if _USE_REAL and _VERTEX_PROJECT_ID and has_auth:
         return _real_classify(pdf_path)
     return _stub_classify(pdf_path)
 

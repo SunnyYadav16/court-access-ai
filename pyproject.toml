@@ -47,7 +47,7 @@ dependencies = [
     "firebase-admin>=6.9.0",
     "psycopg2-binary>=2.9.11",
     "huggingface-hub>=1.7.1",
-    "mlflow>=3.10.1",
+    "mlflow>=3.9.0",
     "apache-airflow>=3.1.8",
 ]
 

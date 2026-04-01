@@ -486,18 +486,11 @@ async def delete_document(
     user: CurrentUser,
     db: DBSession,
 ) -> None:
-    # ── Fetch session + request ──────────────────────────────────────────────
-    result = await db.execute(
-        select(SessionModel, TranslationRequest)
-        .join(TranslationRequest, TranslationRequest.session_id == SessionModel.session_id)
-        .where(SessionModel.session_id == session_id)
-        .limit(1)
-    )
-    row = result.first()
-    if not row:
+    # ── Fetch session + all translation requests ─────────────────────────────
+    result = await db.execute(select(SessionModel).where(SessionModel.session_id == session_id))
+    session_obj = result.scalar_one_or_none()
+    if not session_obj:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-
-    session_obj, req_obj = row
 
     # ── Access control ───────────────────────────────────────────────────────
     if session_obj.user_id != user.user_id and user.role_id != 4:  # admin only
@@ -511,15 +504,21 @@ async def delete_document(
             "Wait for completion or contact an admin to cancel the DAG run.",
         )
 
+    req_result = await db.execute(select(TranslationRequest).where(TranslationRequest.session_id == session_id))
+    req_objs = req_result.scalars().all()
+
     # ── Delete GCS objects ───────────────────────────────────────────────────
-    # Run both deletes concurrently in threads — don't block on either
+    # Run deletes concurrently in threads — don't block on either
     gcs_tasks = []
     if session_obj.input_file_gcs_path:
         b, bl = gcs.parse_gcs_uri(session_obj.input_file_gcs_path)
         gcs_tasks.append(asyncio.to_thread(gcs.delete_blob, b, bl))
-    if req_obj.output_file_gcs_path:
-        b, bl = gcs.parse_gcs_uri(req_obj.output_file_gcs_path)
-        gcs_tasks.append(asyncio.to_thread(gcs.delete_blob, b, bl))
+
+    for req_obj in req_objs:
+        if req_obj.output_file_gcs_path:
+            b, bl = gcs.parse_gcs_uri(req_obj.output_file_gcs_path)
+            gcs_tasks.append(asyncio.to_thread(gcs.delete_blob, b, bl))
+
     if gcs_tasks:
         await asyncio.gather(*gcs_tasks, return_exceptions=True)
 
@@ -530,10 +529,14 @@ async def delete_document(
         action_type="document_delete",
         details={"deleted_by": str(user.user_id), "session_status": session_obj.status},
         session_id=session_id,
-        request_id=req_obj.request_id,
+        request_id=req_objs[0].request_id if req_objs else None,
     )
 
-    # ── Delete session (cascades to translation_requests + pipeline_steps) ───
+    # ── Delete explicitly (DB FK lacks ondelete="CASCADE" for requests) ──────
+    for req_obj in req_objs:
+        await db.delete(req_obj)
+
+    # ── Delete session (cascades to pipeline_steps) ───
     await db.delete(session_obj)
     await db.commit()
 

@@ -70,9 +70,23 @@ def _get_actor_id(context) -> str:
     - API-triggered run: use dag_run.conf["triggered_by_user_id"]
     - Scheduled run:     fall back to the fixed Airflow system user
     """
-    conf = (context.get("dag_run") or {}).conf or {}
-    actor_id = conf.get("triggered_by_user_id")
-    return actor_id if actor_id else AIRFLOW_SYSTEM_USER_ID
+    dag_run = context.get("dag_run")
+    if not dag_run or not getattr(dag_run, "conf", None):
+        return AIRFLOW_SYSTEM_USER_ID
+
+    actor_id = dag_run.conf.get("triggered_by_user_id")
+    if not actor_id:
+        return AIRFLOW_SYSTEM_USER_ID
+
+    try:
+        uuid.UUID(str(actor_id))
+        return actor_id
+    except ValueError:
+        logger.warning(
+            "Invalid triggered_by_user_id '%s' in dag_run.conf; falling back to AIRFLOW_SYSTEM_USER_ID.",
+            actor_id,
+        )
+        return AIRFLOW_SYSTEM_USER_ID
 
 
 def task_scrape_and_classify(**context) -> dict:
@@ -166,6 +180,7 @@ def task_upload_forms_to_gcs(**context) -> dict:
                 if not p.exists():
                     failed += 1
                     logger.warning("Local file missing (skip upload): %s", local_path)
+                    new_ver[key] = None
                     continue
 
                 try:
@@ -498,10 +513,19 @@ def task_validate_catalog(**context) -> dict:
         for j, ver in enumerate(versions):
             if j == 0 and entry["status"] == "active":
                 fp = ver.get("file_path_original")
-                if fp:
-                    # If DB already points at GCS, treat it as present.
+                if not fp:
+                    missing_pdfs += 1
+                    warnings.append(f"{prefix}: PDF missing (null/empty file_path)")
+                else:
                     if isinstance(fp, str) and fp.startswith("gs://"):
-                        pass
+                        try:
+                            b, bl = gcs.parse_gcs_uri(fp)
+                            if not gcs.blob_exists(b, bl):
+                                missing_pdfs += 1
+                                warnings.append(f"{prefix}: GCS blob not found for '{fp}'")
+                        except Exception as exc:
+                            missing_pdfs += 1
+                            warnings.append(f"{prefix}: GCS URI error '{fp}': {exc}")
                     elif not Path(fp).exists():
                         missing_pdfs += 1
                         warnings.append(f"{prefix}: PDF not found at '{fp}'")
@@ -1106,14 +1130,19 @@ with DAG(
     t7_summary = PythonOperator(
         task_id="log_summary",
         python_callable=task_log_summary,
-        # "all_done" ensures this task runs even when trigger_pretranslation is
-        # SKIPPED (i.e. task_prepare_trigger_confs returned []).  Without this,
-        # the default "all_success" rule propagates the skip state, silently
-        # dropping the form_scrape_completed audit row and breaking the
-        # _prev_active_forms_count() baseline used by detect_anomalies.
-        trigger_rule="all_done",
+        # "none_failed" ensures this task runs even when trigger_pretranslation is
+        # SKIPPED (i.e. task_prepare_trigger_confs returned []), but blocks on
+        # upstream FAILED states. Without this, the default "all_success" rule
+        # propagates the skip state, silently dropping the form_scrape_completed
+        # audit row and breaking the _prev_active_forms_count() baseline used
+        # by detect_anomalies.
+        trigger_rule="none_failed",
     )
-    t8_manifest = PythonOperator(task_id="write_manifest", python_callable=task_write_manifest)
+    t8_manifest = PythonOperator(
+        task_id="write_manifest",
+        python_callable=task_write_manifest,
+        trigger_rule="none_failed",
+    )
 
     (
         t1_scrape

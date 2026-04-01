@@ -296,8 +296,13 @@ class Session(Base):
     translation_requests: Mapped[list[TranslationRequest]] = relationship(
         "TranslationRequest",
         back_populates="session",
+        passive_deletes=True,
     )
-    audit_logs: Mapped[list[AuditLog]] = relationship("AuditLog", back_populates="session")
+    audit_logs: Mapped[list[AuditLog]] = relationship(
+        "AuditLog",
+        back_populates="session",
+        passive_deletes=True,
+    )
 
     pipeline_steps: Mapped[list[PipelineStep]] = relationship(
         "PipelineStep",
@@ -344,7 +349,7 @@ class TranslationRequest(Base):
     )
     session_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("sessions.session_id"),
+        ForeignKey("sessions.session_id", ondelete="CASCADE"),
         nullable=False,
     )
     target_language: Mapped[str] = mapped_column(
@@ -391,7 +396,11 @@ class TranslationRequest(Base):
 
     # Relationships
     session: Mapped[Session] = relationship("Session", back_populates="translation_requests")
-    audit_logs: Mapped[list[AuditLog]] = relationship("AuditLog", back_populates="request")
+    audit_logs: Mapped[list[AuditLog]] = relationship(
+        "AuditLog",
+        back_populates="request",
+        passive_deletes=True,
+    )
 
     # Constraints and indexes
     __table_args__ = (
@@ -438,12 +447,12 @@ class AuditLog(Base):
     )
     session_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("sessions.session_id"),
+        ForeignKey("sessions.session_id", ondelete="SET NULL"),
         nullable=True,
     )
     request_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("translation_requests.request_id"),
+        ForeignKey("translation_requests.request_id", ondelete="SET NULL"),
         nullable=True,
     )
     action_type: Mapped[str] = mapped_column(String(100), nullable=False)

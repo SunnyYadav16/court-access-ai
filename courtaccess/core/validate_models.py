@@ -37,7 +37,7 @@ Run name:         validation-{YYYY-MM-DD}-{stub|real}
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ TARGET_LANG = "spa_Latn"
 
 
 def _run_name(use_real: bool) -> str:
-    date = datetime.utcnow().strftime("%Y-%m-%d")
+    date = datetime.now(UTC).strftime("%Y-%m-%d")
     mode = "real" if use_real else "stub"
     return f"validation-{date}-{mode}"
 
