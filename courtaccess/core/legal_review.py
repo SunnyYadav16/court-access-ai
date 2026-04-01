@@ -27,13 +27,15 @@ import logging
 import os
 import time
 
+from courtaccess.core.config import settings
 from courtaccess.languages.base import LanguageConfig
 
 logger = logging.getLogger(__name__)
 
 _CACHE_VERSION = 1
 _CACHE_TTL_SECONDS = 86400 * 30  # 30 days
-_VERTEX_MAX_RETRIES = 3
+
+_VERTEX_MAX_RETRIES = settings.vertex_max_retries
 _VERTEX_RETRY_BACKOFF = [1, 2, 4]  # seconds between attempts
 _VERTEX_RETRYABLE_HTTP = {429, 500, 502, 503, 504}
 _NOT_VERIFIED_PREFIX = "[NOT VERIFIED — Vertex AI unavailable]"

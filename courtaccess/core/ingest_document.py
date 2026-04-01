@@ -45,17 +45,17 @@ OUTPUT CONTRACT (classify_page):
   }
 """
 
-import os
 from pathlib import Path
 
 import pymupdf
 
+from courtaccess.core.config import settings
 from courtaccess.core.logger import get_logger
 
 logger = get_logger(__name__)
 
 # DPI for page rendering — 300 for high-quality scans
-RENDER_DPI = int(os.getenv("PDF_RENDER_DPI", "300"))
+RENDER_DPI = settings.pdf_render_dpi
 
 
 # ── Page classification ───────────────────────────────────────────────────────

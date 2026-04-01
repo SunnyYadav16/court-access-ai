@@ -4,6 +4,7 @@
 # Services:
 #   postgres          — shared DB for Airflow metadata + app data (dev only)
 #   redis             — translation cache for LegalReviewer (dev only)
+#   mlflow            — MLflow Tracking Server UI (port 5000)
 #   api               — FastAPI application server
 #   airflow-apiserver — Airflow UI + REST API (port 8080)
 #   airflow-scheduler — DAG scheduler
@@ -50,7 +51,10 @@ x-airflow-common:
     GIT_DISCOVERY_ACROSS_FILESYSTEM: '1'
 
     # ── Redis (translation cache) ──
-    REDIS_URL: redis://redis:6379
+    REDIS_URL: ${REDIS_URL}
+
+    # ── MLflow ──
+    MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
 
     # ── Application ──
     APP_ENV: ${APP_ENV}
@@ -125,7 +129,8 @@ services:
       - "5432:5432"
     volumes:
       - postgres-db-volume:/var/lib/postgresql/data
-      - ./db/init-airflow-db.sql:/docker-entrypoint-initdb.d/init-airflow-db.sql
+      - ./db/init-airflow-db.sql:/docker-entrypoint-initdb.d/10-init-airflow-db.sql
+      - ./db/init-mlflow-db.sql:/docker-entrypoint-initdb.d/20-init-mlflow-db.sql
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}"]
       interval: 10s
@@ -146,6 +151,33 @@ services:
       retries: 5
       start_period: 5s
     restart: always
+
+  # ── MLflow Tracking Server ─────────────────────────────────────────────────
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.13.0
+    command: >
+      mlflow server
+      --backend-store-uri postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/mlflow
+      --artifacts-destination gs://${GCS_BUCKET_MODELS}/mlflow-artifacts/
+      --host 0.0.0.0
+      --port 5000
+    ports:
+      - "5000:5000"
+    environment:
+      # GCS auth — ADC from the mounted .config directory
+      GOOGLE_APPLICATION_CREDENTIALS: /root/.config/gcloud/application_default_credentials.json
+    volumes:
+      - ./.config:/root/.config:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
 
   # ── FastAPI ────────────────────────────────────────────────────────────────
   api:
@@ -223,6 +255,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mlflow:
+        condition: service_started
       # Wait for airflow-init to finish before running alembic migrations, so
       # the two init processes do not race to write the schema simultaneously.
       airflow-init:

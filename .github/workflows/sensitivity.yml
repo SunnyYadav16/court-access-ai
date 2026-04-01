@@ -1,0 +1,201 @@
+# .github/workflows/sensitivity.yml
+#
+# Manual sensitivity analysis — triggered via workflow_dispatch only.
+#
+# Why a separate workflow (not in test.yml)?
+#   • Threshold sweep: 54 MLflow runs (9 × 6 threshold combinations) — too slow
+#     for every PR.  Run once before the demo or when thresholds change.
+#   • Input characteristics: requires a live PostgreSQL DB with real data, which
+#     is not available in the standard CI environment.
+#
+# How to trigger:
+#   GitHub UI  → Actions → Sensitivity Analysis → Run workflow
+#   gh CLI     → gh workflow run sensitivity.yml [--ref main]
+#
+# Inputs:
+#   catalog_path   — path to form_catalog.json relative to repo root
+#                    (default: courtaccess/data/form_catalog.json)
+#   mlflow_uri     — MLflow tracking URI
+#                    (default: file:///tmp/mlflow — writes locally, no server needed)
+#   skip_db        — set to 'true' to force-skip Sub-analysis B even if DATABASE_URL is set
+#
+# Required secrets for Sub-analysis B (DB query):
+#   DATABASE_URL   — full psycopg2 connection string (optional — skipped if absent)
+#   GCP_WORKLOAD_IDENTITY_PROVIDER — for DVC catalog pull
+#   GCP_SERVICE_ACCOUNT            — for DVC catalog pull
+
+name: Sensitivity Analysis
+
+on:
+  workflow_dispatch:
+    inputs:
+      catalog_path:
+        description: "Path to form_catalog.json (relative to repo root)"
+        required: false
+        default: "courtaccess/data/form_catalog.json"
+      mlflow_uri:
+        description: "MLflow tracking URI (file:// or http://)"
+        required: false
+        default: "file:///tmp/mlflow"
+      skip_db:
+        description: "Skip DB-backed Sub-analysis B? (true/false)"
+        required: false
+        default: "false"
+
+permissions:
+  contents: read
+  id-token: write   # required for Workload Identity Federation (DVC pull)
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  sensitivity-analysis:
+    name: Sensitivity Analysis
+    runs-on: ubuntu-latest
+
+    env:
+      # ── App (minimal stubs — analysis doesn't touch the API) ──
+      APP_ENV: "ci"
+      DEBUG: "false"
+      SECRET_KEY: "sensitivity-ci-key"
+      ALLOWED_ORIGINS: "http://localhost:3000"
+      # ── Database — set via secret for real DB, or leave empty to skip Sub-B ──
+      DATABASE_URL: ${{ secrets.DATABASE_URL || '' }}
+      POSTGRES_USER: "ci"
+      POSTGRES_PASSWORD: "ci"
+      POSTGRES_DB: "ci"
+      POSTGRES_HOST: "localhost"
+      POSTGRES_PORT: "5432"
+      # ── GCS ──
+      GCP_PROJECT_ID: "ci-project"
+      GCP_REGION: "us-central1"
+      GCS_BUCKET_UPLOADS: "ci-bucket"
+      GCS_BUCKET_TRANSLATED: "ci-bucket"
+      GCS_BUCKET_FORMS: "ci-bucket"
+      GCS_BUCKET_MODELS: "ci-bucket"
+      # ── Firebase ──
+      GCIP_API_KEY: "ci-api-key"
+      GCIP_AUTH_DOMAIN: "ci.firebaseapp.com"
+      GCIP_PROJECT_ID: "ci-project"
+      # ── Vertex AI ──
+      VERTEX_PROJECT_ID: "ci-project"
+      VERTEX_LOCATION: "us-central1"
+      VERTEX_LEGAL_LLM_MODEL: "meta/llama-4-maverick-17b-128e-instruct-maas"
+      LEGAL_VERIFY_TIMEOUT: "30.0"
+      GCP_SERVICE_ACCOUNT_JSON: ""
+      SIGNED_URL_EXPIRY_SECONDS: "3600"
+      # ── Airflow ──
+      AIRFLOW_BASE_URL: "http://localhost:8080"
+      AIRFLOW_USERNAME: "ci"
+      AIRFLOW_PASSWORD: "ci"
+      # ── MLflow — written to disk by default; override with a real server URL ──
+      MLFLOW_TRACKING_URI: ${{ github.event.inputs.mlflow_uri || 'file:///tmp/mlflow' }}
+      # ── Redis ──
+      REDIS_URL: "redis://localhost:6379/0"
+      # ── Feature flags (all stubs — sensitivity analysis doesn't run real models) ──
+      USE_REAL_CLASSIFICATION: "false"
+      USE_REAL_TRANSLATION: "false"
+      USE_VERTEX_LEGAL_REVIEW: "false"
+      USE_REAL_OCR: "false"
+      # ── Auth ──
+      ACCESS_TOKEN_EXPIRE_MINUTES: "30"
+      ALGORITHM: "HS256"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install uv
+        run: pip install uv --quiet
+
+      - name: Install package with dev + monitoring extras
+        # monitoring extra adds MLflow (needed for experiment logging)
+        run: uv pip install --system ".[dev,monitoring]"
+
+      - name: Authenticate to Google Cloud (for DVC catalog pull)
+        # Skip gracefully if secrets are not configured — Sub-analysis A can
+        # still run with an empty catalog (logs a warning and continues).
+        id: gcp-auth
+        uses: google-github-actions/auth@v2
+        if: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+        continue-on-error: true
+
+      - name: Install DVC with GCS support
+        run: pip install dvc[gs] --quiet
+
+      - name: Pull form catalog from GCS (DVC)
+        # Best-effort — analysis still runs if catalog is missing (warns + empty set)
+        run: |
+          CATALOG="${{ github.event.inputs.catalog_path || 'courtaccess/data/form_catalog.json' }}"
+          dvc pull "$CATALOG" --no-run-cache --allow-missing 2>/dev/null || true
+
+          if [ ! -f "$CATALOG" ]; then
+            echo "⚠️  Catalog not found after DVC pull — using empty catalog for Sub-analysis A."
+            mkdir -p "$(dirname $CATALOG)"
+            echo "[]" > "$CATALOG"
+          fi
+          echo "Catalog: $(wc -l < $CATALOG) bytes"
+
+      - name: Create reports directory
+        run: mkdir -p reports
+
+      - name: Run sensitivity analysis
+        run: python -m courtaccess.core.sensitivity_analysis
+
+      - name: Export MLflow runs to JSON (local file backend only)
+        # When MLFLOW_TRACKING_URI is a file:// path, export all runs from the
+        # experiment so they are available as a downloadable artifact.
+        # Skipped silently when using a remote MLflow server (http://).
+        run: |
+          python - <<'EOF'
+          import json, os
+          from pathlib import Path
+
+          uri = os.getenv("MLFLOW_TRACKING_URI", "")
+          if not uri.startswith("file://"):
+              print(f"Remote MLflow URI ({uri}) — skipping local export.")
+              exit(0)
+
+          try:
+              import mlflow
+              mlflow.set_tracking_uri(uri)
+              client = mlflow.tracking.MlflowClient()
+              exp = client.get_experiment_by_name("courtaccess-sensitivity-analysis")
+              if exp is None:
+                  print("Experiment not found — nothing to export.")
+                  exit(0)
+              runs = client.search_runs([exp.experiment_id], order_by=["start_time DESC"])
+              export = [
+                  {
+                      "run_id": r.info.run_id,
+                      "run_name": r.info.run_name,
+                      "params": r.data.params,
+                      "metrics": r.data.metrics,
+                  }
+                  for r in runs
+              ]
+              Path("reports/sensitivity_runs.json").write_text(json.dumps(export, indent=2))
+              print(f"Exported {len(export)} run(s) to reports/sensitivity_runs.json")
+          except Exception as exc:
+              print(f"Export failed: {exc}")
+          EOF
+
+      - name: Upload sensitivity analysis report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sensitivity-analysis-report
+          path: |
+            reports/sensitivity_runs.json
+          retention-days: 90

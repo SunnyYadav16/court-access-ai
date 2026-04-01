@@ -73,8 +73,9 @@ class OCREngine:
     Models are loaded once in load() and reused for all calls.
     """
 
-    # Source: Cell 2 OCR_CONFIDENCE = 0.35
-    OCR_CONFIDENCE_THRESHOLD: float = 0.35
+    from courtaccess.core.config import settings
+
+    OCR_CONFIDENCE_THRESHOLD: float = settings.ocr_confidence_threshold
 
     # Source: Cell 9 — 300 DPI render for PaddleOCR
     RENDER_DPI: int = 300

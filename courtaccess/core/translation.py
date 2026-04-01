@@ -109,8 +109,12 @@ class Translator:
     # ── Initialisation ────────────────────────────────────────────────────────
 
     def __init__(self, config: LanguageConfig) -> None:
+        from courtaccess.core.config import settings
+
         self.config = config
         self._use_real = os.getenv("USE_REAL_TRANSLATION", "false").lower() == "true"
+        self._hallucination_max = settings.translation_hallucination_ratio_max
+        self._hallucination_min = settings.translation_hallucination_ratio_min
         self._nlp = None  # spaCy — always loaded in load()
         self._tokenizer = None  # CTranslate2 tokenizer — real mode only
         self._ct2_translator = None  # CTranslate2 model — real mode only
@@ -230,9 +234,9 @@ class Translator:
         # Step 6 — court name safety net for any that slipped through
         translated = self._apply_court_name_safety_net(translated)
 
-        # Step 7 — hallucination guard (threshold 2.5, matches Cell 6)
+        # Step 7 — hallucination guard
         ratio = len(translated) / max(len(text), 1)
-        if ratio > 2.5 or ratio < 0.1:
+        if ratio > self._hallucination_max or ratio < self._hallucination_min:
             logger.warning(
                 "Hallucination guard (ratio=%.1f): '%s' — keeping original",
                 ratio,

@@ -20,14 +20,11 @@ OUTPUT CONTRACT:
   }
 """
 
+import os
+
 from courtaccess.core.logger import get_logger
 
 logger = get_logger(__name__)
-
-# ── Thresholds (match data_pipeline/dags/form_scraper_dag.py exactly) ─────────
-THRESHOLD_FORM_DROP_PCT = 20  # Alert if active forms drop > 20%
-THRESHOLD_MASS_NEW_FORMS = 50  # Alert if > 50 new forms in one run
-THRESHOLD_DOWNLOAD_FAIL_PCT = 10  # Alert if > 10% of forms fail to download
 
 # Required fields in every catalog entry
 REQUIRED_FIELDS = {
@@ -60,6 +57,10 @@ def run_anomaly_detection(
     Returns:
         Dict matching OUTPUT CONTRACT above.
     """
+    threshold_form_drop = float(os.getenv("ANOMALY_FORM_DROP_PCT", "20.0"))
+    threshold_mass_new = int(os.getenv("ANOMALY_MASS_NEW_FORMS", "50"))
+    threshold_download_fail = float(os.getenv("ANOMALY_DOWNLOAD_FAIL_PCT", "10.0"))
+
     anomalies = []
 
     # Check 1: Form count drop vs last run
@@ -68,7 +69,7 @@ def run_anomaly_detection(
         curr_active = run_metrics.get("active_count", 0)
         if prev_active > 0:
             drop_pct = (prev_active - curr_active) / prev_active * 100
-            if drop_pct > THRESHOLD_FORM_DROP_PCT:
+            if drop_pct > threshold_form_drop:
                 anomalies.append(
                     {
                         "check": "form_count_drop",
@@ -76,21 +77,21 @@ def run_anomaly_detection(
                         "detail": (
                             f"Active form count dropped {drop_pct:.1f}% "
                             f"({prev_active} → {curr_active}). "
-                            f"Threshold: {THRESHOLD_FORM_DROP_PCT}%."
+                            f"Threshold: {threshold_form_drop}%."
                         ),
                     }
                 )
 
     # Check 2: Mass new forms (potential scraper error)
     new_forms = run_metrics.get("new_forms", 0)
-    if new_forms > THRESHOLD_MASS_NEW_FORMS:
+    if new_forms > threshold_mass_new:
         anomalies.append(
             {
                 "check": "mass_new_forms",
                 "severity": "warning",
                 "detail": (
                     f"{new_forms} new forms detected in one run. "
-                    f"Threshold: {THRESHOLD_MASS_NEW_FORMS}. "
+                    f"Threshold: {threshold_mass_new}. "
                     "Possible scraper regression or mass.gov restructure."
                 ),
             }
@@ -101,14 +102,14 @@ def run_anomaly_detection(
     failed = run_metrics.get("failed_downloads", 0)
     if total_attempted > 0:
         fail_pct = failed / total_attempted * 100
-        if fail_pct > THRESHOLD_DOWNLOAD_FAIL_PCT:
+        if fail_pct > threshold_download_fail:
             anomalies.append(
                 {
                     "check": "high_download_failures",
                     "severity": "critical",
                     "detail": (
                         f"{failed}/{total_attempted} downloads failed ({fail_pct:.1f}%). "
-                        f"Threshold: {THRESHOLD_DOWNLOAD_FAIL_PCT}%. "
+                        f"Threshold: {threshold_download_fail}%. "
                         "Possible mass.gov outage or network issue."
                     ),
                 }
@@ -137,8 +138,6 @@ def run_anomaly_detection(
         )
 
     # Check 6: Missing PDFs
-    import os
-
     missing_pdfs = []
     for entry in active_entries:
         file_path = entry.get("file_path_original")

@@ -43,6 +43,8 @@ from pathlib import Path
 import requests
 from playwright.sync_api import sync_playwright
 
+from courtaccess.core.config import settings
+
 # ── Logging ──────────────────────────────────────────────────────────────────
 logger = logging.getLogger(__name__)
 
@@ -61,10 +63,10 @@ PROJECT_DIR = DAGS_DIR.parent
 FORMS_DIR = PROJECT_DIR / "forms"
 
 # ── Batch download settings ───────────────────────────────────────────────────
-BATCH_SIZE = 10  # Number of PDFs to download per batch
-BATCH_SLEEP_SEC = 15  # Seconds to sleep between batches
-PRE_DOWNLOAD_SLEEP = 60  # Seconds to sleep after scraping before downloading
-REQUEST_TIMEOUT = 30
+BATCH_SIZE = settings.scraper_batch_size
+BATCH_SLEEP_SEC = settings.scraper_batch_sleep_sec
+PRE_DOWNLOAD_SLEEP = settings.scraper_pre_download_sleep
+REQUEST_TIMEOUT = settings.scraper_request_timeout
 HEADERS = {
     # Mimic a real browser so mass.gov doesn't block us with a 403.
     "User-Agent": (

@@ -17,6 +17,8 @@ import logging
 import re
 from pathlib import Path
 
+from courtaccess.core.config import settings
+
 # ── Logging ──────────────────────────────────────────────────────────────────
 logger = logging.getLogger(__name__)
 
@@ -29,7 +31,7 @@ MAGIC_BYTES = {
 }
 
 # ── Thresholds ────────────────────────────────────────────────────────────────
-MIN_VALID_PDF_SIZE = 1024  # Files under 1KB are almost certainly not real PDFs
+MIN_VALID_PDF_SIZE = settings.anomaly_min_pdf_size_bytes
 
 
 def _detect_file_type(file_path: str) -> str | None:

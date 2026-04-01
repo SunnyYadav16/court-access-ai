@@ -50,8 +50,8 @@ defaults:
     shell: bash
 
 env:
-  REGISTRY: us-east1-docker.pkg.dev
-  REPOSITORY: courtaccess-repo
+  REGISTRY: ${{ vars.GCP_ARTIFACT_REGISTRY }}
+  REPOSITORY: ${{ vars.GCP_ARTIFACT_REPOSITORY }}
   API_IMAGE: courtaccess-api
   AIRFLOW_IMAGE: courtaccess-airflow
 
@@ -95,7 +95,8 @@ jobs:
         id: tags
         run: |
           SHORT_SHA="${GITHUB_SHA::7}"
-          BASE="${{ env.REGISTRY }}/${{ vars.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}"
+          PROJECT_ID="${{ vars.GCP_PROJECT_ID }}"
+          BASE="${{ env.REGISTRY }}/${PROJECT_ID}/${{ env.REPOSITORY }}"
           echo "short_sha=${SHORT_SHA}"                                        >> "$GITHUB_OUTPUT"
           echo "api_tag=${BASE}/${{ env.API_IMAGE }}:${SHORT_SHA}"             >> "$GITHUB_OUTPUT"
           echo "api_latest=${BASE}/${{ env.API_IMAGE }}:latest"                >> "$GITHUB_OUTPUT"
