@@ -1,190 +1,653 @@
+import { useCallback, useEffect, useRef, useMemo } from "react"
 import { ScreenId, SCREENS } from "@/lib/constants"
 import ScreenLabel from "@/components/shared/ScreenLabel"
+import useRealtimeStore, { type ChatMessage } from "@/store/realtimeStore"
+import { useRealtimeWebSocket } from "@/hooks/useRealtimeWebSocket"
+import { useAudioCapture } from "@/hooks/useAudioCapture"
+import { useTtsPlayback } from "@/hooks/useTtsPlayback"
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function formatDuration(s: number): string {
+  return `${Math.floor(s / 60).toString().padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`
+}
+
+const LANG_LABELS: Record<string, string> = {
+  en: "English",
+  es: "Spanish",
+  pt: "Portuguese",
+}
+
+const LANG_FLAGS: Record<string, string> = {
+  en: "🇺🇸 EN",
+  es: "🇪🇸 ES",
+  pt: "🇧🇷 PT",
+}
+
+// ── Sub-components ────────────────────────────────────────────────────────────
+
+function VerificationChip({ score }: { score: number }) {
+  const pct = Math.round(score * 100)
+  if (score >= 0.9) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold"
+        style={{ background: "rgba(22,163,74,0.18)", color: "#4ade80" }}
+      >
+        ✔ {pct}%
+      </span>
+    )
+  }
+  if (score >= 0.7) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold"
+        style={{ background: "rgba(217,119,6,0.18)", color: "#fbbf24" }}
+      >
+        ▲ {pct}%
+      </span>
+    )
+  }
+  return (
+    <span
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold"
+      style={{ background: "rgba(239,68,68,0.18)", color: "#f87171" }}
+    >
+      ⚠ {pct}%
+    </span>
+  )
+}
+
+function MessageBubble({
+  msg,
+  myName,
+  partnerName,
+}: {
+  msg: ChatMessage
+  myName: string
+  partnerName: string
+}) {
+  const isSelf = msg.speaker === "self"
+  const speakerLabel = isSelf ? myName || "You" : msg.speakerName || partnerName || "Partner"
+  const timeLabel = msg.timestamp.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  })
+
+  return (
+    <div className={`flex flex-col ${isSelf ? "items-end" : "items-start"} gap-1`}>
+      {/* Speaker + timestamp */}
+      <div className="flex items-center gap-2 px-1">
+        <span className="text-[11px] font-semibold" style={{ color: "rgba(255,255,255,0.5)" }}>
+          {speakerLabel}
+        </span>
+        <span className="text-[10px]" style={{ color: "rgba(255,255,255,0.25)" }}>
+          {timeLabel}
+        </span>
+      </div>
+
+      {/* Original text bubble */}
+      <div
+        className="max-w-xs px-3 py-2 text-sm leading-relaxed"
+        style={{
+          background: isSelf ? "rgba(99,102,241,0.14)" : "rgba(34,211,238,0.08)",
+          borderRadius: isSelf ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
+          color: "rgba(255,255,255,0.9)",
+        }}
+      >
+        {msg.text}
+      </div>
+
+      {/* AI translation block */}
+      {msg.translation && (
+        <div
+          className="max-w-xs px-3 py-2 text-xs leading-relaxed"
+          style={{
+            borderLeft: "2px solid #C8963E",
+            paddingLeft: 10,
+            color: "rgba(255,255,255,0.75)",
+          }}
+        >
+          <div className="text-[10px] font-semibold mb-0.5" style={{ color: "#C8963E" }}>
+            {msg.targetLanguage ? LANG_FLAGS[msg.targetLanguage] ?? msg.targetLanguage.toUpperCase() : "Translation"}
+          </div>
+          {msg.translation}
+        </div>
+      )}
+
+      {/* Legal verification block */}
+      {msg.verifiedTranslation && !msg.usedFallback && (
+        <div
+          className="max-w-xs px-3 py-2 text-xs leading-relaxed"
+          style={{
+            background: "rgba(99,102,241,0.07)",
+            borderLeft: "2px solid rgba(99,102,241,0.4)",
+            paddingLeft: 10,
+            color: "rgba(255,255,255,0.7)",
+          }}
+        >
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-[10px] font-semibold" style={{ color: "#a5b4fc" }}>
+              ✦ Legal Verified
+            </span>
+            {msg.accuracyScore != null && <VerificationChip score={msg.accuracyScore} />}
+          </div>
+          {msg.verifiedTranslation === msg.translation ? (
+            <span style={{ color: "rgba(255,255,255,0.4)" }}>No changes — legally precise.</span>
+          ) : (
+            msg.verifiedTranslation
+          )}
+          {msg.accuracyNote && msg.verifiedTranslation !== msg.translation && (
+            <div className="mt-1 text-[10px]" style={{ color: "rgba(255,255,255,0.4)" }}>
+              {msg.accuracyNote}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Duration */}
+      {msg.duration != null && (
+        <div className="text-[10px] px-1" style={{ color: "rgba(255,255,255,0.25)" }}>
+          {msg.duration}s
+        </div>
+      )}
+    </div>
+  )
+}
+
+function LivePartialBubble({
+  speaker,
+  text,
+  translation,
+  myName,
+  partnerName,
+}: {
+  speaker: "self" | "partner"
+  text: string
+  translation?: string
+  myName: string
+  partnerName: string
+}) {
+  const isSelf = speaker === "self"
+  const speakerLabel = isSelf ? myName || "You" : partnerName || "Partner"
+
+  return (
+    <div className={`flex flex-col ${isSelf ? "items-end" : "items-start"} gap-1`}>
+      <div className="flex items-center gap-2 px-1">
+        <span className="text-[11px] font-semibold" style={{ color: "rgba(255,255,255,0.4)" }}>
+          {speakerLabel}
+        </span>
+        <span className="blink-dot" />
+        <span className="text-[10px]" style={{ color: "rgba(255,255,255,0.3)" }}>
+          speaking
+        </span>
+      </div>
+      <div
+        className="max-w-xs px-3 py-2 text-sm leading-relaxed"
+        style={{
+          background: isSelf ? "rgba(99,102,241,0.07)" : "rgba(34,211,238,0.04)",
+          borderRadius: isSelf ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
+          border: "1px dashed rgba(255,255,255,0.1)",
+          color: "rgba(255,255,255,0.6)",
+        }}
+      >
+        {text}
+        {translation && (
+          <div className="mt-1 text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>
+            {translation}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function SidebarSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div
+        className="text-[10px] uppercase tracking-widest mb-2"
+        style={{ color: "rgba(255,255,255,0.35)" }}
+      >
+        {title}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function SidebarRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div
+      className="flex justify-between items-center py-1"
+      style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}
+    >
+      <span style={{ color: "rgba(255,255,255,0.38)" }}>{label}</span>
+      <span className="font-medium text-right" style={{ color: "rgba(255,255,255,0.8)" }}>
+        {value}
+      </span>
+    </div>
+  )
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
 
 interface Props { onNav: (s: ScreenId) => void }
 
-const transcript = [
-  { speaker: "Judge", text: "Good morning. We are here for the arraignment of case number 2026-CR-001234.", time: "9:15:02", isTranslation: false },
-  { speaker: "AI → Spanish", text: "Buenos días. Estamos aquí para la lectura de cargos del caso número 2026-CR-001234.", time: "9:15:04", isTranslation: true },
-  { speaker: "Defense", text: "Good morning, Your Honor. My client is present and ready to proceed.", time: "9:15:12", isTranslation: false },
-  { speaker: "AI → Spanish", text: "Buenos días, Su Señoría. Mi cliente está presente y listo para proceder.", time: "9:15:14", isTranslation: true },
-  { speaker: "Defendant", text: "No entiendo lo que está pasando. ¿Puedo hablar?", time: "9:15:28", isTranslation: false },
-  { speaker: "AI → English", text: "I don't understand what is happening. Can I speak?", time: "9:15:30", isTranslation: true },
-  { speaker: "Judge", text: "The defendant may address the court through their attorney.", time: "9:15:38", isTranslation: false },
-  { speaker: "AI → Spanish", text: "El acusado puede dirigirse al tribunal a través de su abogado.", time: "9:15:40", isTranslation: true },
-]
-
-const sessionInfo = [
-  ["Docket", "2026-CR-001234"],
-  ["Court", "Boston Municipal"],
-  ["Courtroom", "3"],
-  ["Language", "English ↔ Spanish"],
-  ["Started", "9:15:02 AM"],
-]
-
-const modelPipeline = [
-  { name: "Silero VAD v4", color: "#16a34a" },
-  { name: "Faster-Whisper V3", color: "#16a34a" },
-  { name: "NLLB-200 1.3B", color: "#16a34a" },
-  { name: "Piper TTS (es)", color: "#16a34a" },
-  { name: "Llama 4 (Vertex AI)", color: "#d97706" },
-]
-
-const stats = [
-  ["Utterances", "24"],
-  ["Avg ASR Conf.", "0.94"],
-  ["Avg NMT Conf.", "0.91"],
-  ["Llama Corrections", "2"],
-]
-
 export default function RealtimeSession({ onNav }: Props) {
+  // ── Store ──────────────────────────────────────────────────────────────────
+  const phase         = useRealtimeStore((s) => s.phase)
+  const roomCode      = useRealtimeStore((s) => s.roomCode)
+  const myName        = useRealtimeStore((s) => s.myName)
+  const myLanguage    = useRealtimeStore((s) => s.myLanguage)
+  const isCreator     = useRealtimeStore((s) => s.isCreator)
+  const partner       = useRealtimeStore((s) => s.partner)
+  const partnerMuted  = useRealtimeStore((s) => s.partnerMuted)
+  const isMuted       = useRealtimeStore((s) => s.isMuted)
+  const micLocked     = useRealtimeStore((s) => s.micLocked)
+  const isRecording   = useRealtimeStore((s) => s.isRecording)
+  const isSpeaking    = useRealtimeStore((s) => s.isSpeaking)
+  const isPlayingTts  = useRealtimeStore((s) => s.isPlayingTts)
+  const duration      = useRealtimeStore((s) => s.duration)
+  const messages      = useRealtimeStore((s) => s.messages)
+  const livePartial   = useRealtimeStore((s) => s.livePartial)
+  const courtDivision = useRealtimeStore((s) => s.courtDivision)
+  const courtroom     = useRealtimeStore((s) => s.courtroom)
+  const caseDocket    = useRealtimeStore((s) => s.caseDocket)
+  const toggleMute    = useRealtimeStore((s) => s.toggleMute)
+  const resetStore    = useRealtimeStore((s) => s.reset)
+
+  // ── Hooks ──────────────────────────────────────────────────────────────────
+  const { enqueue, clearQueue } = useTtsPlayback()
+  const { startCapture, stopCapture } = useAudioCapture()
+
+  // Stable callbacks — prevents cascading identity changes in WS hook
+  const sendAudioRef = useRef<((data: Blob | ArrayBuffer) => void) | null>(null)
+  const onStartCapture = useCallback(
+    () => startCapture((data) => sendAudioRef.current?.(data)),
+    [startCapture]
+  )
+  const onStopCapture = useCallback(
+    () => { stopCapture(); clearQueue() },
+    [stopCapture, clearQueue]
+  )
+
+  const { connect, disconnect, sendMarker, sendAudio } = useRealtimeWebSocket({
+    enqueueTts: enqueue,
+    onStartCapture,
+    onStopCapture,
+  })
+
+  // Keep sendAudioRef current — avoids stale closure in startCapture callback
+  useEffect(() => { sendAudioRef.current = sendAudio }, [sendAudio])
+
+  // ── Auto-scroll ────────────────────────────────────────────────────────────
+  const chatEndRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }, [messages, livePartial])
+
+  // ── Reconnect on mount ─────────────────────────────────────────────────────
+  // RealtimeSetup disconnects before navigating here, so we re-establish the
+  // connection using params stored in realtimeStore.
+  const savedIsCreator = useRef(isCreator)
+  useEffect(() => {
+    if (roomCode && phase !== "idle" && phase !== "ended") {
+      // Reconnect by joining with roomCode. connect() will set
+      // isCreator=false because we pass roomId, so we restore it after.
+      connect({ name: myName, roomId: roomCode })
+      if (savedIsCreator.current) {
+        useRealtimeStore.getState().setIsCreator(true)
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // mount only
+
+  // ── Session timer ──────────────────────────────────────────────────────────
+  // Duration is incremented by useAudioCapture while recording. We also
+  // need a timer when waiting/ready (before audio capture starts).
+  const sessionStart = useRef<number | null>(null)
+  useEffect(() => {
+    if (phase === "active" && sessionStart.current === null) {
+      sessionStart.current = Date.now()
+    }
+  }, [phase])
+
+  // ── Computed sidebar stats ─────────────────────────────────────────────────
+  const stats = useMemo(() => {
+    const scored = messages.filter((m) => m.accuracyScore != null)
+    const avgAsr = scored.length
+      ? (scored.reduce((s, m) => s + (m.accuracyScore ?? 0), 0) / scored.length).toFixed(2)
+      : "—"
+    // NMT confidence: only count messages that have BOTH a translation AND a legal score
+    const nmtScored = messages.filter((m) => m.translation != null && m.accuracyScore != null)
+    const avgNmt = nmtScored.length
+      ? (nmtScored.reduce((s, m) => s + (m.accuracyScore ?? 0), 0) / nmtScored.length).toFixed(2)
+      : "—"
+    const corrections = scored.filter((m) => (m.accuracyScore ?? 1) < 0.9).length
+    const ttsSegments = messages.filter((m) => m.translation != null).length
+    return { avgAsr, avgNmt, corrections, ttsSegments }
+  }, [messages])
+
+  // ── Action handlers ────────────────────────────────────────────────────────
+  function handleToggleMute() {
+    // Send marker BEFORE toggling — isMuted still reflects the pre-toggle
+    // state, so: muted → send UNMUTE; unmuted → send MUTE.
+    sendMarker(isMuted ? "MIC_UNMUTE" : "MIC_MUTE")
+    toggleMute()
+  }
+
+  function handleStartSession() {
+    sendMarker("SESSION_START")
+  }
+
+  function handleEndSession() {
+    sendMarker("SESSION_END")
+  }
+
+  function handleLeave() {
+    disconnect()
+    resetStore()
+    onNav(SCREENS.HOME_OFFICIAL)
+  }
+
+  // ── Transcript area content (phase-aware) ─────────────────────────────────
+  const sessionActive = phase === "active"
+  const langPairLabel = `${LANG_LABELS[myLanguage] ?? myLanguage} ↔ ${
+    partner ? (LANG_LABELS[partner.language] ?? partner.language) : "…"
+  }`
+
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: "#0D1B2A", color: "#fff" }}>
+    <>
+      {/* Scoped animation styles */}
+      <style>{`
+        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+        .blink-dot { display:inline-block; width:6px; height:6px; border-radius:50%;
+                     background:#ef4444; animation:blink 1s ease-in-out infinite; }
+        @keyframes waveBar { 0%,100%{transform:scaleY(0.4)} 50%{transform:scaleY(1)} }
+      `}</style>
 
-      {/* Header */}
-      <div className="px-6 py-2.5 flex items-center justify-between"
-        style={{ background: "rgba(0,0,0,0.3)", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-        <div className="flex items-center gap-3">
-          <span className="font-bold tracking-wide" style={{ fontFamily: "Palatino, Georgia, serif" }}>
-            ⚖ CourtAccess AI
-          </span>
-          <span className="text-[10px] font-semibold px-2 py-0.5 rounded"
-            style={{ background: "rgba(239,68,68,0.15)", color: "#ef4444" }}>
-            ● LIVE
-          </span>
-        </div>
-        <div className="flex items-center gap-4 text-xs">
-          <span style={{ color: "rgba(255,255,255,0.5)" }}>
-            Session S-20260222-003 · 12:42 elapsed
-          </span>
-          <button
-            onClick={() => onNav(SCREENS.HOME_OFFICIAL)}
-            className="px-4 py-1.5 rounded text-xs font-semibold cursor-pointer"
-            style={{ background: "#7f1d1d", color: "#fca5a5", border: "none" }}>
-            End Session
-          </button>
-        </div>
-      </div>
+      <div className="min-h-screen flex flex-col" style={{ background: "#0D1B2A", color: "#fff" }}>
 
-      {/* Body */}
-      <div className="flex flex-1 overflow-hidden">
-
-        {/* Left: Transcript */}
-        <div className="flex-1 flex flex-col">
-          <div className="px-5 py-3 flex justify-between items-center text-xs"
-            style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-            <span className="font-semibold">Live Transcript</span>
-            <span style={{ color: "rgba(255,255,255,0.4)" }}>English ↔ Spanish</span>
+        {/* ── Header ──────────────────────────────────────────────────────── */}
+        <div
+          className="px-6 py-2.5 flex items-center justify-between flex-shrink-0"
+          style={{ background: "rgba(0,0,0,0.35)", borderBottom: "1px solid rgba(255,255,255,0.07)" }}
+        >
+          <div className="flex items-center gap-3">
+            <span className="font-bold tracking-wide text-sm" style={{ fontFamily: "Palatino, Georgia, serif" }}>
+              ⚖ CourtAccess AI
+            </span>
+            {sessionActive && (
+              <span
+                className="text-[10px] font-semibold px-2 py-0.5 rounded"
+                style={{ background: "rgba(239,68,68,0.15)", color: "#ef4444" }}
+              >
+                ● LIVE
+              </span>
+            )}
           </div>
 
-          <div className="flex-1 overflow-y-auto px-5 py-3 flex flex-col gap-3">
-            {transcript.map((t, i) => (
-              <div key={i} className="px-3 py-2 rounded-md"
-                style={{
-                  background: t.isTranslation ? "rgba(200,150,62,0.08)" : "rgba(255,255,255,0.03)",
-                  borderLeft: `3px solid ${t.isTranslation ? "#C8963E" : "rgba(255,255,255,0.15)"}`,
-                }}>
-                <div className="flex justify-between mb-1">
-                  <span className="text-[11px] font-semibold"
-                    style={{ color: t.isTranslation ? "#C8963E" : "rgba(255,255,255,0.6)" }}>
-                    {t.speaker}
-                  </span>
-                  <span className="text-[10px]" style={{ color: "rgba(255,255,255,0.3)" }}>
-                    {t.time}
-                  </span>
+          <div className="flex items-center gap-4 text-xs">
+            {roomCode && (
+              <span style={{ color: "rgba(255,255,255,0.45)" }}>
+                Session {roomCode}
+                {sessionActive && ` · ${formatDuration(duration)} elapsed`}
+              </span>
+            )}
+            {isCreator && sessionActive && (
+              <button
+                onClick={handleEndSession}
+                className="px-3 py-1.5 rounded text-xs font-semibold cursor-pointer"
+                style={{ background: "#7f1d1d", color: "#fca5a5", border: "none" }}
+              >
+                End Session
+              </button>
+            )}
+            <button
+              onClick={handleLeave}
+              className="px-3 py-1.5 rounded text-xs font-semibold cursor-pointer"
+              style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.6)", border: "none" }}
+            >
+              Leave
+            </button>
+          </div>
+        </div>
+
+        {/* ── Body ────────────────────────────────────────────────────────── */}
+        <div className="flex flex-1 overflow-hidden">
+
+          {/* ── Left: Transcript ──────────────────────────────────────────── */}
+          <div className="flex-1 flex flex-col overflow-hidden">
+
+            {/* Sub-header */}
+            <div
+              className="px-5 py-2.5 flex justify-between items-center text-xs flex-shrink-0"
+              style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}
+            >
+              <span className="font-semibold">Live transcript</span>
+              <span style={{ color: "rgba(255,255,255,0.38)" }}>{langPairLabel}</span>
+            </div>
+
+            {/* Scroll area */}
+            <div className="flex-1 overflow-y-auto px-5 py-4">
+              {messages.length === 0 && !livePartial ? (
+                /* Empty state — phase-aware */
+                <div className="flex flex-col items-center justify-center h-full gap-3">
+                  <div className="text-3xl">
+                    {phase === "waiting" ? "⏳" : phase === "ready" ? "✋" : phase === "ended" ? "👋" : "💬"}
+                  </div>
+                  <p className="text-sm text-center max-w-xs" style={{ color: "rgba(255,255,255,0.45)" }}>
+                    {phase === "waiting"
+                      ? `Waiting for partner to join. Share room code `
+                      : phase === "ready"
+                      ? isCreator
+                        ? "Partner joined. Click Start Session to begin."
+                        : "Waiting for host to start session…"
+                      : phase === "ended"
+                      ? "Session ended. Transcript is preserved above."
+                      : "Start speaking — your conversation will appear here in real time."}
+                  </p>
+                  {phase === "waiting" && roomCode && (
+                    <div
+                      className="font-mono text-2xl font-bold tracking-widest px-5 py-3 rounded-lg"
+                      style={{ background: "rgba(255,255,255,0.06)", color: "#a5b4fc", letterSpacing: "0.25em" }}
+                    >
+                      {roomCode}
+                    </div>
+                  )}
+                  {phase === "ready" && isCreator && (
+                    <button
+                      onClick={handleStartSession}
+                      className="mt-2 px-6 py-2 rounded-lg text-sm font-semibold cursor-pointer"
+                      style={{ background: "#166534", color: "#86efac", border: "none" }}
+                    >
+                      ▶ Start Session
+                    </button>
+                  )}
                 </div>
-                <p className="text-sm leading-relaxed m-0"
-                  style={{ color: t.isTranslation ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.7)" }}>
-                  {t.text}
-                </p>
-              </div>
-            ))}
+              ) : (
+                <div className="flex flex-col gap-4">
+                  {messages.map((msg) => (
+                    <MessageBubble
+                      key={msg.id}
+                      msg={msg}
+                      myName={myName}
+                      partnerName={partner?.name ?? "Partner"}
+                    />
+                  ))}
+                  {livePartial && (
+                    <LivePartialBubble
+                      speaker={livePartial.speaker}
+                      text={livePartial.text}
+                      translation={livePartial.translation}
+                      myName={myName}
+                      partnerName={partner?.name ?? "Partner"}
+                    />
+                  )}
+                </div>
+              )}
+              <div ref={chatEndRef} />
+            </div>
 
-            {/* Llama correction */}
-            <div className="px-3 py-2 rounded-md"
-              style={{ background: "rgba(37,99,235,0.1)", border: "1px solid rgba(37,99,235,0.2)" }}>
-              <div className="text-[11px] font-semibold mb-1" style={{ color: "#60a5fa" }}>
-                ⚡ Llama Legal Review — Correction
+            {/* ── Bottom bar ──────────────────────────────────────────────── */}
+            <div
+              className="px-5 py-3 flex items-center gap-4 flex-shrink-0"
+              style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}
+            >
+              {/* Mic button */}
+              <button
+                onClick={sessionActive ? handleToggleMute : undefined}
+                disabled={!sessionActive || micLocked}
+                className="w-10 h-10 rounded-full flex items-center justify-center text-base flex-shrink-0 cursor-pointer"
+                style={{
+                  background: isMuted
+                    ? "rgba(255,255,255,0.06)"
+                    : micLocked
+                    ? "rgba(251,191,36,0.12)"
+                    : "rgba(239,68,68,0.15)",
+                  border: `2px solid ${isMuted ? "rgba(255,255,255,0.15)" : micLocked ? "#fbbf24" : "#ef4444"}`,
+                  opacity: !sessionActive ? 0.4 : 1,
+                  cursor: !sessionActive || micLocked ? "not-allowed" : "pointer",
+                }}
+              >
+                {isMuted ? "🔇" : micLocked ? "🔒" : "🎙"}
+              </button>
+
+              {/* Waveform + label */}
+              <div className="flex-1 overflow-hidden">
+                <div className="flex gap-px h-5 items-end mb-1">
+                  {Array.from({ length: 44 }, (_, i) => {
+                    const active = sessionActive && isRecording && !isMuted
+                    const height = active && isSpeaking
+                      ? `${12 + Math.abs(Math.sin(i * 0.8)) * 14}px`
+                      : active
+                      ? `${4 + Math.abs(Math.sin(i * 0.5)) * 6}px`
+                      : "3px"
+                    return (
+                      <div
+                        key={i}
+                        className="w-1 rounded-sm flex-shrink-0"
+                        style={{
+                          height,
+                          background: active
+                            ? i % 3 === 0 ? "#ef4444" : "rgba(255,255,255,0.2)"
+                            : "rgba(255,255,255,0.08)",
+                          transition: "height 0.1s ease",
+                        }}
+                      />
+                    )
+                  })}
+                </div>
+                <div className="text-[10px]" style={{ color: "rgba(255,255,255,0.35)" }}>
+                  {isMuted
+                    ? "Muted"
+                    : micLocked
+                    ? "Mic paused — listening to translation"
+                    : isPlayingTts
+                    ? "Partner speaking…"
+                    : sessionActive
+                    ? "Listening · Silero VAD active · Faster-Whisper processing"
+                    : phase === "ready" && !isCreator
+                    ? "Waiting for host to start…"
+                    : "Inactive"}
+                </div>
               </div>
-              <p className="text-xs leading-relaxed m-0" style={{ color: "rgba(255,255,255,0.7)" }}>
-                "arraignment" → corrected from{" "}
-                <s style={{ color: "rgba(255,255,255,0.4)" }}>comparecencia</s> to{" "}
-                <strong style={{ color: "#C8963E" }}>lectura de cargos</strong>
-              </p>
+
+              {/* Confidence */}
+              <div className="text-right flex-shrink-0">
+                <div className="text-[10px]" style={{ color: "rgba(255,255,255,0.4)" }}>
+                  Confidence
+                </div>
+                <div
+                  className="text-lg font-bold"
+                  style={{
+                    color: stats.avgAsr !== "—" && parseFloat(stats.avgAsr) >= 0.9
+                      ? "#4ade80"
+                      : stats.avgAsr !== "—" && parseFloat(stats.avgAsr) >= 0.7
+                      ? "#fbbf24"
+                      : "rgba(255,255,255,0.4)",
+                  }}
+                >
+                  {stats.avgAsr !== "—" ? `${Math.round(parseFloat(stats.avgAsr) * 100)}%` : "—"}
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* Audio bar */}
-          <div className="px-5 py-4 flex items-center gap-4"
-            style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}>
-            <div className="w-10 h-10 rounded-full flex items-center justify-center text-base flex-shrink-0"
-              style={{ background: "rgba(239,68,68,0.15)", border: "2px solid #ef4444" }}>
-              🎙
-            </div>
-            <div className="flex-1">
-              <div className="flex gap-0.5 h-6 items-center mb-1">
-                {Array.from({ length: 40 }, (_, i) => (
-                  <div key={i} className="w-1 rounded-sm"
-                    style={{
-                      background: i % 3 === 0 ? "#ef4444" : "rgba(255,255,255,0.15)",
-                      height: `${20 + Math.sin(i) * 15}px`,
-                    }} />
-                ))}
-              </div>
-              <div className="text-[10px]" style={{ color: "rgba(255,255,255,0.4)" }}>
-                Listening · Silero VAD active · Faster-Whisper processing
-              </div>
-            </div>
-            <div className="text-right">
-              <div className="text-[11px]" style={{ color: "rgba(255,255,255,0.5)" }}>Confidence</div>
-              <div className="text-lg font-bold" style={{ color: "#16a34a" }}>94%</div>
-            </div>
+          {/* ── Right sidebar ──────────────────────────────────────────────── */}
+          <div
+            className="w-52 flex flex-col gap-5 p-4 text-xs overflow-y-auto flex-shrink-0"
+            style={{ borderLeft: "1px solid rgba(255,255,255,0.06)" }}
+          >
+
+            {/* Session Info */}
+            <SidebarSection title="Session Info">
+              {roomCode && <SidebarRow label="Room" value={<span className="font-mono tracking-wider">{roomCode}</span>} />}
+              {caseDocket && <SidebarRow label="Docket" value={caseDocket} />}
+              {courtDivision && <SidebarRow label="Court" value={courtDivision.replace(" Court", "")} />}
+              {courtroom && <SidebarRow label="Courtroom" value={courtroom} />}
+              <SidebarRow label="Language" value={langPairLabel} />
+              <SidebarRow
+                label="Partner"
+                value={
+                  partner ? (
+                    <span className="flex items-center gap-1">
+                      <span
+                        className="w-2 h-2 rounded-full inline-block"
+                        style={{ background: partnerMuted ? "#f59e0b" : "#22c55e" }}
+                      />
+                      {partner.name}
+                    </span>
+                  ) : (
+                    <span style={{ color: "rgba(255,255,255,0.3)" }}>—</span>
+                  )
+                }
+              />
+            </SidebarSection>
+
+            {/* Model Pipeline */}
+            <SidebarSection title="Model Pipeline">
+              {[
+                { name: "Silero VAD v4",      color: "#22c55e" },
+                { name: "Faster-Whisper V3",  color: "#22c55e" },
+                { name: "NLLB-200 1.3B",      color: "#22c55e" },
+                { name: `Piper TTS (${partner?.language ?? myLanguage})`, color: "#22c55e" },
+                { name: "Llama 4 Vertex AI",  color: "#f59e0b" },
+              ].map((m) => (
+                <div key={m.name} className="flex items-center gap-2 py-0.5">
+                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: m.color }} />
+                  <span style={{ color: "rgba(255,255,255,0.65)" }}>{m.name}</span>
+                </div>
+              ))}
+            </SidebarSection>
+
+            {/* Stats */}
+            <SidebarSection title="Stats">
+              <SidebarRow label="Utterances"      value={messages.length} />
+              <SidebarRow label="Avg ASR Conf."   value={stats.avgAsr} />
+              <SidebarRow label="Avg NMT Conf."   value={stats.avgNmt} />
+              <SidebarRow label="Llama Corrections" value={stats.corrections} />
+              <SidebarRow label="TTS Segments"    value={stats.ttsSegments} />
+            </SidebarSection>
+
+            {/* Phase-specific controls */}
+            {phase === "ready" && isCreator && (
+              <button
+                onClick={handleStartSession}
+                className="w-full py-2 rounded-md text-xs font-semibold cursor-pointer"
+                style={{ background: "#166534", color: "#86efac", border: "none" }}
+              >
+                ▶ Start Session
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Right: Info panel */}
-        <div className="w-64 flex flex-col gap-5 p-4 text-xs overflow-y-auto"
-          style={{ borderLeft: "1px solid rgba(255,255,255,0.06)" }}>
-
-          {/* Session info */}
-          <div>
-            <div className="text-[11px] uppercase tracking-wider mb-2"
-              style={{ color: "rgba(255,255,255,0.4)" }}>Session Info</div>
-            {sessionInfo.map(([k, v]) => (
-              <div key={k} className="flex justify-between py-1"
-                style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
-                <span style={{ color: "rgba(255,255,255,0.4)" }}>{k}</span>
-                <span style={{ color: "rgba(255,255,255,0.8)" }}>{v}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* Model pipeline */}
-          <div>
-            <div className="text-[11px] uppercase tracking-wider mb-2"
-              style={{ color: "rgba(255,255,255,0.4)" }}>Model Pipeline</div>
-            {modelPipeline.map((m) => (
-              <div key={m.name} className="flex items-center gap-2 py-1">
-                <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: m.color }} />
-                <span style={{ color: "rgba(255,255,255,0.7)" }}>{m.name}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* Stats */}
-          <div>
-            <div className="text-[11px] uppercase tracking-wider mb-2"
-              style={{ color: "rgba(255,255,255,0.4)" }}>Stats</div>
-            {stats.map(([k, v]) => (
-              <div key={k} className="flex justify-between py-1">
-                <span style={{ color: "rgba(255,255,255,0.4)" }}>{k}</span>
-                <span className="font-semibold" style={{ color: "rgba(255,255,255,0.8)" }}>{v}</span>
-              </div>
-            ))}
-          </div>
-        </div>
+        <ScreenLabel name="REAL-TIME SESSION — LIVE TRANSLATION" />
       </div>
-      <ScreenLabel name="REAL-TIME SESSION — LIVE TRANSLATION" />
-    </div>
+    </>
   )
 }

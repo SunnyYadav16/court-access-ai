@@ -77,7 +77,12 @@ class SessionType(StrEnum):
 
 
 class TargetLanguage(StrEnum):
-    """Target languages for translation."""
+    """Target languages for translation (NLLB Flores-200 BCP-47 codes).
+
+    Used by the document pipeline. The real-time speech pipeline uses short
+    ISO 639-1 codes ("en", "es", "pt") via the ``partner_language`` field
+    in ``SessionCreateRequest``.
+    """
 
     SPANISH = "spa_Latn"
     PORTUGUESE = "por_Latn"
@@ -257,6 +262,12 @@ class SessionCreateRequest(BaseModel):
     target_language: TargetLanguage = TargetLanguage.SPANISH
     source_language: str = "en"
 
+    # Real-time session fields
+    partner_language: str | None = Field(default=None, description="Partner's spoken language code: en, es, or pt")
+    court_division: str | None = Field(default=None, description="Court division name, e.g. 'Boston Municipal Court'")
+    courtroom: str | None = Field(default=None, description="Courtroom identifier, e.g. 'Courtroom 3'")
+    case_docket: str | None = Field(default=None, description="Optional case docket number for session metadata")
+
 
 class SessionResponse(BaseModel):
     """Session metadata."""
@@ -273,6 +284,35 @@ class SessionResponse(BaseModel):
     created_at: datetime
     completed_at: datetime | None = None
     websocket_url: str | None = Field(default=None, description="WebSocket endpoint for realtime sessions")
+    room_id: str | None = Field(default=None, description="Short room code for two-party realtime sessions")
+
+
+class RoomCreateRequest(BaseModel):
+    """Create a two-party real-time conversation room."""
+
+    name: str = Field(description="Creator's display name")
+    language_a: str = Field(description="Creator's spoken language code: en, es, or pt")
+    language_b: str = Field(description="Partner's spoken language code: en, es, or pt")
+
+
+class RoomCreateResponse(BaseModel):
+    """Returned after a conversation room is created."""
+
+    room_id: str
+    language_a: str
+    language_b: str
+    websocket_url: str
+
+
+class RoomListResponse(BaseModel):
+    """Summary of an active conversation room — returned by GET /sessions/rooms."""
+
+    room_id: str = Field(description="6-character alphanumeric room code")
+    language_a: str = Field(description="Creator's spoken language code: en, es, or pt")
+    language_b: str = Field(description="Partner's spoken language code: en, es, or pt")
+    participants: int = Field(description="Number of currently connected participants (0, 1, or 2)")
+    is_full: bool = Field(description="True when both participant slots are occupied")
+    created_at: datetime = Field(description="UTC timestamp when the room was created")
 
 
 class SessionParticipantRequest(BaseModel):

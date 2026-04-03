@@ -1,146 +1,128 @@
 """
-courtaccess/speech/transcribe.py
+ASR service using Faster-Whisper (large-v3-turbo).
 
-Speech-to-text using Faster-Whisper Large V3 (CTranslate2 INT8 quantised).
-
-STUB/REAL HYBRID:
-  - Stub: returns a fixed placeholder transcript. No model loaded.
-  - Real: runs Faster-Whisper. Requires GPU + model weights.
-
-PRODUCTION NOTES:
-  - Input: raw PCM audio bytes (16kHz mono), pre-filtered by VAD.
-  - ~60x realtime on GPU with INT8 quantisation.
-  - Enable with USE_REAL_ASR=true.
-
-OUTPUT CONTRACT:
-  {
-      "text":       str,          # full transcript
-      "segments":   [             # per-sentence breakdowns
-          {
-              "text":       str,
-              "start":      float,  # seconds
-              "end":        float,
-              "confidence": float,
-          }
-      ],
-      "language":   str,          # detected source language code
-      "confidence": float,        # overall mean confidence
-  }
+This module provides a singleton-style ASRService that loads the
+Faster-Whisper model once and exposes a simple `transcribe` method which
+accepts in-memory PCM audio and returns a transcript plus language code.
 """
 
-import os
+import numpy as np
+import torch
+from faster_whisper import WhisperModel
 
+from courtaccess.core.config import get_settings
 from courtaccess.core.logger import get_logger
 
 logger = get_logger(__name__)
 
-_USE_REAL = os.getenv("USE_REAL_ASR", "false").lower() == "true"
-_SAMPLE_RATE = 16000
 
-
-def transcribe_audio(audio_bytes: bytes, language: str = "en") -> dict:
+class ASRService:
     """
-    Transcribe speech audio to text.
+    Automatic Speech Recognition service powered by Faster-Whisper.
 
-    Args:
-        audio_bytes: Raw 16-bit PCM audio (mono, 16kHz), VAD-filtered.
-        language:    Expected source language hint (default "en").
-
-    Returns:
-        Dict matching OUTPUT CONTRACT above.
+    The underlying WhisperModel is loaded once (large-v3-turbo) and reused
+    across requests. Audio is expected to be 16 kHz mono float32 PCM in
+    the [-1, 1] range, matching what the VAD pipeline already produces.
     """
-    if _USE_REAL:
-        return _real_transcribe(audio_bytes, language)
-    return _stub_transcribe(audio_bytes, language)
 
+    _instance = None
+    _model: WhisperModel | None = None
 
-def _stub_transcribe(audio_bytes: bytes, language: str) -> dict:
-    """
-    Stub: returns a fixed placeholder transcript.
-    NOT real speech recognition — for pipeline testing only.
-    """
-    duration = len(audio_bytes) / 2 / _SAMPLE_RATE  # 16-bit = 2 bytes/sample
-    logger.debug("[STUB ASR] %.2fs audio → placeholder transcript.", duration)
-    return {
-        "text": "The defendant pleads not guilty to all charges.",
-        "segments": [
-            {
-                "text": "The defendant pleads not guilty to all charges.",
-                "start": 0.0,
-                "end": round(duration, 2),
-                "confidence": 0.99,
-            }
-        ],
-        "language": language,
-        "confidence": 0.99,
-    }
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
 
+    def __init__(self):
+        if ASRService._model is None:
+            self._load_model()
 
-def _real_transcribe(audio_bytes: bytes, language: str) -> dict:
-    """
-    Production transcription via Faster-Whisper Large V3.
-    Uses CTranslate2 INT8 quantisation for ~60x realtime throughput.
+    def _load_model(self) -> None:
+        """
+        Load the Faster-Whisper model.
 
-    REQUIRES:
-        - GPU with >= 6GB VRAM (INT8 model)
-        - USE_REAL_ASR=true
-        - Model weights at WHISPER_MODEL_PATH
-    """
-    try:
-        import numpy as np
-        from faster_whisper import WhisperModel
+        large-v3-turbo is optimized for speed and quality. We explicitly
+        select the device and compute type based on whether a CUDA GPU is
+        available:
+        - CUDA available  -> int8_float16 on GPU (fast, lower VRAM)
+        - CPU only        -> int8 on CPU (good balance of speed/accuracy)
 
-        model_path = os.getenv("WHISPER_MODEL_PATH", "/opt/airflow/models/whisper-large-v3")
+        WHISPER_MODEL_PATH takes precedence (DVC-pulled production weights).
+        Falls back to WHISPER_MODEL size string (default "small").
+        """
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        compute_type = "int8_float16" if device == "cuda" else "int8"
+        s = get_settings()
+        model_path = s.whisper_model_path
+        model_size = model_path if model_path else s.whisper_model
+
+        logger.info("Loading Whisper model '%s' on %s (%s)...", model_size, device, compute_type)
         model = WhisperModel(
-            model_path,
-            device="cuda",
-            compute_type="int8_float16",
+            model_size,
+            device=device,
+            compute_type=compute_type,
+        )
+        ASRService._model = model
+        logger.info("Whisper model loaded successfully")
+
+    @property
+    def model(self) -> WhisperModel:
+        assert ASRService._model is not None, "ASR model not loaded"
+        return ASRService._model
+
+    def transcribe(
+        self,
+        audio_pcm: np.ndarray,
+        language: str | None = None,
+    ) -> tuple[str, str | None]:
+        """
+        Transcribe a single utterance of PCM audio.
+
+        Args:
+            audio_pcm: 1D float32 numpy array of 16 kHz mono PCM samples
+                normalized to [-1, 1].
+            language: Optional BCP-47 language code ("en", "es", "pt", ...).
+                If None, Faster-Whisper will attempt to detect the language.
+
+        Returns:
+            Tuple of (text, used_language):
+                - text: the concatenated transcript for the utterance.
+                - used_language: the language code chosen by the model
+                  (detected or forced), if available.
+        """
+        if audio_pcm.size == 0:
+            return "", language
+
+        # Ensure correct dtype and 1D shape
+        if not isinstance(audio_pcm, np.ndarray):
+            audio_pcm = np.array(audio_pcm, dtype=np.float32)
+        audio_pcm = audio_pcm.astype(np.float32).flatten()
+
+        segments, info = self.model.transcribe(
+            audio_pcm,
+            language=language,
+            task="transcribe",
+            # beam_size can be tuned: 1–3 for lower latency, 5+ for quality.
+            beam_size=3,
         )
 
-        # Convert bytes → float32 numpy array
-        audio_array = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+        # Join all segment texts into a single utterance-level transcript
+        pieces = [seg.text.strip() for seg in segments]
+        text = " ".join(p for p in pieces if p)
 
-        segments_gen, info = model.transcribe(
-            audio_array,
-            language=language if language != "auto" else None,
-            beam_size=5,
-            vad_filter=False,  # VAD already applied upstream
-        )
+        used_language: str | None = language
+        if getattr(info, "language", None):
+            used_language = info.language
 
-        segments = []
-        full_text_parts = []
-        confidences = []
+        return text.strip(), used_language
 
-        for seg in segments_gen:
-            confidence = getattr(seg, "avg_logprob", -0.5)
-            confidence_norm = round(min(1.0, max(0.0, 1.0 + confidence)), 3)
-            segments.append(
-                {
-                    "text": seg.text.strip(),
-                    "start": round(seg.start, 2),
-                    "end": round(seg.end, 2),
-                    "confidence": confidence_norm,
-                }
-            )
-            full_text_parts.append(seg.text.strip())
-            confidences.append(confidence_norm)
 
-        full_text = " ".join(full_text_parts)
-        mean_confidence = round(sum(confidences) / len(confidences), 3) if confidences else 0.0
+_asr_service: ASRService | None = None
 
-        logger.info(
-            "[REAL ASR] Transcribed %d segment(s), lang=%s, confidence=%.2f",
-            len(segments),
-            info.language,
-            mean_confidence,
-        )
-        return {
-            "text": full_text,
-            "segments": segments,
-            "language": info.language,
-            "confidence": mean_confidence,
-        }
 
-    except Exception as exc:
-        logger.error("[REAL ASR] Failed: %s — falling back to stub.", exc)
-        return _stub_transcribe(audio_bytes, language)
+def get_asr_service() -> ASRService:
+    """Get or create the global ASR service instance."""
+    global _asr_service
+    if _asr_service is None:
+        _asr_service = ASRService()
+    return _asr_service
