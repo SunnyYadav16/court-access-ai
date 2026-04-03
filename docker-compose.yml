@@ -79,10 +79,27 @@ x-airflow-common:
     USE_REAL_TRANSLATION: ${USE_REAL_TRANSLATION}
     USE_VERTEX_LEGAL_REVIEW: ${USE_VERTEX_LEGAL_REVIEW}
     USE_REAL_OCR: ${USE_REAL_OCR}
-    NLLB_MODEL_PATH: /opt/airflow/models/nllb-200-distilled-1.3B-ct2
-    WHISPER_MODEL_PATH: /opt/airflow/models/whisper-large-v3
-    PIPER_TTS_ES_PATH: /opt/airflow/models/piper-tts-es
-    PIPER_TTS_PT_PATH: /opt/airflow/models/piper-tts-pt
+    # NLLB_MODEL_PATH: /opt/airflow/models/nllb-200-distilled-1.3B-ct2
+    # WHISPER_MODEL_PATH: /opt/airflow/models/whisper-large-v3
+    # PIPER_TTS_ES_PATH: /opt/airflow/models/piper-tts-es
+    # PIPER_TTS_PT_PATH: /opt/airflow/models/piper-tts-pt
+    NLLB_MODEL_PATH: ${NLLB_MODEL_PATH}
+    WHISPER_MODEL_PATH: ${WHISPER_MODEL_PATH}
+    PIPER_TTS_ES_PATH: ${PIPER_TTS_ES_PATH}
+    PIPER_TTS_PT_PATH: ${PIPER_TTS_PT_PATH}
+    PIPER_TTS_EN_PATH: ${PIPER_TTS_EN_PATH}
+    SILERO_VAD_MODEL_PATH: ${SILERO_VAD_MODEL_PATH}
+
+    # ── Real-Time Speech Pipeline ──
+    USE_REAL_SPEECH: ${USE_REAL_SPEECH}
+    WHISPER_MODEL: ${WHISPER_MODEL}
+    NLLB_MODEL: ${NLLB_MODEL}
+    VAD_SPEECH_THRESHOLD: ${VAD_SPEECH_THRESHOLD}
+    PIPER_VOICES_DIR: ${PIPER_VOICES_DIR}
+    SESSION_RECORDINGS_DIR: ${SESSION_RECORDINGS_DIR}
+    TURN_GRACE_A_MS: ${TURN_GRACE_A_MS}
+    TURN_GRACE_B_MS: ${TURN_GRACE_B_MS}
+    TTS_LOCKOUT_BUFFER_MS: ${TTS_LOCKOUT_BUFFER_MS}
 
     # ── Monitoring & Bias Thresholds ──
     BIAS_UNDERSERVED_THRESHOLD: ${BIAS_UNDERSERVED_THRESHOLD}
@@ -185,13 +202,13 @@ services:
   mlflow:
     image: ghcr.io/mlflow/mlflow:v2.13.0
     command: >
-      mlflow server
+      bash -c "pip install psycopg2-binary && mlflow server
       --backend-store-uri postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/mlflow
       --artifacts-destination gs://${GCS_BUCKET_MODELS}/mlflow-artifacts/
       --host 0.0.0.0
-      --port 5000
+      --port 5000"
     ports:
-      - "5000:5000"
+      - "5050:5000"
     environment:
       # GCS auth — ADC from the mounted .config directory
       GOOGLE_APPLICATION_CREDENTIALS: /root/.config/gcloud/application_default_credentials.json
@@ -260,11 +277,14 @@ services:
       WHISPER_MODEL_PATH: /app/models/whisper-large-v3
       PIPER_TTS_ES_PATH: /app/models/piper-tts-es
       PIPER_TTS_PT_PATH: /app/models/piper-tts-pt
+      PIPER_TTS_EN_PATH: /app/models/piper-tts-en
+      SILERO_VAD_MODEL_PATH: /app/models/silero-vad-v4/silero_vad.jit.pt
       # ── Real-Time Speech Pipeline ──
       USE_REAL_SPEECH: ${USE_REAL_SPEECH}
       WHISPER_MODEL: ${WHISPER_MODEL}
-      NLLB_MODEL_PATH: ${NLLB_MODEL_PATH}
-      PIPER_VOICES_DIR: ${PIPER_VOICES_DIR}
+      NLLB_MODEL: ${NLLB_MODEL}
+      VAD_SPEECH_THRESHOLD: ${VAD_SPEECH_THRESHOLD}
+      PIPER_VOICES_DIR: /app/models/piper-voices
       SESSION_RECORDINGS_DIR: ${SESSION_RECORDINGS_DIR}
       TURN_GRACE_A_MS: ${TURN_GRACE_A_MS}
       TURN_GRACE_B_MS: ${TURN_GRACE_B_MS}
@@ -423,6 +443,14 @@ services:
         chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/.dvc
         echo "DVC remote configured: $(dvc remote list)"
 
+        # Pull models once here (as root, before other services start) so that
+        # the api and Airflow worker containers that start concurrently find
+        # models already present and skip DVC — avoiding the shared-lock race.
+        dvc pull --allow-missing 2>&1 || \
+          dvc checkout 2>&1 || \
+          echo "[airflow-init] DVC pull/checkout failed — models must be provided via volume mount."
+        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/models 2>/dev/null || true
+
         exec /entrypoint airflow version
     environment:
       <<: *airflow-common-env
@@ -451,6 +479,12 @@ services:
       - ./courtaccess:/app/courtaccess
     environment:
       MODEL_NAME: whisper-large-v3
+      WHISPER_MODEL_PATH: /app/models/whisper-large-v3
+      NLLB_MODEL_PATH: /app/models/nllb-200-distilled-1.3B-ct2
+      SILERO_VAD_MODEL_PATH: /app/models/silero-vad-v4/silero_vad.jit.pt
+      PIPER_TTS_ES_PATH: /app/models/piper-tts-es
+      PIPER_TTS_PT_PATH: /app/models/piper-tts-pt
+      PIPER_TTS_EN_PATH: /app/models/piper-tts-en
     restart: unless-stopped
 
 volumes:

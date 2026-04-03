@@ -67,7 +67,7 @@ class ASRService:
 
     @property
     def model(self) -> WhisperModel:
-        assert ASRService._model is not None, "ASR model not loaded"
+        assert ASRService._model is not None, "ASR model not loaded"  # noqa: S101
         return ASRService._model
 
     def transcribe(
@@ -102,7 +102,7 @@ class ASRService:
             audio_pcm,
             language=language,
             task="transcribe",
-            # beam_size can be tuned: 1–3 for lower latency, 5+ for quality.
+            # beam_size can be tuned: 1-3 for lower latency, 5+ for quality.
             beam_size=3,
         )
 

@@ -90,6 +90,7 @@ class Settings(BaseSettings):
     whisper_model_path: str | None
     piper_tts_es_path: str | None
     piper_tts_pt_path: str | None
+    silero_vad_model_path: str
 
     # ── Real-Time Speech Pipeline ────────────────────────────────────────────
     use_real_speech: bool
@@ -97,7 +98,7 @@ class Settings(BaseSettings):
     nllb_model: str
     vad_speech_threshold: float
     piper_voices_dir: str | None
-    piper_tts_en_path: str | None
+    piper_tts_en_path: str
     session_recordings_dir: str
     turn_grace_a_ms: float
     turn_grace_b_ms: float

@@ -42,14 +42,38 @@ class VADService:
             self._load_model()
 
     def _load_model(self):
-        """Load Silero VAD model."""
-        logger.info("Loading Silero VAD model...")
-        model, utils = torch.hub.load(
-            repo_or_dir="snakers4/silero-vad", model="silero_vad", force_reload=False, onnx=False
-        )
+        """Load Silero VAD model from local path (materialized by dvc pull).
+
+        Reads SILERO_VAD_MODEL_PATH from the environment — must point to the
+        silero_vad.jit.pt file downloaded by scripts/setup_models.sh and
+        pulled from gs://courtaccess-ai-models via dvc pull.
+
+        Fails fast with a clear error if the path is unset or the file is
+        missing, rather than hitting the internet via torch.hub.
+        """
+        import os
+
+        model_path = os.getenv("SILERO_VAD_MODEL_PATH")
+
+        if not model_path:
+            raise RuntimeError(
+                "SILERO_VAD_MODEL_PATH is not set. "
+                "Run 'dvc pull' to download the model from GCS, then ensure "
+                "SILERO_VAD_MODEL_PATH points to models/silero-vad-v4/silero_vad.jit.pt"
+            )
+
+        from pathlib import Path
+
+        if not Path(model_path).is_file():
+            raise RuntimeError(
+                f"Silero VAD model not found at: {model_path}\nRun 'dvc pull' to download the model from GCS."
+            )
+
+        logger.info("Loading Silero VAD model from %s ...", model_path)
+        model = torch.jit.load(model_path, map_location="cpu")  # nosec B614
+        model.eval()
         VADService._model = model
-        (self.get_speech_timestamps, self.save_audio, self.read_audio, self.VADIterator, self.collect_chunks) = utils
-        logger.info("VAD model loaded successfully")
+        logger.info("Silero VAD model loaded successfully")
 
     @property
     def model(self):
@@ -74,10 +98,7 @@ class VADService:
                 - is_speech is True when probability >= 0.5
         """
         # Convert numpy to torch tensor
-        if isinstance(audio_chunk, np.ndarray):
-            audio_tensor = torch.from_numpy(audio_chunk).float()
-        else:
-            audio_tensor = audio_chunk
+        audio_tensor = torch.from_numpy(audio_chunk).float() if isinstance(audio_chunk, np.ndarray) else audio_chunk
 
         # Ensure 1D tensor
         if audio_tensor.dim() > 1:

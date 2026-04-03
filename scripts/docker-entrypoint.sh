@@ -68,13 +68,55 @@ pull_models() {
         return 0
     fi
 
-    # Attempt DVC pull
+    # Attempt DVC pull with retries to handle concurrent startup locks
     log "Pulling models via DVC..."
-    if dvc pull --allow-missing 2>&1; then
-        log "DVC pull complete."
-    else
-        warn "DVC pull failed (GCS credentials may not be configured). Trying DVC checkout from local cache..."
-        dvc checkout 2>&1 || warn "DVC checkout also failed. Models may not be available."
+    local attempts=0
+    local max_attempts=30
+    local success=false
+
+    while [ $attempts -lt $max_attempts ]; do
+        set +e
+        local dvc_output
+        dvc_output=$(dvc pull --allow-missing 2>&1)
+        local dvc_status=$?
+        set -e
+
+        if [ $dvc_status -eq 0 ]; then
+            log "DVC pull complete."
+            success=true
+            break
+        elif echo "$dvc_output" | grep -qi "Unable to acquire lock"; then
+            attempts=$((attempts + 1))
+            warn "DVC pull is locked by another process. Waiting ($attempts/$max_attempts)..."
+            sleep $(( 3 + RANDOM % 4 ))
+        else
+            warn "DVC pull failed (auth or config): $dvc_output"
+            break
+        fi
+    done
+
+    if [ "$success" = false ]; then
+        warn "Trying DVC checkout from local cache..."
+        attempts=0
+        while [ $attempts -lt $max_attempts ]; do
+            set +e
+            local checkout_output
+            checkout_output=$(dvc checkout 2>&1)
+            local checkout_status=$?
+            set -e
+
+            if [ $checkout_status -eq 0 ]; then
+                log "DVC checkout complete."
+                break
+            elif echo "$checkout_output" | grep -qi "Unable to acquire lock"; then
+                attempts=$((attempts + 1))
+                warn "DVC checkout is locked by another process. Waiting ($attempts/$max_attempts)..."
+                sleep $(( 3 + RANDOM % 4 ))
+            else
+                warn "DVC checkout failed: $checkout_output"
+                break
+            fi
+        done
     fi
 
     cd - >/dev/null

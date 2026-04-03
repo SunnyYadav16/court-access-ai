@@ -82,10 +82,7 @@ class AudioStreamDecoder:
                     for frame in container.decode(stream):
                         audio = frame.to_ndarray()
                         # Convert stereo to mono if needed
-                        if audio.shape[0] > 1:
-                            audio = audio.mean(axis=0)
-                        else:
-                            audio = audio[0]
+                        audio = audio.mean(axis=0) if audio.shape[0] > 1 else audio[0]
                         samples.append(audio)
 
             container.close()
@@ -114,7 +111,7 @@ class AudioStreamDecoder:
                 self._samples_returned = len(audio_data)
                 return new_samples
 
-        except Exception:
+        except Exception:  # noqa: S110
             # Not enough data yet to decode, or error
             pass
 
@@ -190,7 +187,7 @@ class AudioSession:
             # Run VAD via per-session process_chunk (each session gets
             # its own SpeechSegmentDetector; the model itself is stateless
             # for single-chunk inference without reset_states).
-            speech_prob, is_speech = self.vad_service.process_chunk(chunk, sample_rate=VAD_SAMPLE_RATE)
+            _speech_prob, is_speech = self.vad_service.process_chunk(chunk, sample_rate=VAD_SAMPLE_RATE)
 
             # Check for speech boundary events
             event = self.segment_detector.update(is_speech)
@@ -249,10 +246,7 @@ class AudioSession:
 
             audio_data = np.concatenate(samples, axis=1)
 
-            if audio_data.shape[0] > 1:
-                audio_data = audio_data.mean(axis=0)
-            else:
-                audio_data = audio_data[0]
+            audio_data = audio_data.mean(axis=0) if audio_data.shape[0] > 1 else audio_data[0]
 
             audio_data = (audio_data * 32767).astype(np.int16)
 

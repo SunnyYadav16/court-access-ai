@@ -38,7 +38,7 @@ import time
 from courtaccess.core.config import get_settings
 
 
-class FloorState(str, enum.Enum):
+class FloorState(enum.StrEnum):
     """Observable state of the conversation turn."""
 
     IDLE = "idle"

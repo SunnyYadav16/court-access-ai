@@ -1,0 +1,6 @@
+outs:
+- md5: 7d69798995b378688dd2f934e96a119b.dir
+  size: 2272526
+  nfiles: 1
+  hash: md5
+  path: silero-vad-v4

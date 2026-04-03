@@ -108,8 +108,8 @@ class MTService:
         if not ct2_model_dir.exists():
             logger.info("Converting %s to CTranslate2 format (one-time, ~2.5 GB download)...", hf_model)
             ct2_model_dir.parent.mkdir(parents=True, exist_ok=True)
-            subprocess.run(
-                [
+            subprocess.run(  # noqa: S603
+                [  # noqa: S607
                     "ct2-transformers-converter",
                     "--model",
                     hf_model,
@@ -145,12 +145,12 @@ class MTService:
 
     @property
     def translator(self) -> ctranslate2.Translator:
-        assert MTService._translator is not None, "MT translator not loaded"
+        assert MTService._translator is not None, "MT translator not loaded"  # noqa: S101
         return MTService._translator
 
     @property
     def tokenizer(self) -> transformers.AutoTokenizer:
-        assert MTService._tokenizer is not None, "MT tokenizer not loaded"
+        assert MTService._tokenizer is not None, "MT tokenizer not loaded"  # noqa: S101
         return MTService._tokenizer
 
     def translate(

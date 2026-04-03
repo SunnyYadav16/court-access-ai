@@ -144,7 +144,7 @@ const defaultState: RealtimeState = {
 
 // ── Store ─────────────────────────────────────────────────────────────────────
 
-const useRealtimeStore = create<RealtimeStore>((set, get) => ({
+const useRealtimeStore = create<RealtimeStore>((set, _get) => ({
   ...defaultState,
 
   // ── Session lifecycle ──────────────────────────────────────────────────────

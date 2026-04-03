@@ -123,7 +123,7 @@ class LegalVerifierService:
             )
 
         except (KeyError, AttributeError):
-            raise RuntimeError("[LegalVerifier] VERTEX_PROJECT_ID setting is required.")
+            raise RuntimeError("[LegalVerifier] VERTEX_PROJECT_ID setting is required.") from None
         except Exception as exc:
             raise RuntimeError(f"[LegalVerifier] Failed to initialise Vertex AI client: {exc}") from exc
 

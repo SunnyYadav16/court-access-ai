@@ -1,447 +1,527 @@
 #!/usr/bin/env bash
 # ══════════════════════════════════════════════════════════════════════════════
-# scripts/setup_models.sh — Download all models and track with DVC
+# scripts/setup_models.sh — Upload all CourtAccess AI models to GCS via DVC
 #
-# This script downloads every model used by CourtAccess AI, places them
-# in models/<name>/, runs `dvc add` to create real pointer files, and
-# pushes weights to GCS via `dvc push`.
+# Run this ONCE (or once per model version update) from the project root
+# on a machine with GCS write access.  Teammates never run this script —
+# they run `dvc pull` instead.
 #
-# Prerequisites:
-#   - Python 3.11+ with pip
-#   - dvc[gs] installed:  pip install "dvc[gs]"
-#   - gcloud CLI authenticated:  gcloud auth application-default login
-#   - GCS bucket exists:  gs://courtaccess-ai-models
-#   - .dvc/config points at that bucket (already configured)
+# What this script does, in order:
+#   1.  Downloads each model from its canonical source (HuggingFace / GitHub)
+#       into the models/ directory.
+#   2.  Removes the old placeholder .dvc files (which had fake/stale hashes).
+#   3.  Runs `dvc add` on each model directory to compute real md5 hashes
+#       and write fresh .dvc pointer files.
+#   4.  Runs `dvc push` to upload all model blobs to gs://courtaccess-ai-models.
 #
-# Usage:
-#   chmod +x scripts/setup_models.sh
-#   ./scripts/setup_models.sh          # download all + dvc add + dvc push
-#   ./scripts/setup_models.sh --skip-push   # download + dvc add only (no GCS upload)
-#
-# After running:
+# After this script completes, commit the updated .dvc files:
 #   git add models/*.dvc models/.gitignore
-#   git commit -m "feat: add real DVC pointers for all model weights"
+#   git commit -m "feat: real DVC pointers for all model weights"
 #   git push
+#
+# ── Models managed by this script (stored in GCS) ────────────────────────────
+#   1. Whisper Large V3       ~3 GB    courtaccess/speech/transcribe.py
+#   2. NLLB-200 1.3B ct2      ~600 MB  courtaccess/core/translation.py
+#   3. Piper TTS Spanish       ~65 MB  courtaccess/speech/tts.py
+#   4. Piper TTS Portuguese    ~50 MB  courtaccess/speech/tts.py
+#   5. Piper TTS English       ~40 MB  courtaccess/speech/tts.py
+#   6. Silero VAD v4           ~2 MB   courtaccess/speech/vad.py
+#
+# ── Models NOT managed here (not in GCS) ─────────────────────────────────────
+#   spaCy en_core_web_lg  — pip-installed in Dockerfile (python -m spacy download)
+#   PaddleOCR / Qwen      — pip-installed; weights auto-cached by PaddleOCR
+#                           on first inference inside the GPU container
+#   Llama 4 Scout         — Vertex AI API; no local weights ever
+#   TFDV baseline stats   — generated at runtime by the form scraper DAG
+#
+# ── Prerequisites ─────────────────────────────────────────────────────────────
+#   pip install "dvc[gs]>=3.50.0"
+#   gcloud auth application-default login
+#   GCS bucket gs://courtaccess-ai-models must already exist
+#   .dvc/config already points at that bucket (committed in this repo)
+#
+# ── Usage ─────────────────────────────────────────────────────────────────────
+#   chmod +x scripts/setup_models.sh
+#   ./scripts/setup_models.sh               # download + dvc add + dvc push
+#   ./scripts/setup_models.sh --skip-push   # download + dvc add only (no GCS)
 # ══════════════════════════════════════════════════════════════════════════════
 
 set -euo pipefail
 
+# ── Flags ─────────────────────────────────────────────────────────────────────
 SKIP_PUSH=false
-if [[ "${1:-}" == "--skip-push" ]]; then
-    SKIP_PUSH=true
-fi
+for arg in "$@"; do
+    [[ "$arg" == "--skip-push" ]] && SKIP_PUSH=true
+done
 
-# Colors for output
+# ── Colours ───────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
-NC='\033[0m' # No Color
+CYAN='\033[0;36m'
+NC='\033[0m'
 
-log()  { echo -e "${GREEN}[✓]${NC} $1"; }
-warn() { echo -e "${YELLOW}[!]${NC} $1"; }
-err()  { echo -e "${RED}[✗]${NC} $1"; }
+log()     { echo -e "${GREEN}[✓]${NC} $1"; }
+warn()    { echo -e "${YELLOW}[!]${NC} $1"; }
+err()     { echo -e "${RED}[✗]${NC} $1"; }
+section() {
+    echo -e "\n${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${CYAN}  $1${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+}
 
 # ── Python interpreter ────────────────────────────────────────────────────────
-# Use `uv run python` to ensure we always use the project's Python 3.11 venv,
-# not the system python3 (which may be 3.12/3.13 and can't build blis/spaCy).
+# Prefer uv-managed Python (project's pinned 3.11 venv) so huggingface_hub
+# and torch are available without polluting the system Python.
 if command -v uv &>/dev/null; then
     PYTHON="uv run python"
-    log "Using uv-managed Python: $(uv run python --version)"
+    log "Using uv-managed Python: $(uv run python --version 2>&1)"
 elif [[ -f ".venv/bin/python" ]]; then
     PYTHON=".venv/bin/python"
-    log "Using venv Python: $(.venv/bin/python --version)"
+    log "Using venv Python: $(.venv/bin/python --version 2>&1)"
 else
     PYTHON="python3"
-    warn "uv and .venv not found — using system python3 ($(python3 --version)). spaCy may fail on Python 3.13."
+    warn "uv and .venv not found — using system python3 ($(python3 --version 2>&1))"
 fi
 
-# ── Ensure we're in project root ──────────────────────────────────────────────
+# ── Sanity checks ─────────────────────────────────────────────────────────────
 if [[ ! -f "pyproject.toml" ]]; then
-    err "Run this from the project root (where pyproject.toml lives)."
+    err "Run this script from the project root (directory containing pyproject.toml)."
     exit 1
 fi
 
-# ── Check prerequisites ───────────────────────────────────────────────────────
-command -v dvc >/dev/null 2>&1 || { err "dvc not found. Install: pip install 'dvc[gs]'"; exit 1; }
-command -v python3 >/dev/null 2>&1 || { err "python3 not found."; exit 1; }
+if ! command -v dvc &>/dev/null; then
+    err "dvc not found. Install it: pip install 'dvc[gs]>=3.50.0'"
+    exit 1
+fi
+
+if [[ "$SKIP_PUSH" == "false" ]]; then
+    if ! gcloud auth application-default print-access-token &>/dev/null 2>&1; then
+        err "No GCS credentials found. Run: gcloud auth application-default login"
+        exit 1
+    fi
+fi
 
 mkdir -p models
 
 # ══════════════════════════════════════════════════════════════════════════════
-# MODEL 1: Whisper Large V3 (ASR — speech-to-text)
-# Size: ~3 GB (CTranslate2 format for faster-whisper)
-# Used by: courtaccess/speech/transcribe.py
-# Container path: /opt/models/whisper-large-v3
+# MODEL 1: Whisper Large V3 (ASR)
+#
+# Source:  Systran/faster-whisper-large-v3 on HuggingFace
+#          This is the CTranslate2-converted version required by faster-whisper.
+#          The raw OpenAI weights do NOT work — must be the Systran repo.
+# Size:    ~3 GB
+# Loaded:  courtaccess/speech/transcribe.py  →  WhisperModel(model_size_or_path)
+# EnvVar:  WHISPER_MODEL_PATH → /opt/airflow/models/whisper-large-v3
 # ══════════════════════════════════════════════════════════════════════════════
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  MODEL 1/6: Whisper Large V3 (faster-whisper CTranslate2 format)"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+section "MODEL 1/6: Whisper Large V3 (faster-whisper CTranslate2 format)"
 
 if [[ -d "models/whisper-large-v3" && -f "models/whisper-large-v3/model.bin" ]]; then
-    log "Whisper already downloaded — skipping."
+    log "Whisper Large V3 already present — skipping download."
 else
-    log "Downloading Whisper Large V3 (CTranslate2 format)..."
-    $PYTHON -c "
+    log "Downloading Whisper Large V3 from HuggingFace (Systran/faster-whisper-large-v3)..."
+    $PYTHON - <<'PYEOF'
 from huggingface_hub import snapshot_download
 snapshot_download(
-    'Systran/faster-whisper-large-v3',
-    local_dir='models/whisper-large-v3',
+    repo_id="Systran/faster-whisper-large-v3",
+    local_dir="models/whisper-large-v3",
     local_dir_use_symlinks=False,
 )
-print('Done.')
-"
+print("Whisper Large V3 download complete.")
+PYEOF
     log "Whisper Large V3 downloaded."
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MODEL 2: NLLB-200 Distilled 1.3B (Translation)
-# Size: ~600 MB (CTranslate2 float16 quantized)
-# Used by: courtaccess/core/translation.py
-# Container path: /opt/models/nllb-200-distilled-1.3B-ct2
+#
+# Source:  JustFrederik/nllb-200-distilled-1.3B-ct2-float16 on HuggingFace
+#          CTranslate2 float16 quantized — required by ctranslate2.Translator().
+#          The raw facebook/nllb-200-distilled-1.3B weights do NOT work directly.
+# Size:    ~600 MB
+# Loaded:  courtaccess/core/translation.py  →  ctranslate2.Translator(model_path)
+# EnvVar:  NLLB_MODEL_PATH → /opt/airflow/models/nllb-200-distilled-1.3B-ct2
 # ══════════════════════════════════════════════════════════════════════════════
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  MODEL 2/6: NLLB-200 Distilled 1.3B (CTranslate2 float16)"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+section "MODEL 2/6: NLLB-200 Distilled 1.3B (CTranslate2 float16)"
 
 if [[ -d "models/nllb-200-distilled-1.3B-ct2" && -f "models/nllb-200-distilled-1.3B-ct2/model.bin" ]]; then
-    log "NLLB already downloaded — skipping."
+    log "NLLB-200 already present — skipping download."
 else
-    log "Downloading NLLB-200 Distilled 1.3B (CTranslate2)..."
-    $PYTHON -c "
+    log "Downloading NLLB-200 Distilled 1.3B ct2 from HuggingFace..."
+    $PYTHON - <<'PYEOF'
 from huggingface_hub import snapshot_download
 snapshot_download(
-    'JustFrederik/nllb-200-distilled-1.3B-ct2-float16',
-    local_dir='models/nllb-200-distilled-1.3B-ct2',
+    repo_id="JustFrederik/nllb-200-distilled-1.3B-ct2-float16",
+    local_dir="models/nllb-200-distilled-1.3B-ct2",
     local_dir_use_symlinks=False,
 )
-print('Done.')
-"
+print("NLLB-200 download complete.")
+PYEOF
     log "NLLB-200 downloaded."
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# MODEL 3: Piper TTS — Spanish (es_MX)
-# Size: ~65 MB (ONNX voice model + JSON config)
-# Used by: courtaccess/speech/tts.py
-# Container path: /opt/models/piper-tts-es
+# MODEL 3: Piper TTS — Spanish
 #
-# Piper voices are distributed as .onnx + .onnx.json pairs.
-# Browse available voices: https://huggingface.co/rhasspy/piper-voices/tree/main/es/es_MX
+# Source:  rhasspy/piper-voices on HuggingFace (ONNX + JSON config pairs)
+#          Tries voices in priority order; first available is used.
+# Size:    ~65 MB
+# Loaded:  courtaccess/speech/tts.py  →  PiperVoice.load(onnx_path)
+# EnvVar:  PIPER_TTS_ES_PATH → /opt/airflow/models/piper-tts-es
+#
+# Files placed flat in models/piper-tts-es/:
+#   <voice_name>.onnx
+#   <voice_name>.onnx.json
 # ══════════════════════════════════════════════════════════════════════════════
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  MODEL 3/6: Piper TTS Spanish (es_MX-claude-high)"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+section "MODEL 3/6: Piper TTS Spanish"
 
-if [[ -d "models/piper-tts-es" && $(ls models/piper-tts-es/*.onnx 2>/dev/null | wc -l) -gt 0 ]]; then
-    log "Piper TTS Spanish already downloaded — skipping."
+if [[ -d "models/piper-tts-es" ]] && ls models/piper-tts-es/*.onnx &>/dev/null 2>&1; then
+    log "Piper TTS Spanish already present — skipping download."
 else
     mkdir -p models/piper-tts-es
-    log "Downloading Piper TTS Spanish voice..."
-    $PYTHON -c "
-from huggingface_hub import hf_hub_download
+    log "Downloading Piper TTS Spanish voice from HuggingFace..."
+    $PYTHON - <<'PYEOF'
 import os
+import shutil
+import glob
+from huggingface_hub import hf_hub_download
 
-# Download the ONNX model + config for es_MX claude high quality voice
-# If this specific voice is unavailable, fall back to es_MX-ald-medium
+# Priority order — first available wins.
+# es_MX-claude-high is highest quality; es_ES-davefx-medium is the reliable fallback.
 voices_to_try = [
-    ('es/es_MX/claude/high', 'es_MX-claude-high'),
-    ('es/es_MX/ald/medium', 'es_MX-ald-medium'),
-    ('es/es_ES/davefx/medium', 'es_ES-davefx-medium'),
+    ("es/es_MX/claude/high",   "es_MX-claude-high"),
+    ("es/es_MX/ald/medium",    "es_MX-ald-medium"),
+    ("es/es_ES/davefx/medium", "es_ES-davefx-medium"),
 ]
 
+dest = "models/piper-tts-es"
 downloaded = False
+
 for subdir, name in voices_to_try:
     try:
-        for ext in ['.onnx', '.onnx.json']:
+        for ext in [".onnx", ".onnx.json"]:
             hf_hub_download(
-                'rhasspy/piper-voices',
-                filename=f'{subdir}/{name}{ext}',
-                local_dir='models/piper-tts-es',
+                repo_id="rhasspy/piper-voices",
+                filename=f"{subdir}/{name}{ext}",
+                local_dir=dest,
                 local_dir_use_symlinks=False,
             )
-        # Flatten: move files from nested subdirectory to models/piper-tts-es/
-        import shutil, glob
-        for f in glob.glob(f'models/piper-tts-es/{subdir}/{name}*'):
-            shutil.move(f, f'models/piper-tts-es/{os.path.basename(f)}')
-        # Clean up nested dirs
-        top = subdir.split('/')[0]
-        if os.path.isdir(f'models/piper-tts-es/{top}'):
-            shutil.rmtree(f'models/piper-tts-es/{top}')
-        print(f'Downloaded voice: {name}')
+        # Flatten nested HuggingFace subdirectory into dest/
+        for f in glob.glob(f"{dest}/{subdir}/{name}*"):
+            shutil.move(f, os.path.join(dest, os.path.basename(f)))
+        # Remove the now-empty nested dirs
+        top = subdir.split("/")[0]
+        nested = os.path.join(dest, top)
+        if os.path.isdir(nested):
+            shutil.rmtree(nested)
+        print(f"Downloaded Piper ES voice: {name}")
         downloaded = True
         break
-    except Exception as e:
-        print(f'Voice {name} not available: {e}, trying next...')
+    except Exception as exc:
+        print(f"  Voice {name} unavailable ({exc}), trying next...")
 
 if not downloaded:
-    print('WARNING: No Piper ES voice found. Create a placeholder.')
-    with open('models/piper-tts-es/README.md', 'w') as f:
-        f.write('# Placeholder — download Piper ES voice manually\n')
-"
-    log "Piper TTS Spanish done."
+    raise RuntimeError(
+        "No Piper Spanish voice could be downloaded. "
+        "Check https://huggingface.co/rhasspy/piper-voices for available es/ voices."
+    )
+PYEOF
+    log "Piper TTS Spanish downloaded."
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# MODEL 4: Piper TTS — Portuguese (pt_BR)
-# Size: ~50 MB
-# Used by: courtaccess/speech/tts.py
-# Container path: /opt/models/piper-tts-pt
+# MODEL 4: Piper TTS — Portuguese
+#
+# Source:  rhasspy/piper-voices on HuggingFace
+# Size:    ~50 MB
+# Loaded:  courtaccess/speech/tts.py  →  PiperVoice.load(onnx_path)
+# EnvVar:  PIPER_TTS_PT_PATH → /opt/airflow/models/piper-tts-pt
 # ══════════════════════════════════════════════════════════════════════════════
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  MODEL 4/6: Piper TTS Portuguese (pt_BR-faber-medium)"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+section "MODEL 4/6: Piper TTS Portuguese"
 
-if [[ -d "models/piper-tts-pt" && $(ls models/piper-tts-pt/*.onnx 2>/dev/null | wc -l) -gt 0 ]]; then
-    log "Piper TTS Portuguese already downloaded — skipping."
+if [[ -d "models/piper-tts-pt" ]] && ls models/piper-tts-pt/*.onnx &>/dev/null 2>&1; then
+    log "Piper TTS Portuguese already present — skipping download."
 else
     mkdir -p models/piper-tts-pt
-    log "Downloading Piper TTS Portuguese voice..."
-    $PYTHON -c "
+    log "Downloading Piper TTS Portuguese voice from HuggingFace..."
+    $PYTHON - <<'PYEOF'
+import os
+import shutil
+import glob
 from huggingface_hub import hf_hub_download
-import os, shutil, glob
 
 voices_to_try = [
-    ('pt/pt_BR/faber/medium', 'pt_BR-faber-medium'),
-    ('pt/pt_PT/tugao/medium', 'pt_PT-tugao-medium'),
+    ("pt/pt_BR/faber/medium", "pt_BR-faber-medium"),
+    ("pt/pt_PT/tugao/medium", "pt_PT-tugao-medium"),
 ]
 
+dest = "models/piper-tts-pt"
 downloaded = False
+
 for subdir, name in voices_to_try:
     try:
-        for ext in ['.onnx', '.onnx.json']:
+        for ext in [".onnx", ".onnx.json"]:
             hf_hub_download(
-                'rhasspy/piper-voices',
-                filename=f'{subdir}/{name}{ext}',
-                local_dir='models/piper-tts-pt',
+                repo_id="rhasspy/piper-voices",
+                filename=f"{subdir}/{name}{ext}",
+                local_dir=dest,
                 local_dir_use_symlinks=False,
             )
-        for f in glob.glob(f'models/piper-tts-pt/{subdir}/{name}*'):
-            shutil.move(f, f'models/piper-tts-pt/{os.path.basename(f)}')
-        top = subdir.split('/')[0]
-        if os.path.isdir(f'models/piper-tts-pt/{top}'):
-            shutil.rmtree(f'models/piper-tts-pt/{top}')
-        print(f'Downloaded voice: {name}')
+        for f in glob.glob(f"{dest}/{subdir}/{name}*"):
+            shutil.move(f, os.path.join(dest, os.path.basename(f)))
+        top = subdir.split("/")[0]
+        nested = os.path.join(dest, top)
+        if os.path.isdir(nested):
+            shutil.rmtree(nested)
+        print(f"Downloaded Piper PT voice: {name}")
         downloaded = True
         break
-    except Exception as e:
-        print(f'Voice {name} not available: {e}, trying next...')
+    except Exception as exc:
+        print(f"  Voice {name} unavailable ({exc}), trying next...")
 
 if not downloaded:
-    print('WARNING: No Piper PT voice found. Create a placeholder.')
-    with open('models/piper-tts-pt/README.md', 'w') as f:
-        f.write('# Placeholder — download Piper PT voice manually\n')
-"
-    log "Piper TTS Portuguese done."
+    raise RuntimeError(
+        "No Piper Portuguese voice could be downloaded. "
+        "Check https://huggingface.co/rhasspy/piper-voices for available pt/ voices."
+    )
+PYEOF
+    log "Piper TTS Portuguese downloaded."
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# MODEL 5: spaCy en_core_web_lg (NER for PII + proper noun protection)
-# Size: ~560 MB
-# Used by: courtaccess/core/translation.py (Step 2: proper noun protection)
-# Install method: pip install + copy to models/ for DVC tracking
+# MODEL 5: Piper TTS — English
 #
-# NOTE: spaCy models are normally pip-installed. We ALSO track the
-# downloaded wheel in models/ so DVC versions it alongside other weights.
-# The container pip-installs it at build time from the local copy.
+# Source:  rhasspy/piper-voices on HuggingFace
+# Size:    ~40 MB
+# Loaded:  courtaccess/speech/tts.py  →  PiperVoice.load(onnx_path)
+# EnvVar:  PIPER_TTS_EN_PATH → /opt/airflow/models/piper-tts-en
+#
+# English voice is needed because TTSService loads all three languages
+# (en, es, pt) at startup — missing en would cause startup failure.
 # ══════════════════════════════════════════════════════════════════════════════
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  MODEL 5/6: spaCy en_core_web_lg"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+section "MODEL 5/6: Piper TTS English"
 
-if [[ -d "models/spacy-en-core-web-lg" && $(ls models/spacy-en-core-web-lg/ 2>/dev/null | wc -l) -gt 2 ]]; then
-    log "spaCy en_core_web_lg already downloaded — skipping."
+if [[ -d "models/piper-tts-en" ]] && ls models/piper-tts-en/*.onnx &>/dev/null 2>&1; then
+    log "Piper TTS English already present — skipping download."
 else
-    log "Downloading spaCy en_core_web_lg..."
-    # Install the model into the current Python env
-    # Try spacy download first; fall back to direct wheel install via uv pip
-    # NEVER use bare `pip` here — it routes to the system Python, not the uv venv.
-    $PYTHON -m spacy download en_core_web_lg 2>/dev/null \
-        || uv pip install "https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.7.1/en_core_web_lg-3.7.1-py3-none-any.whl"
-
-    # Copy the installed model data to models/ for DVC tracking
-    $PYTHON -c "
-import spacy
+    mkdir -p models/piper-tts-en
+    log "Downloading Piper TTS English voice from HuggingFace..."
+    $PYTHON - <<'PYEOF'
+import os
 import shutil
-import os
+import glob
+from huggingface_hub import hf_hub_download
 
-nlp = spacy.load('en_core_web_lg')
-model_path = os.path.dirname(nlp.path)
+voices_to_try = [
+    ("en/en_US/lessac/medium", "en_US-lessac-medium"),
+    ("en/en_US/amy/medium",    "en_US-amy-medium"),
+    ("en/en_GB/alan/medium",   "en_GB-alan-medium"),
+]
 
-# Copy the entire model directory
-dest = 'models/spacy-en-core-web-lg'
-if os.path.exists(dest):
-    shutil.rmtree(dest)
-shutil.copytree(str(nlp.path), dest)
-print(f'Copied spaCy model from {nlp.path} to {dest}')
-"
-    log "spaCy en_core_web_lg done."
+dest = "models/piper-tts-en"
+downloaded = False
+
+for subdir, name in voices_to_try:
+    try:
+        for ext in [".onnx", ".onnx.json"]:
+            hf_hub_download(
+                repo_id="rhasspy/piper-voices",
+                filename=f"{subdir}/{name}{ext}",
+                local_dir=dest,
+                local_dir_use_symlinks=False,
+            )
+        for f in glob.glob(f"{dest}/{subdir}/{name}*"):
+            shutil.move(f, os.path.join(dest, os.path.basename(f)))
+        top = subdir.split("/")[0]
+        nested = os.path.join(dest, top)
+        if os.path.isdir(nested):
+            shutil.rmtree(nested)
+        print(f"Downloaded Piper EN voice: {name}")
+        downloaded = True
+        break
+    except Exception as exc:
+        print(f"  Voice {name} unavailable ({exc}), trying next...")
+
+if not downloaded:
+    raise RuntimeError(
+        "No Piper English voice could be downloaded. "
+        "Check https://huggingface.co/rhasspy/piper-voices for available en/ voices."
+    )
+PYEOF
+    log "Piper TTS English downloaded."
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# MODEL 6: TFDV Baseline Stats (monitoring reference statistics)
-# Size: ~50 KB (generated, not downloaded)
-# Used by: courtaccess/monitoring/drift.py
+# MODEL 6: Silero VAD v4 (Voice Activity Detection)
 #
-# This is NOT a model download — it's a generated artifact.
-# We generate baseline statistics from the current form catalog
-# using TFDV, then DVC-track the output so it's versioned.
+# Source:  Official Silero release on GitHub
+#          https://github.com/snakers4/silero-vad/releases
+#          The .pt file is a TorchScript model loaded via torch.jit.load().
+#          It is NOT downloaded via torch.hub at runtime — that requires internet
+#          access on every cold start. Instead, we download it once here and
+#          serve it from GCS.
+# Size:    ~2 MB
+# Loaded:  courtaccess/speech/vad.py  →  torch.jit.load(path)
+# EnvVar:  SILERO_VAD_MODEL_PATH → /opt/airflow/models/silero-vad-v4/silero_vad.jit.pt
+#
+# Filename convention: silero_vad.jit.pt
+#   The upstream file is named silero_vad.pt but we rename it .jit.pt to
+#   make explicit that this is a TorchScript artifact, not a state_dict.
 # ══════════════════════════════════════════════════════════════════════════════
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  MODEL 6/6: TFDV Baseline Stats (generated artifact)"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+section "MODEL 6/6: Silero VAD v4"
 
-mkdir -p models/tfdv-baseline-stats
-if [[ -f "models/tfdv-baseline-stats/baseline_stats.json" ]]; then
-    log "TFDV baseline stats already exist — skipping."
+if [[ -f "models/silero-vad-v4/silero_vad.jit.pt" ]]; then
+    log "Silero VAD already present — skipping download."
 else
-    log "Generating TFDV baseline statistics..."
-    $PYTHON -c "
-import json
+    mkdir -p models/silero-vad-v4
+    log "Downloading Silero VAD v4 from GitHub releases..."
+$PYTHON - <<'PYEOF'
 import os
-from datetime import datetime
+import shutil
+from pathlib import Path
 
-# Generate baseline statistics structure
-# In production, this would use tensorflow_data_validation to compute
-# real statistics from the form catalog. For now, we create the schema
-# that drift.py and anomaly.py will validate against.
+dest_dir = Path("models/silero-vad-v4")
+dest_dir.mkdir(parents=True, exist_ok=True)
+dest = dest_dir / "silero_vad.jit.pt"
 
-baseline = {
-    'generated_at': datetime.utcnow().isoformat() + 'Z',
-    'generator': 'scripts/setup_models.sh',
-    'dataset': 'form_catalog',
-    'num_examples': 0,  # populated after first real scraper run
-    'features': {
-        'form_id': {'type': 'STRING', 'presence': {'min_fraction': 1.0}},
-        'form_name': {'type': 'STRING', 'presence': {'min_fraction': 1.0}},
-        'source_url': {'type': 'STRING', 'presence': {'min_fraction': 1.0}},
-        'content_hash': {'type': 'STRING', 'presence': {'min_fraction': 1.0}},
-        'status': {
-            'type': 'STRING',
-            'presence': {'min_fraction': 1.0},
-            'domain': {'value': ['active', 'archived']},
-        },
-        'version': {
-            'type': 'INT',
-            'presence': {'min_fraction': 1.0},
-            'int_domain': {'min': 1},
-        },
-        'last_checked': {'type': 'STRING', 'presence': {'min_fraction': 1.0}},
-    },
-    'thresholds': {
-        'jensen_shannon_divergence': 0.1,
-        'z_score_numeric_features': 3.0,
-        'min_active_forms': 10,
-        'max_form_drop_pct': 20,
-    },
-}
+# The silero-vad pip package ships the JIT model file inside its package data.
+# This is the correct approach now that the GitHub file structure has changed
+# across v4/v5/v6 — importing from the installed package is always version-stable.
+try:
+    import silero_vad as _sv
+    package_dir = Path(_sv.__file__).parent
+    # The JIT file is at src/silero_vad/data/silero_vad.jit inside the package
+    jit_candidates = list(package_dir.rglob("silero_vad.jit"))
+    if not jit_candidates:
+        raise FileNotFoundError(f"silero_vad.jit not found inside package at {package_dir}")
+    src_file = jit_candidates[0]
+    shutil.copy2(src_file, dest)
+    print(f"Copied silero_vad.jit from package: {src_file} -> {dest}")
+except ImportError:
+    raise RuntimeError(
+        "silero-vad package not installed. "
+        "Add 'silero-vad' to pyproject.toml dependencies or run: pip install silero-vad"
+    )
 
-os.makedirs('models/tfdv-baseline-stats', exist_ok=True)
-with open('models/tfdv-baseline-stats/baseline_stats.json', 'w') as f:
-    json.dump(baseline, f, indent=2)
-
-print('Baseline stats generated.')
-"
-    log "TFDV baseline done."
+# Verify
+import torch
+model = torch.jit.load(str(dest), map_location="cpu")
+model.eval()
+print(f"Silero VAD loaded and verified OK — saved to {dest}")
+PYEOF
+    log "Silero VAD v4 downloaded and verified."
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# NOTE ON LLAMA 4 MAVERICK
+# Llama 4 Scout — no download needed
 #
-# Llama 4 Maverick is called via Vertex AI API — no local weights.
-# It does NOT need a DVC-tracked directory or model download.
-# The model endpoint is configured via env vars in config.py:
-#   VERTEX_PROJECT_ID, VERTEX_LOCATION, VERTEX_MODEL_ID
+# Runs entirely via the Vertex AI MaaS API (us-east5).
+# Configured through env vars: VERTEX_PROJECT_ID, VERTEX_LOCATION,
+# VERTEX_LEGAL_LLM_MODEL.  No local weights, no DVC tracking.
+# ══════════════════════════════════════════════════════════════════════════════
+section "NOTE: Llama 4 Scout — Vertex AI API only, nothing to download"
+log "Llama 4 Scout is served via Vertex AI. No local weights to manage."
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DVC ADD
 #
-# We remove the old llama4-scout-legal-review.dvc placeholder since
-# it tracked prompt templates that don't need DVC versioning — they
-# live in legal_review.py as code.
+# Removes the old placeholder .dvc files (fake hashes from before real weights
+# existed) and replaces them with real pointer files computed from the
+# just-downloaded model directories.
+#
+# `dvc add <dir>` does three things:
+#   1. Computes md5 of every file in the directory.
+#   2. Copies the files into the local DVC cache (.dvc/cache/).
+#   3. Writes models/<name>.dvc with the root md5, total size, and nfiles.
+#   4. Adds models/<name> to models/.gitignore so the weights are never
+#      committed to Git.
 # ══════════════════════════════════════════════════════════════════════════════
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  NOTE: Llama 4 Maverick — API only, no DVC tracking needed"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-log "Llama 4 Maverick runs via Vertex AI API (env: VERTEX_PROJECT_ID, VERTEX_MODEL_ID)."
-log "No local weights to download or DVC-track."
+section "DVC ADD — computing hashes and writing pointer files"
 
-if [[ -f "models/llama4-scout-legal-review.dvc" ]]; then
-    warn "Removing old placeholder: models/llama4-scout-legal-review.dvc"
-    rm -f models/llama4-scout-legal-review.dvc
-fi
-
-# ══════════════════════════════════════════════════════════════════════════════
-# DVC ADD — Create real pointer files for all models
-# ══════════════════════════════════════════════════════════════════════════════
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  DVC ADD — Creating real pointer files"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-# Remove old placeholder .dvc files (they have fake md5 hashes)
-log "Removing old placeholder .dvc files..."
+log "Removing stale placeholder .dvc files..."
 rm -f models/whisper-large-v3.dvc
 rm -f models/nllb-200-distilled-1.3B-ct2.dvc
 rm -f models/piper-tts-es.dvc
 rm -f models/piper-tts-pt.dvc
+rm -f models/piper-tts-en.dvc
+rm -f models/silero-vad-v4.dvc
+# These two are no longer GCS-managed — delete them so dvc pull stops
+# trying to fetch them from the bucket.
 rm -f models/spacy-en-core-web-lg.dvc
 rm -f models/tfdv-baseline-stats.dvc
 
-# DVC add each model directory — this computes real hashes
 log "Running dvc add for each model..."
 dvc add models/whisper-large-v3
 dvc add models/nllb-200-distilled-1.3B-ct2
 dvc add models/piper-tts-es
 dvc add models/piper-tts-pt
-dvc add models/spacy-en-core-web-lg
-dvc add models/tfdv-baseline-stats
+dvc add models/piper-tts-en
+dvc add models/silero-vad-v4
 
-log "DVC pointer files created with real hashes."
+log "DVC pointer files written with real hashes."
+echo ""
+log "Pointer files created:"
+for f in models/whisper-large-v3.dvc \
+         models/nllb-200-distilled-1.3B-ct2.dvc \
+         models/piper-tts-es.dvc \
+         models/piper-tts-pt.dvc \
+         models/piper-tts-en.dvc \
+         models/silero-vad-v4.dvc; do
+    if [[ -f "$f" ]]; then
+        size=$(grep "size:" "$f" | awk '{print $2}')
+        log "  $f  (size: ${size} bytes)"
+    else
+        warn "  $f — NOT FOUND (dvc add may have failed)"
+    fi
+done
 
 # ══════════════════════════════════════════════════════════════════════════════
-# DVC PUSH — Upload weights to GCS
+# DVC PUSH
+#
+# Uploads all locally cached model blobs to gs://courtaccess-ai-models.
+# DVC stores blobs content-addressed under files/md5/<ab>/<rest_of_hash>
+# so the bucket structure is opaque but fully reproducible from the .dvc files.
+#
+# Skip with --skip-push if you want to verify locally before uploading.
 # ══════════════════════════════════════════════════════════════════════════════
+section "DVC PUSH — uploading to gs://courtaccess-ai-models"
+
 if [[ "$SKIP_PUSH" == "true" ]]; then
-    warn "Skipping dvc push (--skip-push flag). Run 'dvc push' manually when ready."
+    warn "--skip-push set: skipping dvc push. Run 'dvc push' manually when ready."
 else
-    echo ""
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "  DVC PUSH — Uploading to gs://courtaccess-ai-models"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log "Pushing all model blobs to GCS..."
     dvc push
-    log "All model weights pushed to GCS."
+    log "All models pushed to gs://courtaccess-ai-models."
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Summary
 # ══════════════════════════════════════════════════════════════════════════════
+section "DONE"
 echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  DONE — Model Setup Complete"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  Models now in GCS (tracked by DVC):"
+echo "    models/whisper-large-v3.dvc           ~3 GB    ASR"
+echo "    models/nllb-200-distilled-1.3B-ct2.dvc ~600 MB  Translation"
+echo "    models/piper-tts-es.dvc               ~65 MB   TTS Spanish"
+echo "    models/piper-tts-pt.dvc               ~50 MB   TTS Portuguese"
+echo "    models/piper-tts-en.dvc               ~40 MB   TTS English"
+echo "    models/silero-vad-v4.dvc              ~2 MB    Voice Activity Detection"
 echo ""
-echo "Models tracked by DVC:"
-echo "  models/whisper-large-v3.dvc          (~3 GB)   — ASR"
-echo "  models/nllb-200-distilled-1.3B-ct2.dvc (~600 MB) — Translation"
-echo "  models/piper-tts-es.dvc             (~65 MB)  — TTS Spanish"
-echo "  models/piper-tts-pt.dvc             (~50 MB)  — TTS Portuguese"
-echo "  models/spacy-en-core-web-lg.dvc     (~560 MB) — NER / PII"
-echo "  models/tfdv-baseline-stats.dvc      (~50 KB)  — Monitoring baseline"
+echo "  Not in GCS (managed differently):"
+echo "    spaCy en_core_web_lg  — Dockerfile: python -m spacy download en_core_web_lg"
+echo "    PaddleOCR / Qwen      — pip-installed; weights auto-cached on first inference"
+echo "    Llama 4 Scout         — Vertex AI API (no local weights)"
+echo "    TFDV baseline stats   — generated at runtime by form scraper DAG"
 echo ""
-echo "NOT tracked by DVC (API-only, no local weights):"
-echo "  Llama 4 Maverick — via Vertex AI (VERTEX_PROJECT_ID env var)"
+echo "  Next steps:"
+echo "    git add models/*.dvc models/.gitignore"
+echo "    git commit -m 'feat: real DVC pointers for all model weights'"
+echo "    git push"
 echo ""
-echo "Next steps:"
-echo "  git add models/*.dvc models/.gitignore"
-echo "  git commit -m 'feat: add real DVC pointers for all model weights'"
-echo "  git push"
-echo ""
-echo "To restore on a fresh machine:"
-echo "  git clone <repo> && cd court-access-ai"
-echo "  pip install 'dvc[gs]'"
-echo "  dvc pull   # downloads all weights from GCS"
+echo "  To restore on any machine after this commit:"
+echo "    git clone <repo> && cd court-access-ai"
+echo "    pip install 'dvc[gs]>=3.50.0'"
+echo "    gcloud auth application-default login"
+echo "    dvc pull"
+echo "    docker compose up"
 echo ""

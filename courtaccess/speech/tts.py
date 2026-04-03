@@ -2,15 +2,19 @@
 Text-to-Speech service using Piper TTS.
 
 This module provides a singleton TTSService that:
- 1. Downloads Piper ONNX voice models from Hugging Face (first run).
+ 1. Resolves Piper ONNX voice model paths from GCS-pulled local directories.
  2. Loads a PiperVoice instance per language (en, es, pt).
  3. Exposes a `synthesize(text, language) -> bytes` method that returns
     complete WAV audio bytes ready to send over WebSocket.
 
+Voice models are NOT downloaded at runtime. They are downloaded once by
+scripts/setup_models.sh, pushed to gs://courtaccess-ai-models via DVC,
+and pulled to local disk via `dvc pull` before container startup.
+
 Voice models used:
- - en: en_US-lessac-medium  (22 050 Hz, ~40 MB)
- - es: es_ES-davefx-medium  (22 050 Hz, ~40 MB)
- - pt: pt_BR-faber-medium   (22 050 Hz, ~40 MB)
+ - en: en_US-lessac-medium  (22 050 Hz, ~40 MB)  → PIPER_TTS_EN_PATH
+ - es: es_ES-davefx-medium  (22 050 Hz, ~40 MB)  → PIPER_TTS_ES_PATH
+ - pt: pt_BR-faber-medium   (22 050 Hz, ~40 MB)  → PIPER_TTS_PT_PATH
 """
 
 import io
@@ -30,13 +34,17 @@ logger = get_logger(__name__)
 #  Voice model registry
 # ---------------------------------------------------------------------------
 
-_DEFAULT_VOICES_DIR = str(Path(__file__).parent.parent.parent / "models" / "piper-voices")
+# Mapping: short lang code -> expected voice name (used to find the .onnx file
+# when the directory contains exactly the voice setup_models.sh placed there).
+# The name is a hint for logging — actual resolution globs for any .onnx file
+# so a different-named voice still works as long as there is exactly one.
+VOICE_MAP: dict[str, dict] = {
+    "en": {"name": "en_US-lessac-medium"},
+    "es": {"name": "es_ES-davefx-medium"},
+    "pt": {"name": "pt_BR-faber-medium"},
+}
 
-
-def _get_voices_dir() -> Path:
-    """Resolve voice directory from settings (lazy, not at import time)."""
-    s = get_settings()
-    return Path(s.piper_voices_dir or _DEFAULT_VOICES_DIR)
+SUPPORTED_LANGUAGES = set(VOICE_MAP.keys())
 
 
 def _get_lang_path_overrides() -> dict[str, str | None]:
@@ -49,101 +57,76 @@ def _get_lang_path_overrides() -> dict[str, str | None]:
     }
 
 
-# HuggingFace repo and base URL for voice downloads
-_HF_REPO = "rhasspy/piper-voices"
-_HF_BRANCH = "v1.0.0"
-
-# Mapping: short lang code -> (onnx_relative_path, config_relative_path)
-# Paths are relative to the HF repo root.
-VOICE_MAP: dict[str, dict] = {
-    "en": {
-        "name": "en_US-lessac-medium",
-        "onnx_path": "en/en_US/lessac/medium/en_US-lessac-medium.onnx",
-        "json_path": "en/en_US/lessac/medium/en_US-lessac-medium.onnx.json",
-    },
-    "es": {
-        "name": "es_ES-davefx-medium",
-        "onnx_path": "es/es_ES/davefx/medium/es_ES-davefx-medium.onnx",
-        "json_path": "es/es_ES/davefx/medium/es_ES-davefx-medium.onnx.json",
-    },
-    "pt": {
-        "name": "pt_BR-faber-medium",
-        "onnx_path": "pt/pt_BR/faber/medium/pt_BR-faber-medium.onnx",
-        "json_path": "pt/pt_BR/faber/medium/pt_BR-faber-medium.onnx.json",
-    },
-}
-
-SUPPORTED_LANGUAGES = set(VOICE_MAP.keys())
-
-
 # ---------------------------------------------------------------------------
-#  Download helper
+#  Path resolver  (replaces the old _download_voice downloader)
 # ---------------------------------------------------------------------------
 
 
-def _download_voice(lang: str) -> Path:
-    """Download the ONNX model + config JSON for *lang* from Hugging Face.
+def _resolve_voice_path(lang: str) -> Path:
+    """Resolve the local .onnx path for *lang* from GCS-pulled model directory.
 
-    If a per-language path override is set via PIPER_TTS_{EN,ES,PT}_PATH,
-    the model is loaded from that directory instead of downloading.
+    Reads PIPER_TTS_{EN,ES,PT}_PATH from settings (set via env vars in
+    docker-compose / GKE).  The directory must already exist on disk —
+    populated by `dvc pull` before container startup.
+
+    Resolution order:
+      1. Check <override_dir>/<expected_name>.onnx  (exact name match)
+      2. Glob <override_dir>/*.onnx                 (any .onnx in the dir)
+      3. Fail fast with a clear RuntimeError
+
+    No network calls are made. No fallback downloads. If the file is
+    missing, the container should not start — the caller will surface the
+    error at TTSService init time so the problem is visible immediately.
+
+    Args:
+        lang: Short language code — "en", "es", or "pt".
+
+    Returns:
+        Path to the resolved .onnx file.
+
+    Raises:
+        RuntimeError: If the env var is unset, the directory is missing,
+                      or no .onnx file is found inside it.
     """
-    info = VOICE_MAP[lang]
-    name = info["name"]
-
-    # Check per-language env var override (matches docker-compose convention)
     override = _get_lang_path_overrides().get(lang)
-    if override:
-        override_dir = Path(override)
-        override_onnx = override_dir / f"{name}.onnx"
-        if override_onnx.exists():
-            return override_onnx
-        # Also check if the .onnx file lives directly in the override dir
-        # under a different name (glob for any .onnx file)
-        onnx_files = list(override_dir.glob("*.onnx"))
-        if onnx_files:
-            return onnx_files[0]
-        logger.warning("Override path %s set but no .onnx found; falling back to download", override)
+    expected_name = VOICE_MAP[lang]["name"]
 
-    from huggingface_hub import hf_hub_download
+    if not override:
+        raise RuntimeError(
+            f"PIPER_TTS_{lang.upper()}_PATH is not set. "
+            f"Run 'dvc pull' to download the model from GCS, then set "
+            f"PIPER_TTS_{lang.upper()}_PATH to the models/piper-tts-{lang}/ directory."
+        )
 
-    dest_dir = _get_voices_dir() / name
-    dest_dir.mkdir(parents=True, exist_ok=True)
+    override_dir = Path(override)
 
-    onnx_local = dest_dir / f"{name}.onnx"
-    json_local = dest_dir / f"{name}.onnx.json"
+    if not override_dir.is_dir():
+        raise RuntimeError(
+            f"Piper TTS directory for '{lang}' not found at: {override_dir}\n"
+            "Run 'dvc pull' to download the model from GCS."
+        )
 
-    if onnx_local.exists() and json_local.exists():
-        return onnx_local
+    # 1. Exact name match (the normal case after setup_models.sh)
+    exact = override_dir / f"{expected_name}.onnx"
+    if exact.is_file():
+        return exact
 
-    logger.info("Downloading voice model '%s' ...", name)
+    # 2. Any .onnx in the directory (supports alternate voice names)
+    onnx_files = sorted(override_dir.glob("*.onnx"))
+    if onnx_files:
+        if len(onnx_files) > 1:
+            logger.warning(
+                "Multiple .onnx files found in %s — using %s. Remove unused voices to avoid ambiguity.",
+                override_dir,
+                onnx_files[0].name,
+            )
+        return onnx_files[0]
 
-    # Download ONNX model
-    downloaded_onnx = hf_hub_download(
-        repo_id=_HF_REPO,
-        filename=info["onnx_path"],
-        revision=_HF_BRANCH,
-        local_dir=str(dest_dir),
+    raise RuntimeError(
+        f"No .onnx voice file found in {override_dir}.\n"
+        f"Expected: {expected_name}.onnx\n"
+        "Run 'dvc pull' to restore the model from GCS."
     )
-    # Move to expected location if huggingface_hub nested it
-    dl_onnx = Path(downloaded_onnx)
-    if dl_onnx != onnx_local:
-        onnx_local.parent.mkdir(parents=True, exist_ok=True)
-        dl_onnx.rename(onnx_local)
-
-    # Download config JSON
-    downloaded_json = hf_hub_download(
-        repo_id=_HF_REPO,
-        filename=info["json_path"],
-        revision=_HF_BRANCH,
-        local_dir=str(dest_dir),
-    )
-    dl_json = Path(downloaded_json)
-    if dl_json != json_local:
-        json_local.parent.mkdir(parents=True, exist_ok=True)
-        dl_json.rename(json_local)
-
-    logger.info("Voice '%s' downloaded -> %s", name, dest_dir)
-    return onnx_local
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +139,8 @@ class TTSService:
     Text-to-Speech service powered by Piper TTS.
 
     One PiperVoice is loaded per language and reused across requests.
-    Voice models are downloaded automatically on first use.
+    Voice models are resolved from GCS-pulled local directories — never
+    downloaded at runtime.
     """
 
     _instance: Optional["TTSService"] = None
@@ -177,12 +161,17 @@ class TTSService:
     # ------------------------------------------------------------------ #
 
     def _load_voices(self) -> None:
-        """Download (if needed) and load all voice models."""
-        _get_voices_dir().mkdir(parents=True, exist_ok=True)
-
+        """Resolve paths and load all voice models from local disk."""
         for lang in VOICE_MAP:
-            onnx_path = _download_voice(lang)
+            onnx_path = _resolve_voice_path(lang)
             config_path = onnx_path.with_suffix(".onnx.json")
+
+            if not config_path.is_file():
+                raise RuntimeError(
+                    f"Piper config JSON not found alongside {onnx_path.name}.\n"
+                    f"Expected: {config_path}\n"
+                    "Run 'dvc pull' to restore the model from GCS."
+                )
 
             logger.info("Loading voice for '%s' from %s ...", lang, onnx_path.name)
             voice = PiperVoice.load(
