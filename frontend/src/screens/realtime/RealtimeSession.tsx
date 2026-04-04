@@ -237,26 +237,26 @@ interface Props { onNav: (s: ScreenId) => void }
 
 export default function RealtimeSession({ onNav }: Props) {
   // ── Store ──────────────────────────────────────────────────────────────────
-  const phase         = useRealtimeStore((s) => s.phase)
-  const roomCode      = useRealtimeStore((s) => s.roomCode)
-  const myName        = useRealtimeStore((s) => s.myName)
-  const myLanguage    = useRealtimeStore((s) => s.myLanguage)
-  const isCreator     = useRealtimeStore((s) => s.isCreator)
-  const partner       = useRealtimeStore((s) => s.partner)
-  const partnerMuted  = useRealtimeStore((s) => s.partnerMuted)
-  const isMuted       = useRealtimeStore((s) => s.isMuted)
-  const micLocked     = useRealtimeStore((s) => s.micLocked)
-  const isRecording   = useRealtimeStore((s) => s.isRecording)
-  const isSpeaking    = useRealtimeStore((s) => s.isSpeaking)
-  const isPlayingTts  = useRealtimeStore((s) => s.isPlayingTts)
-  const duration      = useRealtimeStore((s) => s.duration)
-  const messages      = useRealtimeStore((s) => s.messages)
-  const livePartial   = useRealtimeStore((s) => s.livePartial)
+  const phase = useRealtimeStore((s) => s.phase)
+  const roomCode = useRealtimeStore((s) => s.roomCode)
+  const myName = useRealtimeStore((s) => s.myName)
+  const myLanguage = useRealtimeStore((s) => s.myLanguage)
+  const isCreator = useRealtimeStore((s) => s.isCreator)
+  const partner = useRealtimeStore((s) => s.partner)
+  const partnerMuted = useRealtimeStore((s) => s.partnerMuted)
+  const isMuted = useRealtimeStore((s) => s.isMuted)
+  const micLocked = useRealtimeStore((s) => s.micLocked)
+  const isRecording = useRealtimeStore((s) => s.isRecording)
+  const isSpeaking = useRealtimeStore((s) => s.isSpeaking)
+  const isPlayingTts = useRealtimeStore((s) => s.isPlayingTts)
+  const duration = useRealtimeStore((s) => s.duration)
+  const messages = useRealtimeStore((s) => s.messages)
+  const livePartial = useRealtimeStore((s) => s.livePartial)
   const courtDivision = useRealtimeStore((s) => s.courtDivision)
-  const courtroom     = useRealtimeStore((s) => s.courtroom)
-  const caseDocket    = useRealtimeStore((s) => s.caseDocket)
-  const toggleMute    = useRealtimeStore((s) => s.toggleMute)
-  const resetStore    = useRealtimeStore((s) => s.reset)
+  const courtroom = useRealtimeStore((s) => s.courtroom)
+  const caseDocket = useRealtimeStore((s) => s.caseDocket)
+  const toggleMute = useRealtimeStore((s) => s.toggleMute)
+  const resetStore = useRealtimeStore((s) => s.reset)
 
   // ── Hooks ──────────────────────────────────────────────────────────────────
   const { enqueue, clearQueue } = useTtsPlayback()
@@ -361,9 +361,8 @@ export default function RealtimeSession({ onNav }: Props) {
 
   // ── Transcript area content (phase-aware) ─────────────────────────────────
   const sessionActive = phase === "active"
-  const langPairLabel = `${LANG_LABELS[myLanguage] ?? myLanguage} ↔ ${
-    partner ? (LANG_LABELS[partner.language] ?? partner.language) : "…"
-  }`
+  const langPairLabel = `${LANG_LABELS[myLanguage] ?? myLanguage} ↔ ${partner ? (LANG_LABELS[partner.language] ?? partner.language) : "…"
+    }`
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -404,21 +403,22 @@ export default function RealtimeSession({ onNav }: Props) {
                 {sessionActive && ` · ${formatDuration(duration)} elapsed`}
               </span>
             )}
-            {isCreator && sessionActive && (
-              <button
-                onClick={handleEndSession}
-                className="px-3 py-1.5 rounded text-xs font-semibold cursor-pointer"
-                style={{ background: "#7f1d1d", color: "#fca5a5", border: "none" }}
-              >
-                End Session
-              </button>
-            )}
             <button
-              onClick={handleLeave}
+              onClick={() => {
+                if (isCreator && phase !== "ended") {
+                  handleEndSession();
+                } else {
+                  handleLeave();
+                }
+              }}
               className="px-3 py-1.5 rounded text-xs font-semibold cursor-pointer"
-              style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.6)", border: "none" }}
+              style={{
+                background: phase === "ended" ? "rgba(255,255,255,0.06)" : "#7f1d1d",
+                color: phase === "ended" ? "rgba(255,255,255,0.6)" : "#fca5a5",
+                border: "none"
+              }}
             >
-              Leave
+              {phase === "ended" ? "Exit Room" : "End Session"}
             </button>
           </div>
         </div>
@@ -450,12 +450,12 @@ export default function RealtimeSession({ onNav }: Props) {
                     {phase === "waiting"
                       ? `Waiting for partner to join. Share room code `
                       : phase === "ready"
-                      ? isCreator
-                        ? "Partner joined. Click Start Session to begin."
-                        : "Waiting for host to start session…"
-                      : phase === "ended"
-                      ? "Session ended. Transcript is preserved above."
-                      : "Start speaking — your conversation will appear here in real time."}
+                        ? isCreator
+                          ? "Partner joined. Click Start Session to begin."
+                          : "Waiting for host to start session…"
+                        : phase === "ended"
+                          ? "Session ended. Transcript is preserved above."
+                          : "Start speaking — your conversation will appear here in real time."}
                   </p>
                   {phase === "waiting" && roomCode && (
                     <div
@@ -513,8 +513,8 @@ export default function RealtimeSession({ onNav }: Props) {
                   background: isMuted
                     ? "rgba(255,255,255,0.06)"
                     : micLocked
-                    ? "rgba(251,191,36,0.12)"
-                    : "rgba(239,68,68,0.15)",
+                      ? "rgba(251,191,36,0.12)"
+                      : "rgba(239,68,68,0.15)",
                   border: `2px solid ${isMuted ? "rgba(255,255,255,0.15)" : micLocked ? "#fbbf24" : "#ef4444"}`,
                   opacity: !sessionActive ? 0.4 : 1,
                   cursor: !sessionActive || micLocked ? "not-allowed" : "pointer",
@@ -531,8 +531,8 @@ export default function RealtimeSession({ onNav }: Props) {
                     const height = active && isSpeaking
                       ? `${12 + Math.abs(Math.sin(i * 0.8)) * 14}px`
                       : active
-                      ? `${4 + Math.abs(Math.sin(i * 0.5)) * 6}px`
-                      : "3px"
+                        ? `${4 + Math.abs(Math.sin(i * 0.5)) * 6}px`
+                        : "3px"
                     return (
                       <div
                         key={i}
@@ -552,14 +552,14 @@ export default function RealtimeSession({ onNav }: Props) {
                   {isMuted
                     ? "Muted"
                     : micLocked
-                    ? "Mic paused — listening to translation"
-                    : isPlayingTts
-                    ? "Partner speaking…"
-                    : sessionActive
-                    ? "Listening · Silero VAD active · Faster-Whisper processing"
-                    : phase === "ready" && !isCreator
-                    ? "Waiting for host to start…"
-                    : "Inactive"}
+                      ? "Mic paused — listening to translation"
+                      : isPlayingTts
+                        ? "Partner speaking…"
+                        : sessionActive
+                          ? "Listening · Silero VAD active · Faster-Whisper processing"
+                          : phase === "ready" && !isCreator
+                            ? "Waiting for host to start…"
+                            : "Inactive"}
                 </div>
               </div>
 
@@ -574,8 +574,8 @@ export default function RealtimeSession({ onNav }: Props) {
                     color: stats.avgAsr !== "—" && parseFloat(stats.avgAsr) >= 0.9
                       ? "#4ade80"
                       : stats.avgAsr !== "—" && parseFloat(stats.avgAsr) >= 0.7
-                      ? "#fbbf24"
-                      : "rgba(255,255,255,0.4)",
+                        ? "#fbbf24"
+                        : "rgba(255,255,255,0.4)",
                   }}
                 >
                   {stats.avgAsr !== "—" ? `${Math.round(parseFloat(stats.avgAsr) * 100)}%` : "—"}
@@ -618,11 +618,11 @@ export default function RealtimeSession({ onNav }: Props) {
             {/* Model Pipeline */}
             <SidebarSection title="Model Pipeline">
               {[
-                { name: "Silero VAD v4",      color: "#22c55e" },
-                { name: "Faster-Whisper V3",  color: "#22c55e" },
-                { name: "NLLB-200 1.3B",      color: "#22c55e" },
+                { name: "Silero VAD v4", color: "#22c55e" },
+                { name: "Faster-Whisper V3", color: "#22c55e" },
+                { name: "NLLB-200 1.3B", color: "#22c55e" },
                 { name: `Piper TTS (${partner?.language ?? myLanguage})`, color: "#22c55e" },
-                { name: "Llama 4 Vertex AI",  color: "#f59e0b" },
+                { name: "Llama 4 Vertex AI", color: "#f59e0b" },
               ].map((m) => (
                 <div key={m.name} className="flex items-center gap-2 py-0.5">
                   <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: m.color }} />
@@ -633,11 +633,11 @@ export default function RealtimeSession({ onNav }: Props) {
 
             {/* Stats */}
             <SidebarSection title="Stats">
-              <SidebarRow label="Utterances"      value={messages.length} />
-              <SidebarRow label="Avg ASR Conf."   value={stats.avgAsr} />
-              <SidebarRow label="Avg NMT Conf."   value={stats.avgNmt} />
+              <SidebarRow label="Utterances" value={messages.length} />
+              <SidebarRow label="Avg ASR Conf." value={stats.avgAsr} />
+              <SidebarRow label="Avg NMT Conf." value={stats.avgNmt} />
               <SidebarRow label="Llama Corrections" value={stats.corrections} />
-              <SidebarRow label="TTS Segments"    value={stats.ttsSegments} />
+              <SidebarRow label="TTS Segments" value={stats.ttsSegments} />
             </SidebarSection>
 
             {/* Phase-specific controls */}

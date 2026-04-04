@@ -160,32 +160,32 @@ x-airflow-common:
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     &airflow-common-depends-on
-    postgres:
-      condition: service_healthy
+    # postgres:
+    #   condition: service_healthy
     redis:
       condition: service_healthy
 
 services:
 
   # ── PostgreSQL ─────────────────────────────────────────────────────────────
-  postgres:
-    image: postgres:16
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres-db-volume:/var/lib/postgresql/data
-      - ./db/init-airflow-db.sql:/docker-entrypoint-initdb.d/10-init-airflow-db.sql
-      # - ./db/init-mlflow-db.sql:/docker-entrypoint-initdb.d/20-init-mlflow-db.sql
-    healthcheck:
-      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}"]
-      interval: 10s
-      retries: 5
-      start_period: 5s
-    restart: always
+  # postgres:
+  #   image: postgres:16
+  #   environment:
+  #     POSTGRES_USER: ${POSTGRES_USER}
+  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  #     POSTGRES_DB: ${POSTGRES_DB}
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - postgres-db-volume:/var/lib/postgresql/data
+  #     - ./db/init-airflow-db.sql:/docker-entrypoint-initdb.d/10-init-airflow-db.sql
+  #     # - ./db/init-mlflow-db.sql:/docker-entrypoint-initdb.d/20-init-mlflow-db.sql
+  #   healthcheck:
+  #     test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}"]
+  #     interval: 10s
+  #     retries: 5
+  #     start_period: 5s
+  #   restart: always
 
   # ── Redis ──────────────────────────────────────────────────────────────────
   redis:
@@ -234,6 +234,13 @@ services:
       context: .
       dockerfile: Dockerfile
       target: api
+    args:
+      VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY}
+      VITE_FIREBASE_AUTH_DOMAIN: ${VITE_FIREBASE_AUTH_DOMAIN}
+      VITE_FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID}
+      VITE_FIREBASE_STORAGE_BUCKET: ${VITE_FIREBASE_STORAGE_BUCKET}
+      VITE_FIREBASE_MESSAGING_SENDER_ID: ${VITE_FIREBASE_MESSAGING_SENDER_ID}
+      VITE_FIREBASE_APP_ID: ${VITE_FIREBASE_APP_ID}
     ports:
       - "8000:8000"
     environment:
@@ -346,8 +353,8 @@ services:
       - ./data:/app/data                 # glossaries, schemas
       - ./.config:/app/.config:ro
     depends_on:
-      postgres:
-        condition: service_healthy
+      # postgres:
+      #   condition: service_healthy
       redis:
         condition: service_healthy
       # mlflow:

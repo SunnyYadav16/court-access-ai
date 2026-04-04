@@ -240,15 +240,18 @@ class Base(DeclarativeBase):
 async def init_db() -> None:
     """
     Verify the connection pool is healthy on startup.
-    Does NOT run migrations — use Alembic for schema changes.
+    Creates tables if they do not exist, preserving the configured db user
+    and avoiding access issues.
 
     api/main.py lifespan should call this on startup:
         app.state.db_engine = engine
         await init_db()
     """
+    from db.models import Base
+
     async with engine.begin() as conn:
-        # Simple connectivity check — will raise if DB is unreachable.
-        await conn.run_sync(lambda _: None)
+        # Create all tables if they don't exist yet via our user connection
+        await conn.run_sync(Base.metadata.create_all)
 
 
 async def close_db() -> None:
