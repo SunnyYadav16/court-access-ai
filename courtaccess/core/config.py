@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     airflow_password: str | None
 
     # ── MLflow ────────────────────────────────────────────────────────────────
-    mlflow_tracking_uri: str | None
+    mlflow_tracking_uri: str | None = None
 
     # ── Redis (translation cache) ─────────────────────────────────────────────
     redis_url: str

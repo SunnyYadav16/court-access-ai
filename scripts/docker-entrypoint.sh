@@ -15,12 +15,27 @@
 # ══════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
+# ── GCP credentials ───────────────────────────────────────────────────────────
+# GOOGLE_APPLICATION_CREDENTIALS → Firebase Admin SDK
+# GCP_DVC_CREDENTIALS            → DVC + gcsfs (GCS bucket access)
+# If GCP_DVC_CREDENTIALS is set, override GOOGLE_APPLICATION_CREDENTIALS
+# specifically for the dvc pull call so gcsfs authenticates correctly.
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
 log()  { echo -e "${GREEN}[entrypoint]${NC} $1"; }
 warn() { echo -e "${YELLOW}[entrypoint]${NC} $1"; }
+
+setup_gcp_credentials() {
+    if [[ -n "${GCP_DVC_CREDENTIALS:-}" ]] && [[ -f "${GCP_DVC_CREDENTIALS}" ]]; then
+        log "DVC credentials found at ${GCP_DVC_CREDENTIALS}"
+    else
+        warn "GCP_DVC_CREDENTIALS not set or file missing — dvc pull will fail."
+    fi
+}
+
+setup_gcp_credentials
 
 # ── Step 1: Pull model weights ────────────────────────────────────────────────
 # Three modes:
@@ -77,7 +92,8 @@ pull_models() {
     while [ $attempts -lt $max_attempts ]; do
         set +e
         local dvc_output
-        dvc_output=$(dvc pull --allow-missing 2>&1)
+        # dvc_output=$(dvc pull --allow-missing 2>&1)
+        dvc_output=$(GOOGLE_APPLICATION_CREDENTIALS="${GCP_DVC_CREDENTIALS:-${GOOGLE_APPLICATION_CREDENTIALS}}" dvc pull --allow-missing 2>&1)
         local dvc_status=$?
         set -e
 
@@ -159,13 +175,17 @@ else
     # Resolve connection details from individual env vars (same pattern as the app).
     _PG_HOST="${POSTGRES_HOST:-localhost}"
     _PG_PORT="${POSTGRES_PORT:-5432}"
-    _PG_USER="${POSTGRES_USER:-}"
     _RETRIES=15
     _WAIT=2
 
+    # Use a TCP-level check rather than pg_isready to avoid version mismatches
+    # between the installed postgresql-client and the postgres:16 server.
+    # (docker-compose depends_on: postgres: service_healthy already guarantees
+    # Postgres is up, but we keep a short loop as a safety net in case the
+    # container starts before the healthcheck window closes.)
     log "Waiting for Postgres at ${_PG_HOST}:${_PG_PORT} (up to $((_RETRIES * _WAIT))s)..."
     for i in $(seq 1 "$_RETRIES"); do
-        if pg_isready -h "$_PG_HOST" -p "$_PG_PORT" -U "$_PG_USER" -q 2>/dev/null; then
+        if bash -c "echo >/dev/tcp/${_PG_HOST}/${_PG_PORT}" 2>/dev/null; then
             log "Postgres is ready."
             break
         fi

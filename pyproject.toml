@@ -47,6 +47,7 @@ dependencies = [
     "firebase-admin>=6.9.0",
     "psycopg2-binary>=2.9.11",
     "huggingface-hub>=1.7.1",
+    "mlflow>=3.9.0",
 ]
 
 [project.optional-dependencies]
@@ -61,7 +62,6 @@ airflow = [
 monitoring = [
     "tensorflow-data-validation>=1.15.0; platform_machine == 'x86_64'",
     "evidently>=0.4.0; platform_machine == 'x86_64'",
-    "mlflow>=3.9.0",
 ]
 
 # Audio device I/O — only for native machines with a microphone

@@ -42,6 +42,7 @@ OUTPUT CONTRACT (translate_text):
   }
 """
 
+import ctypes
 import logging
 import os
 import re
@@ -145,22 +146,24 @@ class Translator:
             self._nlp = spacy.load("en_core_web_lg")
             logger.info("spaCy en_core_web_lg loaded in %.2fs", time.time() - t0)
 
-            model_path = os.getenv(
-                "NLLB_MODEL_PATH",
-                "/opt/airflow/models/nllb-200-distilled-1.3B-ct2",
-            )
+            model_path = os.getenv("NLLB_MODEL_PATH")
 
             t1 = time.time()
             from transformers import AutoTokenizer
 
-            self._tokenizer = AutoTokenizer.from_pretrained("facebook/nllb-200-distilled-1.3B")
+            self._tokenizer = AutoTokenizer.from_pretrained(model_path)
             logger.info("NLLB tokenizer loaded in %.2fs", time.time() - t1)
 
             t2 = time.time()
             import ctranslate2
 
             device = "cuda" if _cuda_available() else "cpu"
-            self._ct2_translator = ctranslate2.Translator(model_path, device=device)
+            compute_type = "float16" if device == "cuda" else "int8"
+            self._ct2_translator = ctranslate2.Translator(
+                model_path,
+                device=device,
+                compute_type=compute_type,
+            )
             logger.info(
                 "CTranslate2 NLLB model loaded in %.2fs on %s",
                 time.time() - t2,
@@ -170,6 +173,35 @@ class Translator:
             logger.debug("Stub mode — skipping spaCy/NLLB model load.")
 
         return self
+
+    def unload(self) -> None:
+        """
+        Explicitly release memory held by the models.
+        Crucial for Airflow worker processes to avoid OOM from compounding models.
+        """
+        import gc
+
+        if self._ct2_translator is not None:
+            try:
+                self._ct2_translator.unload_model()
+            except Exception as e:
+                logger.debug("Error unloading ct2_translator: %s", e)
+            self._ct2_translator = None
+
+        if self._nlp is not None:
+            del self._nlp
+            self._nlp = None
+
+        if self._tokenizer is not None:
+            del self._tokenizer
+            self._tokenizer = None
+
+        gc.collect()
+
+        try:
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except Exception as e:
+            logger.debug("malloc_trim unavailable: %s", e)
 
     def translate_one(self, text: str, target_lang: str) -> str:
         """
@@ -493,7 +525,7 @@ class Translator:
                 [tokens],
                 target_prefix=[[tgt_token]],
                 max_decoding_length=min(512, len(tokens) + 60),
-                beam_size=4,
+                beam_size=2,
             )
             output_tokens = out[0].hypotheses[0][1:]
             output_ids = self._tokenizer.convert_tokens_to_ids(output_tokens)

@@ -6,9 +6,9 @@ Faster-Whisper model once and exposes a simple `transcribe` method which
 accepts in-memory PCM audio and returns a transcript plus language code.
 """
 
+from __future__ import annotations
+
 import numpy as np
-import torch
-from faster_whisper import WhisperModel
 
 from courtaccess.core.config import get_settings
 from courtaccess.core.logger import get_logger
@@ -26,7 +26,7 @@ class ASRService:
     """
 
     _instance = None
-    _model: WhisperModel | None = None
+    _model = None  # WhisperModel — imported lazily in _load_model
 
     def __new__(cls):
         if cls._instance is None:
@@ -49,7 +49,13 @@ class ASRService:
 
         WHISPER_MODEL_PATH takes precedence (DVC-pulled production weights).
         Falls back to WHISPER_MODEL size string (default "small").
+
+        torch and faster_whisper are imported here so that the module can be
+        imported without them installed (USE_REAL_SPEECH=false path).
         """
+        import torch
+        from faster_whisper import WhisperModel
+
         device = "cuda" if torch.cuda.is_available() else "cpu"
         compute_type = "int8_float16" if device == "cuda" else "int8"
         s = get_settings()
@@ -66,7 +72,7 @@ class ASRService:
         logger.info("Whisper model loaded successfully")
 
     @property
-    def model(self) -> WhisperModel:
+    def model(self):
         assert ASRService._model is not None, "ASR model not loaded"  # noqa: S101
         return ASRService._model
 

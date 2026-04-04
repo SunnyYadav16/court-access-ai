@@ -6,7 +6,6 @@ Processes audio chunks and returns speech probability.
 import threading
 
 import numpy as np
-import torch
 
 from courtaccess.core.config import get_settings
 from courtaccess.core.logger import get_logger
@@ -69,6 +68,8 @@ class VADService:
                 f"Silero VAD model not found at: {model_path}\nRun 'dvc pull' to download the model from GCS."
             )
 
+        import torch
+
         logger.info("Loading Silero VAD model from %s ...", model_path)
         model = torch.jit.load(model_path, map_location="cpu")  # nosec B614
         model.eval()
@@ -97,6 +98,8 @@ class VADService:
                 - speech_probability is a float in [0, 1]
                 - is_speech is True when probability >= 0.5
         """
+        import torch
+
         # Convert numpy to torch tensor
         audio_tensor = torch.from_numpy(audio_chunk).float() if isinstance(audio_chunk, np.ndarray) else audio_chunk
 

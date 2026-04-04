@@ -43,6 +43,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
+    postgresql-client \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -56,7 +57,13 @@ COPY courtaccess/ ./courtaccess/
 # Install the project + all core dependencies into the system Python
 # (UV_SYSTEM_PYTHON=1 is set above), so CLI entry points like `fastapi`
 # are available on PATH at container runtime.
-RUN uv pip install .
+# CPU-only PyTorch — avoids the 2.5 GB CUDA wheel that hangs the build.
+# The PyTorch CPU index has wheels for both x86_64 and arm64 (Apple Silicon).
+# GPU containers use gpu.Dockerfile which installs the CUDA build instead.
+RUN uv pip install "torch>=2.3.0" --index-url https://download.pytorch.org/whl/cpu
+
+# Install the project + speech pipeline deps (av, piper-tts, sentencepiece, websockets)
+RUN uv pip install ".[speech]"
 
 # Install DVC with GCS support for model pulling at startup
 RUN uv pip install "dvc[gs]>=3.50.0"

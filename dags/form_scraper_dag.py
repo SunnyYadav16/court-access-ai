@@ -1109,7 +1109,7 @@ with DAG(
     start_date=datetime(2024, 1, 1),
     default_args=DEFAULT_ARGS,
     catchup=False,
-    is_paused_upon_creation=False,
+    is_paused_upon_creation=True,
     tags=["courtaccess", "forms", "scraping", "preprocessing", "anomaly-detection", "bias-detection"],
 ) as dag:
     t1_scrape = PythonOperator(task_id="scrape_and_classify", python_callable=task_scrape_and_classify)

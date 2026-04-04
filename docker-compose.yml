@@ -54,7 +54,7 @@ x-airflow-common:
     REDIS_URL: ${REDIS_URL}
 
     # ── MLflow ──
-    MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
+    # MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
 
     # ── Application ──
     APP_ENV: ${APP_ENV}
@@ -136,6 +136,9 @@ x-airflow-common:
     # ── Firebase ──
     GOOGLE_APPLICATION_CREDENTIALS: '/opt/airflow/${GOOGLE_APPLICATION_CREDENTIALS}'
 
+    # ── DVC ──
+    GCP_DVC_CREDENTIALS: '/opt/airflow/${GCP_DVC_CREDENTIALS}'
+
   env_file:
     - .env
 
@@ -176,7 +179,7 @@ services:
     volumes:
       - postgres-db-volume:/var/lib/postgresql/data
       - ./db/init-airflow-db.sql:/docker-entrypoint-initdb.d/10-init-airflow-db.sql
-      - ./db/init-mlflow-db.sql:/docker-entrypoint-initdb.d/20-init-mlflow-db.sql
+      # - ./db/init-mlflow-db.sql:/docker-entrypoint-initdb.d/20-init-mlflow-db.sql
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}"]
       interval: 10s
@@ -199,31 +202,31 @@ services:
     restart: always
 
   # ── MLflow Tracking Server ─────────────────────────────────────────────────
-  mlflow:
-    image: ghcr.io/mlflow/mlflow:v2.13.0
-    command: >
-      bash -c "pip install psycopg2-binary && mlflow server
-      --backend-store-uri postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/mlflow
-      --artifacts-destination gs://${GCS_BUCKET_MODELS}/mlflow-artifacts/
-      --host 0.0.0.0
-      --port 5000"
-    ports:
-      - "5050:5000"
-    environment:
-      # GCS auth — ADC from the mounted .config directory
-      GOOGLE_APPLICATION_CREDENTIALS: /root/.config/gcloud/application_default_credentials.json
-    volumes:
-      - ./.config:/root/.config:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/')"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 20s
-    restart: unless-stopped
+  # mlflow:
+  #   image: ghcr.io/mlflow/mlflow:v2.13.0
+  #   command: >
+  #     bash -c "pip install psycopg2-binary google-cloud-storage 'protobuf<5.0.0' && mlflow server
+  #     --backend-store-uri postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/mlflow
+  #     --artifacts-destination gs://${GCS_BUCKET_MODELS}/mlflow-artifacts/
+  #     --host 0.0.0.0
+  #     --port 5000"
+  #   ports:
+  #     - "5050:5000"
+  #   environment:
+  #     # GCS auth — ADC from the mounted .config directory
+  #     GOOGLE_APPLICATION_CREDENTIALS: /root/.config/gcloud/application_default_credentials.json
+  #   volumes:
+  #     - ./.config:/root/.config:ro
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   healthcheck:
+  #     test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/')"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 20s
+  #   restart: unless-stopped
 
   # ── FastAPI ────────────────────────────────────────────────────────────────
   api:
@@ -267,7 +270,7 @@ services:
       LEGAL_VERIFY_TIMEOUT: ${LEGAL_VERIFY_TIMEOUT}
       # ── Redis & MLflow ──
       REDIS_URL: ${REDIS_URL}
-      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
+      # MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
       # ── Feature Flags & Model Paths ──
       USE_REAL_CLASSIFICATION: ${USE_REAL_CLASSIFICATION}
       USE_REAL_TRANSLATION: ${USE_REAL_TRANSLATION}
@@ -323,10 +326,15 @@ services:
       AIRFLOW_BASE_URL: ${AIRFLOW_BASE_URL}
       AIRFLOW_USERNAME: ${AIRFLOW_USERNAME}
       AIRFLOW_PASSWORD: ${AIRFLOW_PASSWORD}
-      # ── Git/DVC ──
+
+      # ── Git ──
       GIT_DISCOVERY_ACROSS_FILESYSTEM: '1'
 
+      # ── Firebase ──
       GOOGLE_APPLICATION_CREDENTIALS: '/app/${GOOGLE_APPLICATION_CREDENTIALS}'
+
+      # ── DVC ──
+      GCP_DVC_CREDENTIALS: '/app/${GCP_DVC_CREDENTIALS}'
 
     volumes:
       - ./courtaccess:/app/courtaccess   # live code reloading in dev
@@ -342,8 +350,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      mlflow:
-        condition: service_started
+      # mlflow:
+      #   condition: service_started
       # Wait for airflow-init to finish before running alembic migrations, so
       # the two init processes do not race to write the schema simultaneously.
       airflow-init:
@@ -446,7 +454,7 @@ services:
         # Pull models once here (as root, before other services start) so that
         # the api and Airflow worker containers that start concurrently find
         # models already present and skip DVC — avoiding the shared-lock race.
-        dvc pull --allow-missing 2>&1 || \
+        GOOGLE_APPLICATION_CREDENTIALS="${GCP_DVC_CREDENTIALS}" dvc pull --allow-missing 2>&1 || \
           dvc checkout 2>&1 || \
           echo "[airflow-init] DVC pull/checkout failed — models must be provided via volume mount."
         chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/models 2>/dev/null || true
