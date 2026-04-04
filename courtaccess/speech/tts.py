@@ -193,7 +193,6 @@ class TTSService:
         text: str,
         language: str,
         length_scale: float = 1.0,
-        sentence_silence: float = 0.2,
     ) -> bytes:
         """
         Synthesize *text* into WAV audio bytes using the voice for *language*.
@@ -202,7 +201,6 @@ class TTSService:
             text: The text to speak.
             language: Short language code ("en", "es", "pt").
             length_scale: Speaking rate (1.0 = normal, <1 = faster, >1 = slower).
-            sentence_silence: Seconds of silence between sentences.
 
         Returns:
             Complete WAV file as bytes (16-bit PCM mono, sample rate
@@ -219,7 +217,6 @@ class TTSService:
 
         syn_config = SynthesisConfig(
             length_scale=length_scale,
-            sentence_silence=sentence_silence,
         )
 
         # Synthesize into an in-memory WAV buffer.

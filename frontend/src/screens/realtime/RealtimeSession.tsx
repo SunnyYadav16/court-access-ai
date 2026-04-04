@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useMemo } from "react"
 import { ScreenId, SCREENS } from "@/lib/constants"
 import ScreenLabel from "@/components/shared/ScreenLabel"
 import useRealtimeStore, { type ChatMessage } from "@/store/realtimeStore"
-import { useRealtimeWebSocket } from "@/hooks/useRealtimeWebSocket"
+import { useRealtimeWebSocket, _wsRef } from "@/hooks/useRealtimeWebSocket"
 import { useAudioCapture } from "@/hooks/useAudioCapture"
 import { useTtsPlayback } from "@/hooks/useTtsPlayback"
 
@@ -289,13 +289,20 @@ export default function RealtimeSession({ onNav }: Props) {
   }, [messages, livePartial])
 
   // ── Reconnect on mount ─────────────────────────────────────────────────────
-  // RealtimeSetup disconnects before navigating here, so we re-establish the
-  // connection using params stored in realtimeStore.
+  // If RealtimeSetup navigated here with the WebSocket still open (normal flow),
+  // wsRef.current is already OPEN — do NOT reconnect or the server will delete the
+  // existing room and create a new one.
+  // Only reconnect when wsRef is null (e.g. after a hard page refresh).
   const savedIsCreator = useRef(isCreator)
   useEffect(() => {
+    if (_wsRef.current && _wsRef.current.readyState === WebSocket.OPEN) {
+      // Connection is live — just update the onmessage handler so TTS audio
+      // from this point on is routed to this session's enqueue callback.
+      // The handler is already wired by the hook; nothing else to do.
+      return
+    }
+    // Fallback: reconnect (page refresh or hard navigation)
     if (roomCode && phase !== "idle" && phase !== "ended") {
-      // Reconnect by joining with roomCode. connect() will set
-      // isCreator=false because we pass roomId, so we restore it after.
       connect({ name: myName, roomId: roomCode })
       if (savedIsCreator.current) {
         useRealtimeStore.getState().setIsCreator(true)

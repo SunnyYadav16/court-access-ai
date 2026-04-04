@@ -25,8 +25,9 @@
  *   sendAudio(event.data);
  */
 
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect } from "react";
 import useRealtimeStore from "@/store/realtimeStore";
+import { auth } from "@/config/firebase";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -71,6 +72,14 @@ export interface ConnectOptions {
   partnerLang?: string;
 }
 
+// ── Shared WebSocket singleton ────────────────────────────────────────────────
+// Module-level ref so the connection survives React screen transitions.
+// RealtimeSetup opens the socket; RealtimeSession inherits it without reconnecting.
+const _wsRef = { current: null as WebSocket | null };
+
+// Export so screens can check connection state without going through the hook return value.
+export { _wsRef };
+
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useRealtimeWebSocket({
@@ -80,7 +89,8 @@ export function useRealtimeWebSocket({
   onOpen,
   onClose,
 }: UseRealtimeWebSocketOptions) {
-  const wsRef = useRef<WebSocket | null>(null);
+  // Use the shared module-level singleton — survives component unmount/remount.
+  const wsRef = _wsRef;
 
   // Pull store actions (stable references from Zustand)
   const setPhase = useRealtimeStore((s) => s.setPhase);
@@ -244,10 +254,21 @@ export function useRealtimeWebSocket({
     ]
   );
 
+  // ── Live handler sync ────────────────────────────────────────────────────
+  // When RealtimeSession mounts it calls this hook with real onStartCapture /
+  // enqueueTts callbacks, producing a new _handleMessage.  Re-wire onmessage
+  // immediately so the live WebSocket (opened by RealtimeSetup) picks up the
+  // correct handler before the server sends session_status:'active'.
+  useEffect(() => {
+    if (wsRef.current && wsRef.current.readyState !== WebSocket.CLOSED) {
+      wsRef.current.onmessage = _handleMessage;
+    }
+  }, [_handleMessage]);
+
   // ── Public API ────────────────────────────────────────────────────────────
 
   const connect = useCallback(
-    (opts: ConnectOptions) => {
+    async (opts: ConnectOptions) => {
       // Close any existing connection before opening a new one
       _close();
 
@@ -266,10 +287,19 @@ export function useRealtimeWebSocket({
       }
       params.set("name", opts.name || "User");
 
-      // Attach Firebase token for server-side authentication (C2 fix)
-      const token = localStorage.getItem("access_token") ?? "";
-      if (token) {
+      // Attach Firebase token for server-side authentication
+      const user = auth.currentUser;
+      if (!user) {
+        setError("Not authenticated. Please sign in first.");
+        return;
+      }
+      try {
+        const token = await user.getIdToken();
         params.set("token", token);
+      } catch (e) {
+        console.error("Failed to get Firebase token for WebSocket", e);
+        setError("Authentication failed. Please try again.");
+        return;
       }
 
       const url = `${WS_BASE}/api/sessions/ws?${params.toString()}`;

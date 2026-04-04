@@ -102,7 +102,7 @@ export default function RealtimeSetup({ onNav }: Props) {
   const [joinCode, setJoinCode] = useState("")
 
   // WS hook — enqueueTts is a no-op in lobby (no audio sent in this phase)
-  const { connect, disconnect } = useRealtimeWebSocket({ enqueueTts: () => {} })
+  const { connect } = useRealtimeWebSocket({ enqueueTts: () => {} })
 
   // ── Navigation trigger ──────────────────────────────────────────────────────
   // When the server confirms room creation/join, phase becomes 'waiting' or
@@ -110,11 +110,14 @@ export default function RealtimeSetup({ onNav }: Props) {
   // navigate. This prevents orphan dual-connections.
 
   useEffect(() => {
+    // Navigate to the session screen once the server confirms room creation/join.
+    // Do NOT disconnect here — the open WebSocket keeps the room alive on the server.
+    // RealtimeSession's wsRef is a module-level singleton so it will inherit the
+    // live connection that was opened here.
     if (phase === "waiting" || phase === "ready" || phase === "active") {
-      disconnect()
       onNav(SCREENS.REALTIME_SESSION)
     }
-  }, [phase, onNav, disconnect])
+  }, [phase, onNav])
 
   // ── Handlers ────────────────────────────────────────────────────────────────
 

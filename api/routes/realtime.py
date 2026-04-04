@@ -251,30 +251,38 @@ async def end_session(
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-@router.websocket("/{session_id}/ws")
+@router.websocket("/ws")
 async def session_websocket(
     websocket: WebSocket,
-    session_id: uuid.UUID,
 ) -> None:
     """
     Bidirectional real-time speech interpretation WebSocket.
 
-    Pass session_id from POST /sessions/ in the URL.
     Use query params to create or join a conversation room.
     Requires ?token=<Firebase ID token> for authentication.
     """
+    # ── Accept first (ASGI requirement) ──────────────────────────────────
+    # The ASGI spec does not allow sending websocket.close before
+    # websocket.accept — uvicorn maps that to an HTTP 403 Forbidden,
+    # which is misleading.  Accept the handshake, then authenticate.
+    await websocket.accept()
+
     # ── Authenticate ─────────────────────────────────────────────────────
     token = websocket.query_params.get("token")
     if not token:
+        await websocket.send_json({"type": "error", "message": "Missing authentication token"})
         await websocket.close(code=4001, reason="Missing authentication token")
         return
     try:
         verify_firebase_token(token)
+    except HTTPException as exc:
+        await websocket.send_json({"type": "error", "message": str(exc.detail)})
+        await websocket.close(code=4001, reason=str(exc.detail))
+        return
     except Exception:
+        await websocket.send_json({"type": "error", "message": "Invalid or expired token"})
         await websocket.close(code=4001, reason="Invalid or expired token")
         return
-
-    await websocket.accept()
 
     # ── Lazy-import services (only available when USE_REAL_SPEECH=true) ───
     try:

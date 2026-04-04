@@ -91,15 +91,34 @@ class LegalVerifierService:
     def _load_client(self) -> None:
         """Initialise the OpenAI client pointed at the Vertex AI endpoint."""
         try:
+            import os
+
             import google.auth
             import google.auth.transport.requests
             import openai
+            from google.oauth2 import service_account
 
             s = get_settings()
             project = s.vertex_project_id
             location = s.vertex_location
 
-            credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+            # Explicitly load the Vertex AI service account in local dev.
+            # In docker-compose, GOOGLE_APPLICATION_CREDENTIALS is bound to the
+            # Firebase Admin key, which lacks Vertex AI permissions.
+            creds_path = s.gcp_service_account_json
+            if creds_path and not os.path.isabs(creds_path):
+                # Ensure path is absolute relative to /app inside the container
+                creds_path = os.path.join("/app", creds_path)
+
+            # If the specific LLaMA key file is present (local dev), use it.
+            # Otherwise (production), rely on the attached compute service account.
+            if creds_path and os.path.isfile(creds_path):
+                credentials = service_account.Credentials.from_service_account_file(
+                    creds_path, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+                )
+            else:
+                credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+
             auth_req = google.auth.transport.requests.Request()
             credentials.refresh(auth_req)
 
