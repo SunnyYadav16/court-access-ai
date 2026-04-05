@@ -25,7 +25,6 @@ import httpx
 
 from courtaccess.core.legal_review import (
     _NOT_VERIFIED_PREFIX,
-    _VERTEX_MAX_RETRIES,
     LegalReviewer,
 )
 from courtaccess.languages import get_language_config
@@ -49,7 +48,7 @@ def _make_real_reviewer(
     r = LegalReviewer(get_language_config("spanish"), glossary or {})
     r._use_real = True
     r._use_vertex = True
-    r._vertex_project = "test-project"
+    r._vertex_project_id = "test-project"
     r._redis_url = redis_url
     return r
 
@@ -106,6 +105,7 @@ class TestVerifyBatch:
     def test_stub_mode_skips_redis(self):
         """Stub mode must never touch Redis even if REDIS_URL is set."""
         r = _make_reviewer()
+        r._use_vertex = False  # explicitly test stub mode regardless of env
         r._redis_url = "redis://localhost:6379"
         with patch.object(r, "_get_redis") as mock_get:
             r.verify_batch(["The court"], ["El tribunal"])
@@ -472,7 +472,7 @@ class TestVertexRetry:
         r = _make_reviewer()
         r._use_real = True
         r._use_vertex = True
-        r._vertex_project = "test-project"
+        r._vertex_project_id = "test-project"
         return r
 
     def _fake_client(self, content: str):
@@ -537,7 +537,7 @@ class TestVertexRetry:
             patch("courtaccess.core.legal_review.time.sleep"),
         ):
             result = r._call_vertex(["The court."], ["El tribunal."], "")
-        assert mock_get.call_count == _VERTEX_MAX_RETRIES
+        assert mock_get.call_count == r._vertex_max_retries
         assert result == [f"{_NOT_VERIFIED_PREFIX} El tribunal."]
 
     def test_connection_error_result_has_not_verified_prefix(self):
@@ -577,7 +577,7 @@ class TestVertexRetry:
             patch("courtaccess.core.legal_review.time.sleep"),
         ):
             r._call_vertex(["The court."], ["El tribunal."], "")
-        assert mock_get.call_count == _VERTEX_MAX_RETRIES
+        assert mock_get.call_count == r._vertex_max_retries
 
     # ── Retryable: 401 token expiry → refresh + retry ─────────────────────────
 

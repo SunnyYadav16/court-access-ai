@@ -1,0 +1,104 @@
+{
+  "total_active_forms": 22,
+  "slices": {
+    "by_division": {
+      "data": {
+        "Appeals Court": {
+          "total_forms": 22,
+          "unique_forms": 22,
+          "forms_with_es": 4,
+          "forms_with_pt": 4,
+          "es_coverage_pct": 18.2,
+          "pt_coverage_pct": 18.2
+        }
+      },
+      "stats": {
+        "count": 1,
+        "mean": 22.0,
+        "median": 22,
+        "min": 22,
+        "max": 22,
+        "std_dev": 0.0
+      }
+    },
+    "by_language": {
+      "data": {
+        "English": {
+          "total_forms": 22,
+          "coverage_pct": 100.0
+        },
+        "Spanish": {
+          "total_forms": 4,
+          "coverage_pct": 18.2
+        },
+        "Portuguese": {
+          "total_forms": 4,
+          "coverage_pct": 18.2
+        }
+      }
+    },
+    "by_section_heading": {
+      "data": {
+        "Appeals Court forms": {
+          "total_forms": 17,
+          "forms_with_es": 2,
+          "forms_with_pt": 2,
+          "es_coverage_pct": 11.8,
+          "pt_coverage_pct": 11.8
+        },
+        "Indigency": {
+          "total_forms": 5,
+          "forms_with_es": 2,
+          "forms_with_pt": 2,
+          "es_coverage_pct": 40.0,
+          "pt_coverage_pct": 40.0
+        }
+      },
+      "stats": {
+        "count": 2,
+        "mean": 11.0,
+        "median": 11.0,
+        "min": 5,
+        "max": 17,
+        "std_dev": 6.0
+      }
+    },
+    "by_version": {
+      "stats": {
+        "count": 22,
+        "mean": 1.0,
+        "median": 1.0,
+        "min": 1,
+        "max": 1,
+        "std_dev": 0.0
+      },
+      "multi_version_forms": 0
+    }
+  },
+  "bias_flags": [
+    {
+      "type": "low_translation_coverage",
+      "dimension": "division x language",
+      "slice": "Appeals Court \u2192 Spanish",
+      "severity": "WARNING",
+      "detail": "'Appeals Court' has 18.2% Spanish coverage (4/22). LEP Spanish speakers in this division are underserved.",
+      "value": 18.2,
+      "threshold": 20
+    },
+    {
+      "type": "low_translation_coverage",
+      "dimension": "division x language",
+      "slice": "Appeals Court \u2192 Portuguese",
+      "severity": "WARNING",
+      "detail": "'Appeals Court' has 18.2% Portuguese coverage (4/22). LEP Portuguese speakers in this division are underserved.",
+      "value": 18.2,
+      "threshold": 20
+    }
+  ],
+  "bias_count": 2,
+  "thresholds": {
+    "underserved_division_pct": 50.0,
+    "translation_coverage_min_pct": 20,
+    "language_gap_max_pct": 30
+  }
+}

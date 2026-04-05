@@ -1,0 +1,14 @@
+{
+  "timestamp": "2026-03-27T01:10:53.372252Z",
+  "severity": "OK",
+  "anomaly_count": 0,
+  "anomalies": [],
+  "thresholds": {
+    "form_drop_pct": 20,
+    "mass_new_forms": 50,
+    "download_fail_pct": 10,
+    "min_pdf_size_bytes": 1024,
+    "max_pdf_size_bytes": 52428800,
+    "schema_errors": 0
+  }
+}

@@ -62,7 +62,7 @@ class LegalReviewer:
         self.glossary = glossary or {}
         self.verification_mode = verification_mode  # "document" | "audio"
 
-        self._vertex_max_retries = int(os.getenv("VERTEX_MAX_RETRIES"))
+        self._vertex_max_retries = int(os.getenv("VERTEX_MAX_RETRIES", "3"))
         self._use_vertex = str(os.getenv("USE_VERTEX_LEGAL_REVIEW")).lower() == "true"
 
         self._vertex_project_id = os.getenv("VERTEX_PROJECT_ID")

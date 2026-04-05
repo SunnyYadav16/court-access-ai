@@ -446,6 +446,8 @@ class HealthResponse(BaseModel):
     status: str = "ok"
     version: str
     environment: str
+    db_status: str | None = None
+    gcs_status: str | None = None
 
 
 class ErrorDetail(BaseModel):

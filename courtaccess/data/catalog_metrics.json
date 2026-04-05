@@ -1,0 +1,16 @@
+{
+  "valid": true,
+  "total_forms": 22,
+  "active_forms": 22,
+  "archived_forms": 0,
+  "total_versions": 22,
+  "forms_with_es": 4,
+  "forms_with_pt": 4,
+  "unique_divisions": 1,
+  "division_breakdown": {
+    "Appeals Court": 22
+  },
+  "missing_pdfs": 0,
+  "errors": 0,
+  "warnings": 0
+}

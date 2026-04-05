@@ -1,0 +1,99 @@
+{
+  "total_processed": 22,
+  "names_normalized": 2,
+  "slugs_normalized": 0,
+  "mislabeled_files": 11,
+  "empty_files": 0,
+  "corrupt_files": 0,
+  "duplicate_hashes": 0,
+  "issues": [
+    {
+      "form_id": "f8b7d256-1364-46ec-8406-4e53dc6cd9fa",
+      "check": "mislabeled_file",
+      "file": "/opt/airflow/forms/f8b7d256-1364-46ec-8406-4e53dc6cd9fa/v1/certificate-of-compliance-rule-16k.docx",
+      "expected": "pdf",
+      "actual": "docx",
+      "detail": "EN file is actually DOCX, not PDF"
+    },
+    {
+      "form_id": "fc5072da-4e94-4578-9362-1d6fd7d6adec",
+      "check": "mislabeled_file",
+      "file": "/opt/airflow/forms/fc5072da-4e94-4578-9362-1d6fd7d6adec/v1/certificate-of-service-8.docx",
+      "expected": "pdf",
+      "actual": "docx",
+      "detail": "EN file is actually DOCX, not PDF"
+    },
+    {
+      "form_id": "56a43bcd-f7d0-489e-bffd-03fba3a80aea",
+      "check": "mislabeled_file",
+      "file": "/opt/airflow/forms/56a43bcd-f7d0-489e-bffd-03fba3a80aea/v1/change-of-email-address-0.docx",
+      "expected": "pdf",
+      "actual": "docx",
+      "detail": "EN file is actually DOCX, not PDF"
+    },
+    {
+      "form_id": "1849a8a3-ba90-41b7-a487-df5d62f85525",
+      "check": "mislabeled_file",
+      "file": "/opt/airflow/forms/1849a8a3-ba90-41b7-a487-df5d62f85525/v1/certificate-of-mailing-for-brief-rule-13a1b.docx",
+      "expected": "pdf",
+      "actual": "docx",
+      "detail": "EN file is actually DOCX, not PDF"
+    },
+    {
+      "form_id": "c323019c-6616-46fd-905f-b30ad0194a85",
+      "check": "mislabeled_file",
+      "file": "/opt/airflow/forms/c323019c-6616-46fd-905f-b30ad0194a85/v1/certificate-of-mailing-for-inmates.docx",
+      "expected": "pdf",
+      "actual": "docx",
+      "detail": "EN file is actually DOCX, not PDF"
+    },
+    {
+      "form_id": "d678ff4d-6f48-4ae0-91aa-e3b64b4efc0c",
+      "check": "mislabeled_file",
+      "file": "/opt/airflow/forms/d678ff4d-6f48-4ae0-91aa-e3b64b4efc0c/v1/civil-appeal-entry-form-2026-fillabledocx.docx",
+      "expected": "pdf",
+      "actual": "docx",
+      "detail": "EN file is actually DOCX, not PDF"
+    },
+    {
+      "form_id": "c1f59ac8-a67d-40ef-8fb3-ace7ba36feac",
+      "check": "mislabeled_file",
+      "file": "/opt/airflow/forms/c1f59ac8-a67d-40ef-8fb3-ace7ba36feac/v1/consent-to-electronic-notification-2026-fillabledocx.docx",
+      "expected": "pdf",
+      "actual": "docx",
+      "detail": "EN file is actually DOCX, not PDF"
+    },
+    {
+      "form_id": "35f3003b-6cc7-4562-8f66-18db50e76376",
+      "check": "mislabeled_file",
+      "file": "/opt/airflow/forms/35f3003b-6cc7-4562-8f66-18db50e76376/v1/filing-impounded-information.docx",
+      "expected": "pdf",
+      "actual": "docx",
+      "detail": "EN file is actually DOCX, not PDF"
+    },
+    {
+      "form_id": "65d4f74e-520d-4033-8f60-b69e2efe2642",
+      "check": "mislabeled_file",
+      "file": "/opt/airflow/forms/65d4f74e-520d-4033-8f60-b69e2efe2642/v1/motion-to-waive-entry-fee.docx",
+      "expected": "pdf",
+      "actual": "docx",
+      "detail": "EN file is actually DOCX, not PDF"
+    },
+    {
+      "form_id": "d8f4768f-025a-487e-a83e-2e07bbc7921c",
+      "check": "mislabeled_file",
+      "file": "/opt/airflow/forms/d8f4768f-025a-487e-a83e-2e07bbc7921c/v1/notice-of-appeal-sample.docx",
+      "expected": "pdf",
+      "actual": "docx",
+      "detail": "EN file is actually DOCX, not PDF"
+    },
+    {
+      "form_id": "3cf2057d-2f4b-49ba-8ca0-f1884eb41cf7",
+      "check": "mislabeled_file",
+      "file": "/opt/airflow/forms/3cf2057d-2f4b-49ba-8ca0-f1884eb41cf7/v1/table-of-authorities-sample.docx",
+      "expected": "pdf",
+      "actual": "docx",
+      "detail": "EN file is actually DOCX, not PDF"
+    }
+  ]
+}

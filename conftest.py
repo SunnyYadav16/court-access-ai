@@ -8,14 +8,37 @@ Shared fixtures available to all test modules across the project:
   - mock_redis        : Redis client mock (function-scoped)
 """
 
+import os
+import uuid
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
+# Graceful fallback for local ML testing outside of Docker.
+# If an /opt/airflow/models/... path doesn't exist, but ./models/... does
+# (which means we're running Pytest natively on Mac), we rewrite the env var.
+for env_key in [
+    "NLLB_MODEL_PATH", 
+    "QWEN_VL_MODEL_PATH", 
+    "WHISPER_MODEL_PATH", 
+    "PIPER_TTS_ES_PATH", 
+    "PIPER_TTS_PT_PATH"
+]:
+    val = os.getenv(env_key)
+    if val and val.startswith("/opt/airflow/") and not os.path.exists(val):
+        local_path = val.replace("/opt/airflow/", "./")
+        if os.path.exists(local_path):
+            os.environ[env_key] = local_path
 
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from api.dependencies import get_current_user, get_db
+from api.main import create_app
 from courtaccess.core.legal_review import LegalReviewer
 from courtaccess.core.ocr_printed import OCREngine
 from courtaccess.core.translation import Translator
 from courtaccess.languages import get_language_config
+from db.models import User
 
 # ── Database ──────────────────────────────────────────────────────────────────
 
@@ -163,3 +186,63 @@ def translator_es(spanish_config):
 @pytest.fixture(scope="session")
 def translator_pt(portuguese_config):
     return Translator(portuguese_config).load()
+
+
+# ── API / Web ─────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def mock_user():
+    """
+    Returns a mock User ORM object for dependency injection.
+    Role: public (role_id=1), email_verified=True.
+    """
+    user = User(
+        user_id=uuid.UUID("12345678-1234-5678-1234-567812345678"),
+        email="test@example.com",
+        name="Test User",
+        role_id=1,  # public
+        firebase_uid="fake-firebase-uid",
+        auth_provider="password",
+        email_verified=True,
+        mfa_enabled=False,
+        created_at=datetime.now(tz=UTC),
+        last_login_at=datetime.now(tz=UTC),
+    )
+    return user
+
+
+@pytest.fixture
+def app_with_overrides(mock_db_session, mock_user):
+    """
+    FastAPI app instance with dependencies overridden for testing.
+    Bypasses real DB and real Firebase token verification.
+    """
+    app = create_app()
+
+    # Override Database session
+    async def _get_db():
+        yield mock_db_session
+
+    app.dependency_overrides[get_db] = _get_db
+
+    # Override Firebase Auth
+    async def _get_current_user():
+        return mock_user
+
+    app.dependency_overrides[get_current_user] = _get_current_user
+
+    yield app
+    app.dependency_overrides = {}
+
+
+@pytest.fixture
+async def client(app_with_overrides):
+    """
+    Async HTTP client for testing API routes.
+    Uses the app with dependency overrides.
+    """
+    async with AsyncClient(
+        transport=ASGITransport(app=app_with_overrides), base_url="http://test"
+    ) as ac:
+        yield ac

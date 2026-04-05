@@ -7,6 +7,8 @@ Stub mode tests only — real NLLB tests require model weights
 and are marked integration.
 """
 
+import pytest
+
 from courtaccess.core.translation import Translator
 from courtaccess.languages import get_language_config
 
@@ -17,7 +19,7 @@ def _make_translator(load_spacy: bool = False) -> Translator:
     load_spacy=True loads the real spaCy model for NER tests.
     """
     t = Translator(get_language_config("spanish"))
-    if load_spacy:
+    if load_spacy or t._use_real:
         t.load()
     return t
 
@@ -49,14 +51,20 @@ class TestTranslateTextContract:
 
     def test_stub_confidence_is_0_5(self):
         t = _make_translator()
+        if t._use_real:
+            pytest.skip("Test specifically for stub confidence")
         assert t.translate_text("Test.", "spa_Latn")["confidence"] == 0.50
 
     def test_stub_es_prefix(self):
         t = _make_translator()
+        if t._use_real:
+            pytest.skip("Test specifically for stub prefix")
         assert t.translate_text("Motion to suppress.", "spa_Latn")["translated"].startswith("[ES]")
 
     def test_stub_pt_prefix(self):
         t = _make_translator()
+        if t._use_real:
+            pytest.skip("Test specifically for stub prefix")
         assert t.translate_text("Motion to suppress.", "por_Latn")["translated"].startswith("[PT]")
 
     def test_unknown_language_uses_code_as_label(self):
@@ -119,9 +127,13 @@ class TestTranslateOne:
         assert self.t.translate_one("SIGN", "spa_Latn") == "FIRMAR"
 
     def test_stub_es_prefix(self):
+        if self.t._use_real:
+            pytest.skip("Test specifically for stub prefix")
         assert self.t.translate_one("The defendant", "spa_Latn").startswith("[ES]")
 
     def test_stub_pt_prefix(self):
+        if self.t._use_real:
+            pytest.skip("Test specifically for stub prefix")
         assert self.t.translate_one("The defendant", "por_Latn").startswith("[PT]")
 
 

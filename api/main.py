@@ -33,11 +33,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import firebase_admin
-from fastapi import FastAPI, Request, Response
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+
+from api.dependencies import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.routes import auth as auth_router
 from api.routes import documents as documents_router
@@ -262,15 +265,45 @@ def _register_meta_endpoints(app: FastAPI) -> None:
         summary="Health check",
         description=(
             "Used by Docker health checks and GCP load balancer probes. "
-            "Returns 200 OK when the application is ready to serve requests."
+            "Returns 200 OK when the application is ready and dependencies (DB, GCS) are connected."
         ),
     )
-    async def health() -> HealthResponse:
+    async def health(db: AsyncSession = Depends(get_db)) -> HealthResponse:
+        import asyncio
+        from sqlalchemy import text
+        from google.cloud import storage
+
         settings = get_settings()
+        
+        # Check Database
+        db_status = "ok"
+        try:
+            await db.execute(text("SELECT 1"))
+        except Exception as exc:
+            logger.error("Health check failed (Database): %s", exc)
+            db_status = "error"
+
+        # Check GCS
+        gcs_status = "ok"
+        try:
+            def _check_gcs():
+                # list_blobs with max_results=1 verifies both authentication and bucket existence/permissions
+                client = storage.Client()
+                list(client.bucket(settings.gcs_bucket_uploads).list_blobs(max_results=1))
+                
+            await asyncio.to_thread(_check_gcs)
+        except Exception as exc:
+            logger.error("Health check failed (GCS): %s", exc)
+            gcs_status = "error"
+
+        overall_status = "error" if "error" in (db_status, gcs_status) else "ok"
+
         return HealthResponse(
-            status="ok",
+            status=overall_status,
             version="0.1.0",
             environment=settings.app_env,
+            db_status=db_status,
+            gcs_status=gcs_status,
         )
 
 

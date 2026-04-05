@@ -161,10 +161,14 @@ class TestTranslateText:
         assert translator_es.translate_text(text, "spa_Latn")["original"] == text
 
     def test_stub_spanish_prefixes_es(self, translator_es):
+        if translator_es._use_real:
+            pytest.skip("Test specifically for stub prefix")
         result = translator_es.translate_text("Defendant:", "spa_Latn")
         assert result["translated"].startswith("[ES]")
 
     def test_stub_portuguese_prefixes_pt(self, translator_es):
+        if translator_es._use_real:
+            pytest.skip("Test specifically for stub prefix")
         # Same translator instance, different target_lang — stub uses
         # target_lang directly for the prefix label
         result = translator_es.translate_text("Defendant:", "por_Latn")
