@@ -140,8 +140,9 @@ RUN python -m spacy download en_core_web_lg
 # Install Playwright's Chromium browser for the form scraper
 RUN playwright install chromium
 
-# Copy DAGs and entrypoint
+# Copy DAGs, model stubs, and entrypoint
 COPY --chown=airflow:root dags/ /opt/airflow/dags/
+COPY --chown=airflow:root models/*.dvc /opt/airflow/models/
 COPY --chown=airflow:root scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 USER root
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh

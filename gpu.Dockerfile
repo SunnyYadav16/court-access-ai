@@ -143,6 +143,7 @@ RUN uv pip install "dvc[gs]>=3.50.0"
 # Copy API source and DB migrations
 COPY api/ ./api/
 COPY db/ ./db/
+COPY models/*.dvc ./models/
 
 # Copy compiled frontend
 COPY --from=frontend-build /frontend/dist ./frontend/dist
