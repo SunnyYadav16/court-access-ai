@@ -48,7 +48,6 @@ dependencies = [
     "psycopg2-binary>=2.9.11",
     "huggingface-hub>=1.7.1",
     "mlflow>=3.9.0",
-    "apache-airflow>=3.1.8",
 ]
 
 [project.optional-dependencies]
@@ -63,7 +62,6 @@ airflow = [
 monitoring = [
     "tensorflow-data-validation>=1.15.0; platform_machine == 'x86_64'",
     "evidently>=0.4.0; platform_machine == 'x86_64'",
-    "mlflow>=2.13.0",
 ]
 
 # Audio device I/O — only for native machines with a microphone
@@ -77,12 +75,22 @@ torch = [
     "torch>=2.3.0",
 ]
 
+# Real-time speech pipeline — WebM/Opus decoding, VAD, ASR, MT, TTS
+# Install with: pip install ".[speech]" or uv pip install ".[speech]"
+# Requires USE_REAL_SPEECH=true at runtime to activate model loading
+speech = [
+    "av>=14.0.0",
+    "piper-tts>=1.4.0",
+    "sentencepiece>=0.2.0",
+    "websockets>=14.0",
+]
+
 # Full local development install
 # Note: audio extra is intentionally excluded — pyaudio requires portaudio19-dev
 # (a native system library) which is unavailable in CI and headless Docker containers.
 # Install audio separately on native machines: uv pip install ".[audio]"
 dev = [
-    "courtaccess[airflow,torch]",
+    "courtaccess[airflow,torch,speech]",
     "pytest>=9.0.2",
     "pytest-asyncio>=0.23.0",
     "httpx>=0.27.0",

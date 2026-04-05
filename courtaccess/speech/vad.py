@@ -1,115 +1,217 @@
 """
-courtaccess/speech/vad.py
-
-Voice Activity Detection using Silero VAD v4.
-Filters silence and noise from raw audio before passing to ASR.
-
-STUB/REAL HYBRID:
-  - Stub: marks entire audio as speech (passthrough).
-  - Real: runs Silero VAD v4 via PyTorch.
-
-PRODUCTION NOTES:
-  - Prevents Faster-Whisper hallucinations on silence.
-  - Segments are returned as (start_ms, end_ms) tuples — ASR slices on these.
-
-OUTPUT CONTRACT:
-  {
-      "speech_segments": [[start_ms, end_ms], ...],
-      "total_duration_ms": int,
-      "speech_ratio":      float,   # proportion of audio that is speech
-  }
+Silero VAD Service for real-time voice activity detection.
+Processes audio chunks and returns speech probability.
 """
 
-import os
+import threading
 
+import numpy as np
+
+from courtaccess.core.config import get_settings
 from courtaccess.core.logger import get_logger
 
 logger = get_logger(__name__)
 
-_USE_REAL = os.getenv("USE_REAL_VAD", "false").lower() == "true"
-_SAMPLE_RATE = 16000  # Silero VAD requires 16kHz mono
-_THRESHOLD = 0.5  # Confidence threshold for speech detection
 
-
-def detect_speech(audio_bytes: bytes, sample_rate: int = _SAMPLE_RATE) -> dict:
+class VADService:
     """
-    Detect speech segments in raw PCM audio bytes.
+    Voice Activity Detection service backed by the Silero VAD model.
 
-    Args:
-        audio_bytes: Raw 16-bit PCM audio (mono, 16kHz).
-        sample_rate: Sample rate of the audio (default 16000).
+    This class wraps model loading and inference, exposing a simple
+    `process_chunk` API that takes a 16 kHz mono float32 numpy array and
+    returns both the speech probability and a boolean is_speech flag.
 
-    Returns:
-        Dict matching OUTPUT CONTRACT above.
+    The service is effectively a singleton: the underlying model is loaded
+    once and reused across all sessions, but transient recurrent state should
+    be reset via `reset_states()` for each new audio stream.
     """
-    if _USE_REAL:
-        return _real_vad(audio_bytes, sample_rate)
-    return _stub_vad(audio_bytes, sample_rate)
 
+    _instance = None
+    _model = None
+    _lock = threading.Lock()  # Serializes inference to protect recurrent state
 
-def _stub_vad(audio_bytes: bytes, sample_rate: int) -> dict:
-    """
-    Stub: treats entire audio chunk as speech.
-    Safe passthrough that keeps the pipeline moving without GPU.
-    """
-    total_ms = int(len(audio_bytes) / 2 / sample_rate * 1000)  # 16-bit = 2 bytes/sample
-    logger.debug("[STUB VAD] %d ms audio → marked as 100%% speech.", total_ms)
-    return {
-        "speech_segments": [[0, total_ms]],
-        "total_duration_ms": total_ms,
-        "speech_ratio": 1.0,
-    }
+    def __new__(cls):
+        """Singleton pattern to reuse loaded model."""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
 
+    def __init__(self):
+        if VADService._model is None:
+            self._load_model()
 
-def _real_vad(audio_bytes: bytes, sample_rate: int) -> dict:
-    """
-    Production VAD using Silero VAD v4.
-    Requires: torch, torchaudio, silero-vad model weights.
-    Enable with USE_REAL_VAD=true.
-    """
-    try:
-        import numpy as np
+    def _load_model(self):
+        """Load Silero VAD model from local path (materialized by dvc pull).
+
+        Reads SILERO_VAD_MODEL_PATH from the environment — must point to the
+        silero_vad.jit.pt file downloaded by scripts/setup_models.sh and
+        pulled from gs://courtaccess-ai-models via dvc pull.
+
+        Fails fast with a clear error if the path is unset or the file is
+        missing, rather than hitting the internet via torch.hub.
+        """
+        import os
+
+        model_path = os.getenv("SILERO_VAD_MODEL_PATH")
+
+        if not model_path:
+            raise RuntimeError(
+                "SILERO_VAD_MODEL_PATH is not set. "
+                "Run 'dvc pull' to download the model from GCS, then ensure "
+                "SILERO_VAD_MODEL_PATH points to models/silero-vad-v4/silero_vad.jit.pt"
+            )
+
+        from pathlib import Path
+
+        if not Path(model_path).is_file():
+            raise RuntimeError(
+                f"Silero VAD model not found at: {model_path}\nRun 'dvc pull' to download the model from GCS."
+            )
+
         import torch
 
-        model_path = os.getenv("SILERO_VAD_PATH", "/opt/models/silero-vad-v4")
-        model, utils = torch.hub.load(  # nosec B614
-            repo_or_dir=model_path,
-            model="silero_vad",
-            source="local",
-            force_reload=False,
-        )
-        get_speech_timestamps = utils[0]
+        device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        # Convert bytes → float32 tensor
-        audio_array = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-        audio_tensor = torch.from_numpy(audio_array)
+        logger.info("Loading Silero VAD model from %s ...", model_path)
+        model = torch.jit.load(model_path, map_location=device)  # nosec B614
+        model.eval()
+        if device == "cuda":
+            model = model.cuda()
+        VADService._model = model
+        logger.info("Silero VAD model loaded successfully on %s", device)
 
-        timestamps = get_speech_timestamps(
-            audio_tensor,
-            model,
-            threshold=_THRESHOLD,
-            sampling_rate=sample_rate,
-            return_seconds=False,
-        )
+    @property
+    def model(self):
+        return VADService._model
 
-        total_samples = len(audio_array)
-        total_ms = int(total_samples / sample_rate * 1000)
-        segments = [[int(t["start"] / sample_rate * 1000), int(t["end"] / sample_rate * 1000)] for t in timestamps]
-        speech_samples = sum(t["end"] - t["start"] for t in timestamps)
-        speech_ratio = round(speech_samples / total_samples, 3) if total_samples else 0.0
+    def reset_states(self):
+        """Reset model states for new audio stream."""
+        self.model.reset_states()
 
-        logger.info(
-            "[REAL VAD] %d ms audio → %d speech segment(s), speech ratio=%.2f",
-            total_ms,
-            len(segments),
-            speech_ratio,
-        )
-        return {
-            "speech_segments": segments,
-            "total_duration_ms": total_ms,
-            "speech_ratio": speech_ratio,
-        }
+    def process_chunk(self, audio_chunk: np.ndarray, sample_rate: int = 16000) -> tuple[float, bool]:
+        """
+        Process an audio chunk and return speech probability and decision.
 
-    except Exception as exc:
-        logger.error("[REAL VAD] Failed: %s — falling back to stub.", exc)
-        return _stub_vad(audio_bytes, sample_rate)
+        Args:
+            audio_chunk: 1D float32 numpy array of audio samples normalized
+                to [-1, 1]. Can also be a torch.Tensor.
+            sample_rate: Sample rate in Hz (typically 16000).
+
+        Returns:
+            (speech_probability, is_speech) where:
+                - speech_probability is a float in [0, 1]
+                - is_speech is True when probability >= 0.5
+        """
+        import torch
+
+        # Convert numpy to torch tensor
+        audio_tensor = torch.from_numpy(audio_chunk).float() if isinstance(audio_chunk, np.ndarray) else audio_chunk
+
+        # Ensure 1D tensor
+        if audio_tensor.dim() > 1:
+            audio_tensor = audio_tensor.squeeze()
+
+        # Move tensor to the same device as the model (CPU or CUDA)
+        model = self.model
+        model_device = next(model.parameters()).device if hasattr(model, "parameters") else torch.device("cpu")
+        audio_tensor = audio_tensor.to(model_device)
+
+        # Get speech probability — lock protects the model's recurrent state
+        # so concurrent sessions don't corrupt each other.
+        with self._lock, torch.no_grad():
+            speech_prob = model(audio_tensor, sample_rate).item()
+
+        # Threshold for speech detection
+        threshold = get_settings().vad_speech_threshold
+        is_speech = speech_prob >= threshold
+
+        return speech_prob, is_speech
+
+
+class SpeechSegmentDetector:
+    """
+    Detects speech segments with silence-based boundary detection.
+    Tracks when speech starts and ends based on VAD output.
+    """
+
+    def __init__(self, silence_threshold_ms: int = 500, sample_rate: int = 16000, chunk_size: int = 512):
+        """
+        Args:
+            silence_threshold_ms: Silence duration (ms) to mark end of utterance
+            sample_rate: Audio sample rate
+            chunk_size: Number of samples per chunk
+        """
+        self.silence_threshold_ms = silence_threshold_ms
+        self.sample_rate = sample_rate
+        self.chunk_size = chunk_size
+
+        # Calculate number of silent chunks needed
+        chunk_duration_ms = (chunk_size / sample_rate) * 1000
+        self.silence_chunks_threshold = int(silence_threshold_ms / chunk_duration_ms)
+
+        # State tracking
+        self.is_speaking = False
+        self.silent_chunks = 0
+        self.speech_start_time = None
+        self.total_speech_chunks = 0
+
+    def update(self, is_speech: bool) -> dict:
+        """
+        Update state with new VAD result.
+
+        Args:
+            is_speech: Whether current chunk contains speech
+
+        Returns:
+            Event dict with 'type' key: 'speech_start', 'speech_end', or None
+        """
+        event = {"type": None}
+
+        if is_speech:
+            self.silent_chunks = 0
+
+            if not self.is_speaking:
+                # Speech just started
+                self.is_speaking = True
+                self.speech_start_time = self.total_speech_chunks
+                event = {
+                    "type": "speech_start",
+                }
+
+            self.total_speech_chunks += 1
+
+        else:
+            if self.is_speaking:
+                self.silent_chunks += 1
+
+                if self.silent_chunks >= self.silence_chunks_threshold:
+                    # Speech ended (silence threshold reached)
+                    speech_duration = (self.total_speech_chunks - self.speech_start_time) * (
+                        self.chunk_size / self.sample_rate
+                    )
+
+                    event = {"type": "speech_end", "duration": round(speech_duration, 2)}
+
+                    self.is_speaking = False
+                    self.silent_chunks = 0
+
+        return event
+
+    def reset(self):
+        """Reset detector state for new session."""
+        self.is_speaking = False
+        self.silent_chunks = 0
+        self.speech_start_time = None
+        self.total_speech_chunks = 0
+
+
+# Global VAD service instance
+_vad_service: VADService | None = None
+
+
+def get_vad_service() -> VADService:
+    """Get or create the global VAD service instance."""
+    global _vad_service
+    if _vad_service is None:
+        _vad_service = VADService()
+    return _vad_service

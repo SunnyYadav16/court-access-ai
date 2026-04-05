@@ -63,7 +63,7 @@ class LegalReviewer:
         self.verification_mode = verification_mode  # "document" | "audio"
 
         self._vertex_max_retries = int(os.getenv("VERTEX_MAX_RETRIES"))
-        self._use_vertex = str(os.getenv("USE_VERTEX_LEGAL_REVIEW")).lower() == "true"
+        self._use_vertex_legal_review = str(os.getenv("USE_VERTEX_LEGAL_REVIEW")).lower() == "true"
 
         self._vertex_project_id = os.getenv("VERTEX_PROJECT_ID")
         self._vertex_location = os.getenv("VERTEX_LOCATION")
@@ -99,7 +99,7 @@ class LegalReviewer:
         if not original_spans:
             return translated_spans
 
-        if not (self._use_vertex and self._vertex_project_id):
+        if not (self._use_vertex_legal_review and self._vertex_project_id):
             return translated_spans
 
         if self.verification_mode == "document":
@@ -134,7 +134,7 @@ class LegalReviewer:
         Review a single translated text for legal accuracy.
         Returns output contract dict: {status, corrections}
         """
-        if not (self._use_vertex and self._vertex_project_id):
+        if not (self._use_vertex_legal_review and self._vertex_project_id):
             return self._stub_review(text)
         return self._vertex_review(text)
 
@@ -304,7 +304,7 @@ class LegalReviewer:
                     model=self.vertex_legal_llm_model,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0,
-                    max_tokens=32768,
+                    max_tokens=8192,
                 )
 
                 # ── Truncation check — must come before JSON parse ────────
@@ -438,11 +438,33 @@ class LegalReviewer:
                     scopes=["https://www.googleapis.com/auth/cloud-platform"],
                 )
         else:
-            # Production — use ADC (attached service account on GCE/Cloud Run)
-            if self._vertex_credentials is None:
-                self._vertex_credentials, _ = google.auth.default(
-                    scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            # Production — use GCE metadata server (ADC).
+            #
+            # docker-compose builds GOOGLE_APPLICATION_CREDENTIALS as
+            # '/app/${GOOGLE_APPLICATION_CREDENTIALS}'. When the env var is
+            # empty in .env.production this expands to '/app/' — a directory.
+            # Temporarily clear any invalid path so ADC reaches the metadata server.
+            import os as _os
+
+            gac = _os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+            _cleared_gac = False
+            if gac and not _os.path.isfile(gac):
+                del _os.environ["GOOGLE_APPLICATION_CREDENTIALS"]
+                _cleared_gac = True
+                logger.info(
+                    "GOOGLE_APPLICATION_CREDENTIALS='%s' is not a valid file — "
+                    "clearing so ADC uses GCE metadata server.",
+                    gac,
                 )
+
+            try:
+                if self._vertex_credentials is None:
+                    self._vertex_credentials, _ = google.auth.default(
+                        scopes=["https://www.googleapis.com/auth/cloud-platform"]
+                    )
+            finally:
+                if _cleared_gac:
+                    _os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = gac
 
         self._vertex_credentials.refresh(google.auth.transport.requests.Request())
 

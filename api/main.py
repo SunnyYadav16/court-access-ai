@@ -91,6 +91,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_db()
     logger.info("Database connection pool initialized")
 
+    # ── Speech models (gated behind USE_REAL_SPEECH=true) ────────────────────
+    from api.routes.realtime import startup_speech_models
+
+    startup_speech_models()
+
     logger.info("Startup complete.")
     yield
 

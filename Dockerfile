@@ -23,6 +23,22 @@ RUN pnpm install --frozen-lockfile
 
 # Copy full source and build
 COPY frontend/ ./
+
+# Add these lines
+ARG VITE_FIREBASE_API_KEY
+ARG VITE_FIREBASE_AUTH_DOMAIN
+ARG VITE_FIREBASE_PROJECT_ID
+ARG VITE_FIREBASE_STORAGE_BUCKET
+ARG VITE_FIREBASE_MESSAGING_SENDER_ID
+ARG VITE_FIREBASE_APP_ID
+
+ENV VITE_FIREBASE_API_KEY=$VITE_FIREBASE_API_KEY
+ENV VITE_FIREBASE_AUTH_DOMAIN=$VITE_FIREBASE_AUTH_DOMAIN
+ENV VITE_FIREBASE_PROJECT_ID=$VITE_FIREBASE_PROJECT_ID
+ENV VITE_FIREBASE_STORAGE_BUCKET=$VITE_FIREBASE_STORAGE_BUCKET
+ENV VITE_FIREBASE_MESSAGING_SENDER_ID=$VITE_FIREBASE_MESSAGING_SENDER_ID
+ENV VITE_FIREBASE_APP_ID=$VITE_FIREBASE_APP_ID
+
 RUN pnpm build
 # dist/ is now at /frontend/dist/
 
@@ -43,6 +59,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
+    postgresql-client \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -56,7 +73,13 @@ COPY courtaccess/ ./courtaccess/
 # Install the project + all core dependencies into the system Python
 # (UV_SYSTEM_PYTHON=1 is set above), so CLI entry points like `fastapi`
 # are available on PATH at container runtime.
-RUN uv pip install .
+# CPU-only PyTorch — avoids the 2.5 GB CUDA wheel that hangs the build.
+# The PyTorch CPU index has wheels for both x86_64 and arm64 (Apple Silicon).
+# GPU containers use gpu.Dockerfile which installs the CUDA build instead.
+RUN uv pip install "torch>=2.3.0" --index-url https://download.pytorch.org/whl/cpu
+
+# Install the project + speech pipeline deps (av, piper-tts, sentencepiece, websockets)
+RUN uv pip install ".[speech]"
 
 # Install DVC with GCS support for model pulling at startup
 RUN uv pip install "dvc[gs]>=3.50.0"
@@ -117,8 +140,9 @@ RUN python -m spacy download en_core_web_lg
 # Install Playwright's Chromium browser for the form scraper
 RUN playwright install chromium
 
-# Copy DAGs and entrypoint
+# Copy DAGs, model stubs, and entrypoint
 COPY --chown=airflow:root dags/ /opt/airflow/dags/
+COPY --chown=airflow:root models/*.dvc /opt/airflow/models/
 COPY --chown=airflow:root scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 USER root
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
