@@ -14,9 +14,6 @@ PORTUGUESE_CONFIG = LanguageConfig(
     nllb_target="por_Latn",
     glossary_path="data/glossaries/glossary_pt.json",
     llama_lang_label="Portuguese",
-    # Stub config — court names, legal overrides, and form tokens are
-    # placeholders. Set to True only after real values are supplied.
-    ready_for_production=False,
     court_name_translations={
         "Massachusetts Trial Court": "Tribunal de Julgamento de Massachusetts",
         "Land Court Department": "Departamento do Tribunal de Terras",

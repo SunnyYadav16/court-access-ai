@@ -1267,6 +1267,7 @@ dependencies = [
     { name = "google-cloud-storage" },
     { name = "huggingface-hub" },
     { name = "lxml" },
+    { name = "mlflow" },
     { name = "numpy" },
     { name = "openai" },
     { name = "passlib", extra = ["bcrypt"] },
@@ -1310,7 +1311,6 @@ dev = [
 ]
 monitoring = [
     { name = "evidently", marker = "platform_machine == 'x86_64'" },
-    { name = "mlflow" },
     { name = "tensorflow-data-validation", marker = "platform_machine == 'x86_64'" },
 ]
 speech = [
@@ -1344,7 +1344,7 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
     { name = "huggingface-hub", specifier = ">=1.7.1" },
     { name = "lxml", specifier = ">=5.1.0" },
-    { name = "mlflow", marker = "extra == 'monitoring'", specifier = ">=3.9.0" },
+    { name = "mlflow", specifier = ">=3.9.0" },
     { name = "numpy", specifier = ">=1.26.0" },
     { name = "openai", specifier = ">=1.30.0" },
     { name = "passlib", extras = ["bcrypt"], specifier = ">=1.7.4" },

@@ -151,7 +151,7 @@ class Translator:
             t1 = time.time()
             from transformers import AutoTokenizer
 
-            self._tokenizer = AutoTokenizer.from_pretrained(model_path)
+            self._tokenizer = AutoTokenizer.from_pretrained(model_path, fix_mistral_regex=False)
             logger.info("NLLB tokenizer loaded in %.2fs", time.time() - t1)
 
             t2 = time.time()

@@ -138,7 +138,8 @@ class MTService:
         )
 
         logger.info("Loading tokenizer from %s...", hf_model)
-        MTService._tokenizer = transformers.AutoTokenizer.from_pretrained(hf_model)
+        # Explicitly load tokenizer without attempting mistake-prone token regex fixes
+        MTService._tokenizer = transformers.AutoTokenizer.from_pretrained(hf_model, fix_mistral_regex=False)
         logger.info("Translation model ready")
 
     # ------------------------------------------------------------------ #

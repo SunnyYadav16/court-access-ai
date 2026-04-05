@@ -304,7 +304,7 @@ class LegalReviewer:
                     model=self.vertex_legal_llm_model,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0,
-                    max_tokens=32768,
+                    max_tokens=8192,
                 )
 
                 # ── Truncation check — must come before JSON parse ────────
