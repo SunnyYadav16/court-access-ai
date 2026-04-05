@@ -70,11 +70,15 @@ class VADService:
 
         import torch
 
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
         logger.info("Loading Silero VAD model from %s ...", model_path)
-        model = torch.jit.load(model_path, map_location="cpu")  # nosec B614
+        model = torch.jit.load(model_path, map_location=device)  # nosec B614
         model.eval()
+        if device == "cuda":
+            model = model.cuda()
         VADService._model = model
-        logger.info("Silero VAD model loaded successfully")
+        logger.info("Silero VAD model loaded successfully on %s", device)
 
     @property
     def model(self):
@@ -107,10 +111,15 @@ class VADService:
         if audio_tensor.dim() > 1:
             audio_tensor = audio_tensor.squeeze()
 
+        # Move tensor to the same device as the model (CPU or CUDA)
+        model = self.model
+        model_device = next(model.parameters()).device if hasattr(model, "parameters") else torch.device("cpu")
+        audio_tensor = audio_tensor.to(model_device)
+
         # Get speech probability — lock protects the model's recurrent state
         # so concurrent sessions don't corrupt each other.
         with self._lock, torch.no_grad():
-            speech_prob = self.model(audio_tensor, sample_rate).item()
+            speech_prob = model(audio_tensor, sample_rate).item()
 
         # Threshold for speech detection
         threshold = get_settings().vad_speech_threshold

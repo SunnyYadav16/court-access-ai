@@ -162,6 +162,10 @@ class TTSService:
 
     def _load_voices(self) -> None:
         """Resolve paths and load all voice models from local disk."""
+        import torch
+
+        use_cuda = torch.cuda.is_available()
+
         for lang in VOICE_MAP:
             onnx_path = _resolve_voice_path(lang)
             config_path = onnx_path.with_suffix(".onnx.json")
@@ -173,11 +177,11 @@ class TTSService:
                     "Run 'dvc pull' to restore the model from GCS."
                 )
 
-            logger.info("Loading voice for '%s' from %s ...", lang, onnx_path.name)
+            logger.info("Loading voice for '%s' from %s (CUDA=%s) ...", lang, onnx_path.name, use_cuda)
             voice = PiperVoice.load(
                 str(onnx_path),
                 config_path=str(config_path),
-                use_cuda=False,
+                use_cuda=use_cuda,
             )
             TTSService._voices[lang] = voice
             logger.info("Voice '%s' ready", lang)

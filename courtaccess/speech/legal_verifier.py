@@ -121,9 +121,34 @@ class LegalVerifierService:
                 )
                 logger.info("[LegalVerifier] Using explicit service account credentials.")
             else:
-                # Production — ADC from the compute service account (no key file needed)
-                credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-                logger.info("[LegalVerifier] Using Application Default Credentials (ADC).")
+                # Production — use GCE metadata server (ADC).
+                #
+                # docker-compose builds GOOGLE_APPLICATION_CREDENTIALS as
+                # '/app/${GOOGLE_APPLICATION_CREDENTIALS}'. When the env var is
+                # empty in .env.production this expands to '/app/' — a directory,
+                # not a file. google.auth.default() reads that env var first and
+                # crashes with IsADirectoryError before reaching the metadata server.
+                # Temporarily clear any invalid path so ADC falls through correctly.
+                import os
+
+                gac = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+                _cleared_gac = False
+                if gac and not os.path.isfile(gac):
+                    logger.info(
+                        "[LegalVerifier] GOOGLE_APPLICATION_CREDENTIALS='%s' is not a valid file "
+                        "(likely an empty template expansion) — clearing so ADC uses GCE metadata server.",
+                        gac,
+                    )
+                    del os.environ["GOOGLE_APPLICATION_CREDENTIALS"]
+                    _cleared_gac = True
+
+                try:
+                    credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+                    logger.info("[LegalVerifier] Using Application Default Credentials (ADC).")
+                finally:
+                    # Restore env var so other components are unaffected
+                    if _cleared_gac:
+                        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = gac
 
             auth_req = google.auth.transport.requests.Request()
             credentials.refresh(auth_req)

@@ -126,7 +126,9 @@ class MTService:
         import torch
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        compute_type = "int8"
+        # float16 on GPU: fast, low VRAM, full quality
+        # int8    on CPU: best CPU speed/accuracy balance for NLLB
+        compute_type = "float16" if device == "cuda" else "int8"
 
         logger.info("Loading CTranslate2 translator (%s, %s)...", device, compute_type)
         MTService._translator = ctranslate2.Translator(
