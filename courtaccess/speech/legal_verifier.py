@@ -89,35 +89,41 @@ class LegalVerifierService:
     # ------------------------------------------------------------------ #
 
     def _load_client(self) -> None:
-        """Initialise the OpenAI client pointed at the Vertex AI endpoint."""
-        try:
-            import os
+        """Initialise the OpenAI client pointed at the Vertex AI endpoint.
 
+        Auth strategy (matches legal_review.py _get_vertex_client):
+          - Local dev: GCP_SERVICE_ACCOUNT_JSON contains the raw JSON of a
+            service account key. Parsed via from_service_account_info().
+          - Production (GCE / Cloud Run VM): GCP_SERVICE_ACCOUNT_JSON is empty
+            or unset. Falls back to Application Default Credentials (ADC)
+            provided by the attached compute service account automatically.
+        """
+        try:
             import google.auth
             import google.auth.transport.requests
             import openai
-            from google.oauth2 import service_account
 
             s = get_settings()
             project = s.vertex_project_id
             location = s.vertex_location
 
-            # Explicitly load the Vertex AI service account in local dev.
-            # In docker-compose, GOOGLE_APPLICATION_CREDENTIALS is bound to the
-            # Firebase Admin key, which lacks Vertex AI permissions.
-            creds_path = s.gcp_service_account_json
-            if creds_path and not os.path.isabs(creds_path):
-                # Ensure path is absolute relative to /app inside the container
-                creds_path = os.path.join("/app", creds_path)
+            # Read the SA JSON content (not a file path).
+            # Empty string / None → skip to ADC.
+            sa_json_content = s.gcp_service_account_json
 
-            # If the specific LLaMA key file is present (local dev), use it.
-            # Otherwise (production), rely on the attached compute service account.
-            if creds_path and os.path.isfile(creds_path):
-                credentials = service_account.Credentials.from_service_account_file(
-                    creds_path, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            if sa_json_content:
+                # Local dev — explicit SA JSON key supplied as env var content
+                from google.oauth2 import service_account
+
+                credentials = service_account.Credentials.from_service_account_info(
+                    json.loads(sa_json_content),
+                    scopes=["https://www.googleapis.com/auth/cloud-platform"],
                 )
+                logger.info("[LegalVerifier] Using explicit service account credentials.")
             else:
+                # Production — ADC from the compute service account (no key file needed)
                 credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+                logger.info("[LegalVerifier] Using Application Default Credentials (ADC).")
 
             auth_req = google.auth.transport.requests.Request()
             credentials.refresh(auth_req)
@@ -275,32 +281,48 @@ class LegalVerifierService:
 # ---------------------------------------------------------------------------
 
 _legal_verifier: LegalVerifierService | None = None
-_init_attempted: bool = False
 
 
 def get_legal_verifier() -> LegalVerifierService | None:
     """
     Get (or create) the global LegalVerifierService instance.
 
-    Returns None if VERTEX_PROJECT_ID is not set, meaning legal verification is
-    disabled and callers should skip the step silently.
-    """
-    global _legal_verifier, _init_attempted
+    Returns None if:
+      - USE_VERTEX_LEGAL_REVIEW is not set to "true", OR
+      - VERTEX_PROJECT_ID is not set.
 
-    if not get_settings().vertex_project_id:
+    Logs the real exception at ERROR level on init failure so it is
+    visible in production logs instead of being silently swallowed.
+    The permanent _init_attempted lock has been removed so that
+    transient startup failures do not permanently disable the service.
+    """
+    global _legal_verifier
+
+    s = get_settings()
+
+    # Respect the feature flag — if disabled, skip entirely.
+    if not s.use_vertex_legal_review:
         return None
 
+    # Require the project ID to be configured.
+    if not s.vertex_project_id:
+        logger.warning("[LegalVerifier] VERTEX_PROJECT_ID is not set — Vertex legal review disabled.")
+        return None
+
+    # Return cached singleton if already initialised successfully.
     if _legal_verifier is not None:
         return _legal_verifier
 
-    if _init_attempted:
-        return None
-
-    _init_attempted = True
+    # Attempt initialisation — log the real error so it is visible in prod logs.
     try:
         _legal_verifier = LegalVerifierService()
+        logger.info("[LegalVerifier] Vertex AI client initialised successfully.")
     except Exception as exc:
-        logger.warning("Disabled: %s", exc)
+        logger.error(
+            "[LegalVerifier] Failed to initialise Vertex AI client — falling back to stub. Error: %s",
+            exc,
+            exc_info=True,
+        )
         return None
 
     return _legal_verifier

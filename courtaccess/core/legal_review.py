@@ -63,7 +63,7 @@ class LegalReviewer:
         self.verification_mode = verification_mode  # "document" | "audio"
 
         self._vertex_max_retries = int(os.getenv("VERTEX_MAX_RETRIES"))
-        self._use_vertex = str(os.getenv("USE_VERTEX_LEGAL_REVIEW")).lower() == "true"
+        self._use_vertex_legal_review = str(os.getenv("USE_VERTEX_LEGAL_REVIEW")).lower() == "true"
 
         self._vertex_project_id = os.getenv("VERTEX_PROJECT_ID")
         self._vertex_location = os.getenv("VERTEX_LOCATION")
@@ -99,7 +99,7 @@ class LegalReviewer:
         if not original_spans:
             return translated_spans
 
-        if not (self._use_vertex and self._vertex_project_id):
+        if not (self._use_vertex_legal_review and self._vertex_project_id):
             return translated_spans
 
         if self.verification_mode == "document":
@@ -134,7 +134,7 @@ class LegalReviewer:
         Review a single translated text for legal accuracy.
         Returns output contract dict: {status, corrections}
         """
-        if not (self._use_vertex and self._vertex_project_id):
+        if not (self._use_vertex_legal_review and self._vertex_project_id):
             return self._stub_review(text)
         return self._vertex_review(text)
 
