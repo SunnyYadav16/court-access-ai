@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react"
 import { ScreenId, SCREENS } from "@/lib/constants"
 import { Card, CardContent } from "@/components/ui/card"
 import TopBar from "@/components/shared/TopBar"
@@ -45,8 +46,28 @@ export default function HomeOfficial({ onNav }: Props) {
   const { backendUser } = useAuth()
   const firstName = getFirstName(backendUser?.name, backendUser?.email)
 
+  const [toast, setToast] = useState<string | null>(null)
+  useEffect(() => {
+    const msg = sessionStorage.getItem("pending_toast")
+    if (msg) {
+      sessionStorage.removeItem("pending_toast")
+      setToast(msg)
+      setTimeout(() => setToast(null), 4_000)
+    }
+  }, [])
+
   return (
     <div className="min-h-screen" style={{ background: "#F6F7F9" }}>
+      {/* Pending toast (e.g. after session end) */}
+      {toast && (
+        <div
+          className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2.5 px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium"
+          style={{ background: "#166534", color: "#dcfce7", minWidth: 260 }}
+        >
+          <span>✓</span>
+          <span>{toast}</span>
+        </div>
+      )}
       <TopBar onNav={onNav} />
 
       <WelcomeBanner
@@ -64,7 +85,7 @@ export default function HomeOfficial({ onNav }: Props) {
         </p>
 
         <div className="flex flex-col gap-3 mb-5">
-          <FeatureCard icon="🎙" title="Real-Time Translation"
+          <FeatureCard icon="🎙" title="Start Interpretation Session"
             desc="Start a live courtroom interpretation session with bidirectional speech translation"
             badge="LIVE" onClick={() => onNav(SCREENS.REALTIME_SETUP)} />
           <FeatureCard icon="📄" title="Upload Document"

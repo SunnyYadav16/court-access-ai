@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { ScreenId, SCREENS } from "@/lib/constants"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -6,26 +6,30 @@ import { Card, CardContent } from "@/components/ui/card"
 import TopBar from "@/components/shared/TopBar"
 import ScreenLabel from "@/components/shared/ScreenLabel"
 import useRealtimeStore from "@/store/realtimeStore"
-import { useRealtimeWebSocket } from "@/hooks/useRealtimeWebSocket"
+import { realtimeApi } from "@/services/api"
+import { useAuth } from "@/hooks/useAuth"
+import { getFirstName } from "@/lib/utils"
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const LANGUAGES = [
-  { value: "en", label: "English" },
+const PARTNER_LANGUAGES = [
   { value: "es", label: "Spanish (Español)" },
   { value: "pt", label: "Portuguese (Português)" },
 ] as const
 
-type LangCode = "en" | "es" | "pt"
+type PartnerLang = "es" | "pt"
 
 const COURT_DIVISIONS = [
   "Boston Municipal Court",
   "Worcester District Court",
   "Suffolk Superior Court",
   "Springfield District Court",
+  "Cambridge District Court",
+  "Middlesex Superior Court",
 ]
 
 const COURTROOMS = [
+  "Courtroom 1",
   "Courtroom 3",
   "Courtroom 5A",
   "Courtroom 7",
@@ -33,33 +37,25 @@ const COURTROOMS = [
   "Courtroom 14B",
 ]
 
-// ── Shared field wrapper ──────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-function Field({
-  label,
-  children,
-}: {
+function Field({ label, required, children }: {
   label: string
+  required?: boolean
   children: React.ReactNode
 }) {
   return (
     <div>
-      <label
-        className="text-xs font-semibold block mb-1.5"
-        style={{ color: "#4A5568" }}
-      >
+      <label className="text-xs font-semibold block mb-1.5" style={{ color: "#4A5568" }}>
         {label}
+        {required && <span className="ml-0.5" style={{ color: "#DC2626" }}>*</span>}
       </label>
       {children}
     </div>
   )
 }
 
-function StyledSelect({
-  value,
-  onChange,
-  children,
-}: {
+function StyledSelect({ value, onChange, children }: {
   value: string
   onChange: (v: string) => void
   children: React.ReactNode
@@ -81,95 +77,85 @@ function StyledSelect({
 interface Props { onNav: (s: ScreenId) => void }
 
 export default function RealtimeSetup({ onNav }: Props) {
-  // Store
-  const phase        = useRealtimeStore((s) => s.phase)
-  const error        = useRealtimeStore((s) => s.error)
-  const setError     = useRealtimeStore((s) => s.setError)
-  const setCourtInfo = useRealtimeStore((s) => s.setCourtInfo)
-  const setMyName    = useRealtimeStore((s) => s.setMyName)
+  const { backendUser } = useAuth()
+  const officialName = getFirstName(backendUser?.name, backendUser?.email)
 
-  // Create-room form state
-  const [createName, setCreateName]   = useState("")
-  const [myLang, setMyLang]           = useState<LangCode>("en")
-  const [partnerLang, setPartnerLang] = useState<LangCode>("es")
+  // Store
+  const setMyName    = useRealtimeStore((s) => s.setMyName)
+  const setMyLanguage = useRealtimeStore((s) => s.setMyLanguage)
+  const setCourtInfo = useRealtimeStore((s) => s.setCourtInfo)
+  const setLobbyInfo = useRealtimeStore((s) => s.setLobbyInfo)
+
+  // Form state
+  const [partnerLang, setPartnerLang] = useState<PartnerLang>("es")
   const [division, setDivision]       = useState(COURT_DIVISIONS[0])
   const [courtroom, setCourtroom]     = useState(COURTROOMS[0])
   const [docket, setDocket]           = useState("")
+  const [partnerName, setPartnerName] = useState("")
   const [consent, setConsent]         = useState(false)
 
-  // Join-room form state
-  const [joinName, setJoinName] = useState("")
-  const [joinCode, setJoinCode] = useState("")
+  // Submission state
+  const [loading, setLoading] = useState(false)
+  const [error, setError]     = useState<string | null>(null)
 
-  // WS hook — enqueueTts is a no-op in lobby (no audio sent in this phase)
-  const { connect } = useRealtimeWebSocket({ enqueueTts: () => {} })
+  // ── Submit ───────────────────────────────────────────────────────────────────
 
-  // ── Navigation trigger ──────────────────────────────────────────────────────
-  // When the server confirms room creation/join, phase becomes 'waiting' or
-  // 'ready'. Disconnect the setup WS (RealtimeSession creates its own) then
-  // navigate. This prevents orphan dual-connections.
-
-  useEffect(() => {
-    // Navigate to the session screen once the server confirms room creation/join.
-    // Do NOT disconnect here — the open WebSocket keeps the room alive on the server.
-    // RealtimeSession's wsRef is a module-level singleton so it will inherit the
-    // live connection that was opened here.
-    if (phase === "waiting" || phase === "ready" || phase === "active") {
-      onNav(SCREENS.REALTIME_SESSION)
-    }
-  }, [phase, onNav])
-
-  // ── Handlers ────────────────────────────────────────────────────────────────
-
-  function handleCreate() {
-    if (!createName.trim()) {
-      setError("Please enter your name")
-      return
-    }
-    if (myLang === partnerLang) {
-      setError("You and your partner must speak different languages")
+  async function handleSubmit() {
+    if (!partnerName.trim()) {
+      setError("Please enter the LEP individual's name.")
       return
     }
     if (!consent) {
-      setError("Both parties must consent to AI-assisted interpretation")
+      setError("Both parties must be informed before starting the session.")
       return
     }
+
     setError(null)
-    setMyName(createName.trim())
-    setCourtInfo(division, courtroom, docket.trim())
-    connect({ name: createName.trim(), myLang, partnerLang })
+    setLoading(true)
+
+    try {
+      const res = await realtimeApi.createRoom({
+        target_language: partnerLang,
+        court_division: division,
+        courtroom,
+        case_docket: docket.trim() || null,
+        partner_name: partnerName.trim(),
+        consent_acknowledged: true,
+      })
+
+      // Seed store so the lobby and session screens have the correct context
+      setMyName(backendUser?.name ?? officialName)
+      setMyLanguage("en")
+      setCourtInfo(division, courtroom, docket.trim())
+      setLobbyInfo(res.session_id, res.room_code, res.join_url, res.room_code_expires_at, partnerName.trim(), partnerLang)
+
+      onNav(SCREENS.REALTIME_LOBBY)
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : "Failed to create room. Please try again."
+      setError(msg)
+    } finally {
+      setLoading(false)
+    }
   }
 
-  function handleJoin() {
-    const code = joinCode.trim().toUpperCase()
-    if (!joinName.trim()) {
-      setError("Please enter your name")
-      return
-    }
-    if (code.length !== 6) {
-      setError("Room code must be exactly 6 characters")
-      return
-    }
-    setError(null)
-    setMyName(joinName.trim())
-    connect({ roomId: code, name: joinName.trim() })
-  }
-
-  // ── Render ───────────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen" style={{ background: "#F6F7F9" }}>
       <TopBar onNav={onNav} />
 
-      <div className="max-w-4xl mx-auto px-5 py-8">
+      <div className="max-w-lg mx-auto px-5 py-8">
         <h1
-          className="text-xl font-bold mb-2"
+          className="text-xl font-bold mb-1"
           style={{ fontFamily: "Palatino, Georgia, serif", color: "#1A2332" }}
         >
-          Real-Time Interpretation
+          Start Interpretation Session
         </h1>
         <p className="text-sm mb-6" style={{ color: "#4A5568" }}>
-          Create a new session room or join an existing one with a room code.
+          Fill in the session details. A join code will be generated for the LEP individual.
         </p>
 
         {/* Error banner */}
@@ -182,188 +168,97 @@ export default function RealtimeSetup({ onNav }: Props) {
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <Card>
+          <CardContent className="p-6 flex flex-col gap-5">
 
-          {/* ── Left: Create Room ──────────────────────────────────────────── */}
-          <Card>
-            <CardContent className="p-6 flex flex-col gap-4">
-              <div>
-                <h2
-                  className="text-base font-semibold"
-                  style={{ fontFamily: "Palatino, Georgia, serif", color: "#1A2332" }}
-                >
-                  Create a Room
-                </h2>
-                <p className="text-xs mt-0.5" style={{ color: "#6B7280" }}>
-                  You are the court official. Set the language pair and start a session.
-                </p>
-              </div>
+            {/* LEP Individual's Name */}
+            <Field label="LEP Individual's Name" required>
+              <Input
+                value={partnerName}
+                onChange={(e) => setPartnerName(e.target.value)}
+                placeholder="e.g. Maria García"
+                maxLength={100}
+                disabled={loading}
+              />
+            </Field>
 
-              <Field label="Your name">
-                <Input
-                  value={createName}
-                  onChange={(e) => setCreateName(e.target.value)}
-                  placeholder="e.g. Judge Smith"
-                  maxLength={40}
-                />
-              </Field>
-
-              {/* Language pair picker */}
-              <div>
-                <label
-                  className="text-xs font-semibold block mb-1.5"
-                  style={{ color: "#4A5568" }}
-                >
-                  Language pair
-                </label>
-                <div className="flex items-center gap-2">
-                  <div className="flex-1">
-                    <p className="text-xs mb-1" style={{ color: "#6B7280" }}>You speak</p>
-                    <StyledSelect value={myLang} onChange={(v) => setMyLang(v as LangCode)}>
-                      {LANGUAGES.map((l) => (
-                        <option key={l.value} value={l.value}>{l.label}</option>
-                      ))}
-                    </StyledSelect>
-                  </div>
-                  <span
-                    className="mt-5 text-base font-semibold select-none"
-                    style={{ color: "#6B7280" }}
-                  >
-                    ↔
-                  </span>
-                  <div className="flex-1">
-                    <p className="text-xs mb-1" style={{ color: "#6B7280" }}>They speak</p>
-                    <StyledSelect value={partnerLang} onChange={(v) => setPartnerLang(v as LangCode)}>
-                      {LANGUAGES.map((l) => (
-                        <option key={l.value} value={l.value}>{l.label}</option>
-                      ))}
-                    </StyledSelect>
-                  </div>
-                </div>
-              </div>
-
-              <Field label="Court division">
-                <StyledSelect value={division} onChange={setDivision}>
-                  {COURT_DIVISIONS.map((d) => (
-                    <option key={d} value={d}>{d}</option>
-                  ))}
-                </StyledSelect>
-              </Field>
-
-              <Field label="Courtroom">
-                <StyledSelect value={courtroom} onChange={setCourtroom}>
-                  {COURTROOMS.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </StyledSelect>
-              </Field>
-
-              <Field label="Case docket (optional)">
-                <Input
-                  value={docket}
-                  onChange={(e) => setDocket(e.target.value)}
-                  placeholder="e.g. 2026-CR-001234"
-                />
-              </Field>
-
-              {/* Mic info banner */}
-              <div
-                className="rounded-md p-3"
-                style={{ background: "#EFF6FF", border: "1px solid #BFDBFE" }}
-              >
-                <p className="text-xs leading-relaxed" style={{ color: "#1e40af" }}>
-                  <strong>Microphone required.</strong> Grant browser mic permission when
-                  prompted. Both participants need a working microphone and speakers.
-                </p>
-              </div>
-
-              {/* Consent checkbox */}
-              <label className="flex items-start gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 accent-slate-800"
-                  checked={consent}
-                  onChange={(e) => setConsent(e.target.checked)}
-                />
-                <span className="text-xs leading-relaxed" style={{ color: "#4A5568" }}>
-                  Both parties consent to AI-assisted interpretation for the purpose of
-                  court proceedings.
-                </span>
-              </label>
-
-              <Button
-                className="w-full cursor-pointer"
-                style={{ background: "#0B1D3A" }}
-                onClick={handleCreate}
-              >
-                Create room
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* ── Right: Join Room ───────────────────────────────────────────── */}
-          <Card>
-            <CardContent className="p-6 flex flex-col gap-4">
-              <div>
-                <h2
-                  className="text-base font-semibold"
-                  style={{ fontFamily: "Palatino, Georgia, serif", color: "#1A2332" }}
-                >
-                  Join a Room
-                </h2>
-                <p className="text-xs mt-0.5" style={{ color: "#6B7280" }}>
-                  You are the respondent. Enter the room code provided by the court official.
-                </p>
-              </div>
-
-              <Field label="Your name">
-                <Input
-                  value={joinName}
-                  onChange={(e) => setJoinName(e.target.value)}
-                  placeholder="e.g. Maria García"
-                  maxLength={40}
-                />
-              </Field>
-
-              <Field label="Room code">
-                <Input
-                  value={joinCode}
-                  onChange={(e) => setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
-                  placeholder="ABC123"
-                  maxLength={6}
-                  className="text-center tracking-widest font-mono text-lg uppercase"
-                  style={{ letterSpacing: "0.25em" }}
-                />
-              </Field>
-
-              <p className="text-xs" style={{ color: "#6B7280" }}>
-                Ask the court official for the 6-character room code displayed on their screen.
+            {/* Partner language */}
+            <Field label="LEP Individual's Language" required>
+              <StyledSelect value={partnerLang} onChange={(v) => setPartnerLang(v as PartnerLang)}>
+                {PARTNER_LANGUAGES.map((l) => (
+                  <option key={l.value} value={l.value}>{l.label}</option>
+                ))}
+              </StyledSelect>
+              <p className="text-[11px] mt-1" style={{ color: "#8494A7" }}>
+                Court official (you) will speak English.
               </p>
+            </Field>
 
-              {/* Spacer to visually align the Join button near the bottom */}
-              <div className="flex-1" />
+            {/* Court Division */}
+            <Field label="Court Division" required>
+              <StyledSelect value={division} onChange={setDivision}>
+                {COURT_DIVISIONS.map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </StyledSelect>
+            </Field>
 
-              {/* Mic info banner — mirrored for consistency */}
-              <div
-                className="rounded-md p-3"
-                style={{ background: "#EFF6FF", border: "1px solid #BFDBFE" }}
-              >
-                <p className="text-xs leading-relaxed" style={{ color: "#1e40af" }}>
-                  <strong>Microphone required.</strong> Grant browser mic permission when
-                  prompted. You will hear the AI interpretation through your speakers.
-                </p>
-              </div>
+            {/* Courtroom */}
+            <Field label="Courtroom" required>
+              <StyledSelect value={courtroom} onChange={setCourtroom}>
+                {COURTROOMS.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </StyledSelect>
+            </Field>
 
-              <Button
-                className="w-full cursor-pointer"
-                style={{ background: "#0B1D3A" }}
-                onClick={handleJoin}
-              >
-                Join room
-              </Button>
-            </CardContent>
-          </Card>
+            {/* Case Docket */}
+            <Field label="Case Docket (optional)">
+              <Input
+                value={docket}
+                onChange={(e) => setDocket(e.target.value)}
+                placeholder="e.g. 2026-CR-001234"
+                maxLength={50}
+                disabled={loading}
+              />
+            </Field>
 
+            {/* Consent */}
+            <label className="flex items-start gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                className="mt-0.5 accent-slate-800"
+                checked={consent}
+                onChange={(e) => setConsent(e.target.checked)}
+                disabled={loading}
+              />
+              <span className="text-xs leading-relaxed" style={{ color: "#4A5568" }}>
+                Both parties have been informed this session uses AI-assisted interpretation
+                and have consented to its use for court proceedings.
+              </span>
+            </label>
+
+            <Button
+              className="w-full cursor-pointer"
+              style={{ background: "#0B1D3A" }}
+              onClick={handleSubmit}
+              disabled={loading}
+            >
+              {loading ? "Creating session…" : "Create Session"}
+            </Button>
+
+          </CardContent>
+        </Card>
+
+        {/* Mic notice */}
+        <div
+          className="mt-4 rounded-md p-3"
+          style={{ background: "#EFF6FF", border: "1px solid #BFDBFE" }}
+        >
+          <p className="text-xs leading-relaxed" style={{ color: "#1e40af" }}>
+            <strong>Microphone required.</strong> After creating the session, grant browser mic
+            permission when prompted. Both participants need a working microphone and speakers.
+          </p>
         </div>
       </div>
 

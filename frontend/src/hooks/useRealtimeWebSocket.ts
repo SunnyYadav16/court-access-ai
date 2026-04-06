@@ -70,6 +70,12 @@ export interface ConnectOptions {
   myLang?: string;
   /** Partner's language (ISO 639-1). Only used when creating a room. */
   partnerLang?: string;
+  /**
+   * Explicit auth token to pass to the WebSocket server.
+   * Used by guest participants who receive a room JWT from POST /sessions/rooms/join.
+   * When omitted, the hook falls back to fetching a Firebase ID token.
+   */
+  token?: string;
 }
 
 // ── Shared WebSocket singleton ────────────────────────────────────────────────
@@ -91,6 +97,10 @@ export function useRealtimeWebSocket({
 }: UseRealtimeWebSocketOptions) {
   // Use the shared module-level singleton — survives component unmount/remount.
   const wsRef = _wsRef;
+
+  // Pull store state
+  const isGuest = useRealtimeStore((s) => s.isGuest);
+  const roomToken = useRealtimeStore((s) => s.roomToken);
 
   // Pull store actions (stable references from Zustand)
   const setPhase = useRealtimeStore((s) => s.setPhase);
@@ -287,19 +297,33 @@ export function useRealtimeWebSocket({
       }
       params.set("name", opts.name || "User");
 
-      // Attach Firebase token for server-side authentication
-      const user = auth.currentUser;
-      if (!user) {
-        setError("Not authenticated. Please sign in first.");
-        return;
-      }
-      try {
-        const token = await user.getIdToken();
-        params.set("token", token);
-      } catch (e) {
-        console.error("Failed to get Firebase token for WebSocket", e);
-        setError("Authentication failed. Please try again.");
-        return;
+      // Attach auth token.
+      // Priority: explicit opts.token → store-based isGuest path → Firebase ID token.
+      if (opts.token) {
+        // Explicit override (e.g. token set synchronously before calling connect).
+        params.set("token", opts.token);
+      } else if (isGuest) {
+        // Guest participant: use the anonymous room JWT stored in memory.
+        if (!roomToken) {
+          setError("No room token found. Please rejoin the room.");
+          return;
+        }
+        params.set("token", roomToken);
+      } else {
+        // Authenticated user: fetch a fresh Firebase ID token.
+        const user = auth.currentUser;
+        if (!user) {
+          setError("Not authenticated. Please sign in first.");
+          return;
+        }
+        try {
+          const idToken = await user.getIdToken();
+          params.set("token", idToken);
+        } catch (e) {
+          console.error("Failed to get Firebase token for WebSocket", e);
+          setError("Authentication failed. Please try again.");
+          return;
+        }
       }
 
       const url = `${WS_BASE}/api/sessions/ws?${params.toString()}`;
@@ -324,7 +348,7 @@ export function useRealtimeWebSocket({
         onClose?.();
       };
     },
-    [_close, _handleMessage, onClose, onOpen, setError, setIsCreator, setPhase]
+    [_close, _handleMessage, isGuest, onClose, onOpen, roomToken, setError, setIsCreator, setPhase]
   );
 
   // _close() already calls onStopCapture, so audio capture is always stopped

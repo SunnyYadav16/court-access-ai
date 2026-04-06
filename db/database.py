@@ -240,18 +240,17 @@ class Base(DeclarativeBase):
 async def init_db() -> None:
     """
     Verify the connection pool is healthy on startup.
-    Creates tables if they do not exist, preserving the configured db user
-    and avoiding access issues.
+    Does NOT create tables — schema is managed exclusively by Alembic so that
+    every change is versioned and the migration history stays accurate.
+    The docker-entrypoint.sh runs `alembic upgrade head` before this is called.
 
     api/main.py lifespan should call this on startup:
         app.state.db_engine = engine
         await init_db()
     """
-    from db.models import Base
-
     async with engine.begin() as conn:
-        # Create all tables if they don't exist yet via our user connection
-        await conn.run_sync(Base.metadata.create_all)
+        # Simple connectivity check — raises if the DB is unreachable.
+        await conn.run_sync(lambda _: None)
 
 
 async def close_db() -> None:

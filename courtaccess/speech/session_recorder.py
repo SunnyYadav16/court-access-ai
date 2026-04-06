@@ -2,9 +2,10 @@
 Session Recording & Transcript Log — Phase 10
 
 Provides:
-  - SessionRecorder  : accumulates per-language audio tracks and writes WAVs
-  - TranscriptLogger : accumulates structured transcript entries and writes text
-  - write_manifest   : generates SHA-256 manifest JSON for all session artifacts
+  - SessionRecorder         : accumulates per-language audio tracks and writes WAVs
+  - TranscriptLogger        : accumulates structured transcript entries and writes text
+  - upload_session_artifacts: uploads JSON transcript (always) and WAVs (if enabled) to GCS
+  - write_manifest          : generates SHA-256 manifest JSON for all session artifacts
 
 Output directory layout:
     recordings/sessions/{session_name}/
@@ -12,11 +13,21 @@ Output directory layout:
         {session_name}_es.wav
         {session_name}_transcript.txt
         {session_name}_manifest.json
+
+GCS upload behaviour (controlled by env vars, not Pydantic settings):
+    GCS_BUCKET_TRANSCRIPTS   — bucket for JSON transcript upload; skip if unset
+    AUDIO_STORAGE_ENABLED    — "true" to also upload WAV files; default false (MVP off)
+
+On session end:
+    1. recorder.finalize()           → writes WAVs locally
+    2. transcript_logger.finalize()  → writes .txt locally
+    3. upload_session_artifacts()    → uploads JSON transcript + optionally WAVs to GCS
 """
 
 import hashlib
 import io
 import json
+import os
 import time
 import wave
 from datetime import UTC, datetime
@@ -255,8 +266,24 @@ class SessionRecorder:
 
 class TranscriptLogger:
     """
-    Accumulates structured transcript entries during a conversation
-    and formats them as a readable turn-by-turn text file.
+    Accumulates structured utterance dicts during a conversation and
+    formats them as a readable turn-by-turn text file on finalisation.
+
+    Nothing is written to the database per-utterance.  The in-memory
+    list is flushed to the DB in bulk when the session ends (Phase 3.4).
+
+    Each utterance dict stored by ``add_entry`` contains:
+        turn_index              int      — 0-based turn counter
+        speaker_role            str      — "a" (creator) or "b" (joiner)
+        spoken_at               datetime — UTC wall-clock time of the utterance
+        original_text           str      — ASR transcript
+        translated_text         str|None — MT output (None if MT skipped)
+        source_lang             str      — ISO/NLLB source language code
+        target_lang             str      — ISO/NLLB target language code
+        asr_confidence          float|None — Whisper segment avg_logprob (0-1 normalised)
+        nllb_confidence         float|None — NLLB beam score (0-1 normalised)
+        legal_verified          bool     — True if LegalVerifier approved the translation
+        legal_correction_applied bool    — True if verifier rewrote the translation
     """
 
     def __init__(
@@ -272,41 +299,74 @@ class TranscriptLogger:
         self.language_b = language_b
         self.name_a = name_a
         self.name_b = name_b
-        self._entries: list[dict] = []
+        self._utterances: list[dict] = []
         self._start_time = time.time()
+
+    # ------------------------------------------------------------------
+    #  Ingestion
+    # ------------------------------------------------------------------
 
     def add_entry(
         self,
-        role: str,
-        text: str,
-        language: str,
-        translation: str | None = None,
-        target_language: str | None = None,
-        duration: float | None = None,
+        *,
+        speaker_role: str,
+        original_text: str,
+        source_lang: str,
+        target_lang: str,
+        translated_text: str | None = None,
+        spoken_at: datetime | None = None,
+        asr_confidence: float | None = None,
+        nllb_confidence: float | None = None,
+        legal_verified: bool = False,
+        legal_correction_applied: bool = False,
     ) -> None:
         """
-        Record one transcript turn.
+        Record one utterance turn.
 
         Args:
-            role: "a" or "b".
-            text: original transcribed text.
-            language: source language code.
-            translation: translated text (if any).
-            target_language: target language code (if any).
-            duration: utterance duration in seconds.
+            speaker_role:              "a" (room creator) or "b" (joiner).
+            original_text:             Raw ASR transcript.
+            source_lang:               Language code of the speaker.
+            target_lang:               Language code of the partner.
+            translated_text:           MT output; None if translation was skipped.
+            spoken_at:                 UTC timestamp; defaults to now if omitted.
+            asr_confidence:            Whisper avg_logprob normalised to [0, 1].
+            nllb_confidence:           NLLB beam score normalised to [0, 1].
+            legal_verified:            True when LegalVerifier accepted the translation.
+            legal_correction_applied:  True when LegalVerifier rewrote the translation.
         """
-        self._entries.append(
+        self._utterances.append(
             {
-                "timestamp_offset": time.time() - self._start_time,
-                "role": role,
-                "name": self.name_a if role == "a" else self.name_b,
-                "text": text,
-                "language": language.upper(),
-                "translation": translation,
-                "target_language": target_language.upper() if target_language else None,
-                "duration": duration,
+                "turn_index": len(self._utterances),
+                "speaker_role": speaker_role,
+                "spoken_at": spoken_at or datetime.now(tz=UTC),
+                "original_text": original_text,
+                "translated_text": translated_text,
+                "source_lang": source_lang,
+                "target_lang": target_lang,
+                "asr_confidence": asr_confidence,
+                "nllb_confidence": nllb_confidence,
+                "legal_verified": legal_verified,
+                "legal_correction_applied": legal_correction_applied,
             }
         )
+
+    # ------------------------------------------------------------------
+    #  Accessors
+    # ------------------------------------------------------------------
+
+    @property
+    def utterances(self) -> list[dict]:
+        """Return the accumulated utterance list (read-only view)."""
+        return self._utterances
+
+    @property
+    def entry_count(self) -> int:
+        return len(self._utterances)
+
+    # ------------------------------------------------------------------
+    #  Formatting & finalisation
+    # ------------------------------------------------------------------
 
     def format_text(self) -> str:
         """Render the transcript as human-readable turn-by-turn text."""
@@ -321,30 +381,97 @@ class TranscriptLogger:
             f"Participants : A ({self.name_a}, {self.language_a.upper()}), "
             f"B ({self.name_b}, {self.language_b.upper()})",
             f"Duration: {mins}m {secs:02d}s",
-            f"Entries : {len(self._entries)}",
+            f"Entries : {len(self._utterances)}",
             "=" * 60,
             "",
         ]
 
-        for entry in self._entries:
-            offset = entry["timestamp_offset"]
-            mm = int(offset // 60)
-            ss = int(offset % 60)
+        for utt in self._utterances:
+            spoken_at: datetime = utt["spoken_at"]
+            offset = (spoken_at.replace(tzinfo=None) - datetime.utcfromtimestamp(self._start_time + 0)).total_seconds()
+            # Fall back to simple turn numbering if offset calculation is odd
+            mm = max(0, int(offset // 60))
+            ss = max(0, int(offset % 60))
             timestamp = f"[{mm:02d}:{ss:02d}]"
 
-            role_label = f"USER {entry['role'].upper()}"
-            name = entry["name"]
-            lang = entry["language"]
+            role = utt["speaker_role"]
+            name = self.name_a if role == "a" else self.name_b
+            lang = utt["source_lang"].upper()
 
-            line = f'{timestamp} {role_label} ({name}, {lang}): "{entry["text"]}"'
+            line = f'{timestamp} USER {role.upper()} ({name}, {lang}): "{utt["original_text"]}"'
 
-            if entry["translation"] and entry["target_language"]:
-                line += f'\n{"":>8}→ ({entry["target_language"]}): "{entry["translation"]}"'
+            if utt["translated_text"] and utt["target_lang"]:
+                tgt = utt["target_lang"].upper()
+                line += f'\n{"":>8}→ ({tgt}): "{utt["translated_text"]}"'
+
+            flags: list[str] = []
+            if utt["asr_confidence"] is not None:
+                flags.append(f"ASR={utt['asr_confidence']:.2f}")
+            if utt["nllb_confidence"] is not None:
+                flags.append(f"MT={utt['nllb_confidence']:.2f}")
+            if utt["legal_verified"]:
+                flags.append("verified")
+            if utt["legal_correction_applied"]:
+                flags.append("corrected")
+            if flags:
+                line += f"\n{'':>8}[{', '.join(flags)}]"
 
             lines.append(line)
             lines.append("")
 
         return "\n".join(lines)
+
+    def serialize(
+        self,
+        *,
+        session_id: str,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+    ) -> dict:
+        """
+        Build the full JSON payload for the GCS transcript upload.
+
+        All ``datetime`` values in utterances are converted to ISO-8601 strings
+        so the returned dict is directly JSON-serialisable with the standard
+        library ``json`` module (no custom encoder needed).
+
+        Args:
+            session_id:  DB UUID for the session (used as the GCS path prefix).
+            start_time:  Session start wall-clock time (UTC).
+            end_time:    Session end wall-clock time (UTC); defaults to now.
+
+        Returns:
+            Dict with top-level session metadata and a ``utterances`` array.
+        """
+        _end = end_time or datetime.now(tz=UTC)
+        duration_s: float | None = None
+        if start_time is not None:
+            duration_s = round((_end - start_time).total_seconds(), 2)
+
+        serialised_utterances = [
+            {
+                **utt,
+                "spoken_at": utt["spoken_at"].isoformat()
+                if isinstance(utt.get("spoken_at"), datetime)
+                else utt.get("spoken_at"),
+            }
+            for utt in self._utterances
+        ]
+
+        return {
+            "session_id": session_id,
+            "session_name": self.session_name,
+            "language_a": self.language_a,
+            "language_b": self.language_b,
+            "name_a": self.name_a,
+            "name_b": self.name_b,
+            "start_time": start_time.isoformat() if start_time else None,
+            "end_time": _end.isoformat(),
+            "duration_seconds": duration_s,
+            "total_utterances": len(self._utterances),
+            "generated_at": datetime.now(tz=UTC).isoformat(),
+            "utterances": serialised_utterances,
+        }
 
     def finalize(self, output_dir: Path | None = None) -> Path:
         """Write transcript to a text file and return the path."""
@@ -357,12 +484,8 @@ class TranscriptLogger:
         content = self.format_text()
         txt_path.write_text(content, encoding="utf-8")
 
-        logger.info("Wrote %s (%d entries, %d bytes)", txt_path.name, len(self._entries), len(content))
+        logger.info("Wrote %s (%d entries, %d bytes)", txt_path.name, len(self._utterances), len(content))
         return txt_path
-
-    @property
-    def entry_count(self) -> int:
-        return len(self._entries)
 
 
 # ------------------------------------------------------------------ #
@@ -439,3 +562,56 @@ def write_manifest(
 
     logger.info("Wrote %s (%d files hashed)", manifest_path.name, len(files_info))
     return manifest_path
+
+
+# ------------------------------------------------------------------ #
+#  GCS upload                                                          #
+# ------------------------------------------------------------------ #
+
+
+def upload_wav_tracks(
+    session_name: str,
+    wav_paths: dict[str, Path],
+) -> dict[str, str]:
+    """
+    Upload WAV audio tracks to GCS if ``AUDIO_STORAGE_ENABLED=true``.
+
+    Controlled by env vars (``os.getenv``, never Pydantic — this module lives
+    in ``courtaccess/``):
+
+    ``GCS_BUCKET_TRANSCRIPTS``
+        Bucket to upload into.  Skipped if unset.
+    ``AUDIO_STORAGE_ENABLED``
+        Must be ``"true"`` for uploads to proceed.  Defaults to ``"false"``
+        (audio storage is **off** for MVP).
+
+    Upload path: ``sessions/{session_name}/{wav_filename}``
+
+    Args:
+        session_name: Session identifier used as the GCS path prefix.
+        wav_paths:    ``{lang: local_wav_path}`` from ``SessionRecorder.finalize()``.
+
+    Returns:
+        Mapping of ``audio_{lang}`` → ``gs://`` URI for each uploaded track.
+        Empty dict when audio storage is disabled or bucket is not configured.
+    """
+    from courtaccess.core import gcs
+
+    bucket = os.getenv("GCS_BUCKET_TRANSCRIPTS", "").strip()
+    audio_enabled = os.getenv("AUDIO_STORAGE_ENABLED", "false").lower() == "true"
+
+    if not bucket or not audio_enabled:
+        logger.debug("WAV upload skipped for %s (AUDIO_STORAGE_ENABLED=%s)", session_name, audio_enabled)
+        return {}
+
+    uploaded: dict[str, str] = {}
+    for lang, wav_path in wav_paths.items():
+        blob_name = f"sessions/{session_name}/{wav_path.name}"
+        try:
+            gcs.upload_bytes(bucket, blob_name, wav_path.read_bytes(), "audio/wav")
+            uri = gcs.gcs_uri(bucket, blob_name)
+            uploaded[f"audio_{lang}"] = uri
+            logger.info("Uploaded audio track → %s", uri)
+        except Exception as exc:
+            logger.warning("Failed to upload audio %s: %s", wav_path.name, exc)
+    return uploaded

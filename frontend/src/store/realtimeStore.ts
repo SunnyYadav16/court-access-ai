@@ -16,6 +16,8 @@
  */
 
 import { create } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
+import type { RoomCreateResponse } from "@/services/api";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -65,9 +67,14 @@ interface RealtimeState {
   myName: string;
   myLanguage: string;
   isCreator: boolean;
+  isGuest: boolean;
+
+  // Guest auth
+  roomToken: string | null;
 
   // Partner
   partner: PartnerInfo | null;
+  partnerName: string;
   partnerMuted: boolean;
 
   // Mic / audio state
@@ -75,6 +82,11 @@ interface RealtimeState {
   micLocked: boolean;
   isRecording: boolean;
   isSpeaking: boolean;
+
+  // Lobby (after room creation, before WS connect)
+  sessionId: string | null;
+  joinUrl: string;
+  roomCodeExpiresAt: string | null;
 
   // Session meta
   duration: number;
@@ -101,6 +113,7 @@ interface RealtimeActions {
   setMyName: (name: string) => void;
   setMyLanguage: (lang: string) => void;
   setIsCreator: (val: boolean) => void;
+  setLobbyInfo: (sessionId: string, roomCode: string, joinUrl: string, roomCodeExpiresAt: string, partnerName: string, partnerLanguage: string) => void;
   setPartner: (info: PartnerInfo | null) => void;
   setPartnerMuted: (val: boolean) => void;
   toggleMute: () => void;
@@ -113,6 +126,10 @@ interface RealtimeActions {
   setIsPlayingTts: (val: boolean) => void;
   setError: (msg: string | null) => void;
   setCourtInfo: (division: string, courtroom: string, docket: string) => void;
+  setRoomCreated: (response: RoomCreateResponse) => void;
+  setPartnerJoined: () => void;
+  setRoomToken: (token: string) => void;
+  endSession: () => void;
   reset: () => void;
 }
 
@@ -126,12 +143,18 @@ const defaultState: RealtimeState = {
   myName: "",
   myLanguage: "en",
   isCreator: false,
+  isGuest: false,
+  roomToken: null,
   partner: null,
+  partnerName: "",
   partnerMuted: false,
   isMuted: false,
   micLocked: false,
   isRecording: false,
   isSpeaking: false,
+  sessionId: null,
+  joinUrl: "",
+  roomCodeExpiresAt: null,
   duration: 0,
   messages: [],
   livePartial: null,
@@ -144,8 +167,10 @@ const defaultState: RealtimeState = {
 
 // ── Store ─────────────────────────────────────────────────────────────────────
 
-const useRealtimeStore = create<RealtimeStore>((set, _get) => ({
-  ...defaultState,
+const useRealtimeStore = create<RealtimeStore>()(
+  persist(
+    (set, _get) => ({
+      ...defaultState,
 
   // ── Session lifecycle ──────────────────────────────────────────────────────
 
@@ -160,6 +185,17 @@ const useRealtimeStore = create<RealtimeStore>((set, _get) => ({
   setMyLanguage: (lang) => set({ myLanguage: lang }),
 
   setIsCreator: (val) => set({ isCreator: val }),
+
+  setLobbyInfo: (sessionId, roomCode, joinUrl, roomCodeExpiresAt, partnerName, partnerLanguage) =>
+    set({
+      sessionId,
+      roomCode,
+      joinUrl,
+      roomCodeExpiresAt,
+      phase: "lobby",
+      isCreator: true,
+      partner: { name: partnerName, language: partnerLanguage },
+    }),
 
   // ── Partner ────────────────────────────────────────────────────────────────
 
@@ -207,9 +243,48 @@ const useRealtimeStore = create<RealtimeStore>((set, _get) => ({
   setCourtInfo: (division, courtroom, docket) =>
     set({ courtDivision: division, courtroom, caseDocket: docket }),
 
+  // ── New room lifecycle ─────────────────────────────────────────────────────
+
+  setRoomCreated: (response) =>
+    set({
+      sessionId: response.session_id,
+      roomCode: response.room_code,
+      joinUrl: response.join_url,
+      roomCodeExpiresAt: response.room_code_expires_at,
+      phase: "lobby",
+      isCreator: true,
+    }),
+
+  setPartnerJoined: () => set({ phase: "active" }),
+
+  setRoomToken: (token) => set({ roomToken: token }),
+
+  endSession: () => set({ phase: "ended" }),
+
   // ── Reset ──────────────────────────────────────────────────────────────────
 
   reset: () => set({ ...defaultState }),
-}));
+    }),
+    {
+      name: "realtime-storage",
+      storage: createJSONStorage(() => sessionStorage),
+      partialize: (state) => ({
+        phase: state.phase,
+        sessionId: state.sessionId,
+        roomCode: state.roomCode,
+        joinUrl: state.joinUrl,
+        roomCodeExpiresAt: state.roomCodeExpiresAt,
+        myName: state.myName,
+        myLanguage: state.myLanguage,
+        isCreator: state.isCreator,
+        partner: state.partner,
+        courtDivision: state.courtDivision,
+        courtroom: state.courtroom,
+        caseDocket: state.caseDocket,
+        messages: state.messages,
+      }),
+    }
+  )
+);
 
 export default useRealtimeStore;

@@ -5,6 +5,9 @@ import useRealtimeStore, { type ChatMessage } from "@/store/realtimeStore"
 import { useRealtimeWebSocket, _wsRef } from "@/hooks/useRealtimeWebSocket"
 import { useAudioCapture } from "@/hooks/useAudioCapture"
 import { useTtsPlayback } from "@/hooks/useTtsPlayback"
+import { realtimeApi } from "@/services/api"
+
+const TOAST_SESSION_ENDED = "Session ended. Transcript saved."
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -255,6 +258,7 @@ export default function RealtimeSession({ onNav }: Props) {
   const courtDivision = useRealtimeStore((s) => s.courtDivision)
   const courtroom = useRealtimeStore((s) => s.courtroom)
   const caseDocket = useRealtimeStore((s) => s.caseDocket)
+  const sessionId  = useRealtimeStore((s) => s.sessionId)
   const toggleMute = useRealtimeStore((s) => s.toggleMute)
   const resetStore = useRealtimeStore((s) => s.reset)
 
@@ -349,8 +353,22 @@ export default function RealtimeSession({ onNav }: Props) {
     sendMarker("SESSION_START")
   }
 
-  function handleEndSession() {
+  async function handleEndSession() {
+    // Send WS marker so the backend finalises the audio/transcript pipeline
     sendMarker("SESSION_END")
+
+    // Call the REST endpoint (idempotent — safe to call even if WS marker fires first)
+    if (sessionId) {
+      realtimeApi.endRoom(sessionId).catch((err) => {
+        console.warn("[RealtimeSession] endRoom REST call failed (non-blocking):", err)
+      })
+    }
+
+    // Disconnect WS, reset store, queue toast for HomeCourtOfficial
+    disconnect()
+    resetStore()
+    sessionStorage.setItem("pending_toast", TOAST_SESSION_ENDED)
+    onNav(SCREENS.HOME_OFFICIAL)
   }
 
   function handleLeave() {
@@ -406,7 +424,7 @@ export default function RealtimeSession({ onNav }: Props) {
             <button
               onClick={() => {
                 if (isCreator && phase !== "ended") {
-                  handleEndSession();
+                  void handleEndSession();
                 } else {
                   handleLeave();
                 }

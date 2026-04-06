@@ -39,9 +39,11 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from api.routes import admin as admin_router
 from api.routes import auth as auth_router
 from api.routes import documents as documents_router
 from api.routes import forms as forms_router
+from api.routes import interpreter as interpreter_router
 from api.routes import realtime as realtime_router
 from api.schemas.schemas import ErrorDetail, HealthResponse
 from courtaccess.core.config import get_settings
@@ -151,6 +153,8 @@ def create_app() -> FastAPI:
     app.include_router(documents_router.router, prefix="/api")
     app.include_router(forms_router.router, prefix="/api")
     app.include_router(realtime_router.router, prefix="/api")
+    app.include_router(admin_router.router, prefix="/api")
+    app.include_router(interpreter_router.router, prefix="/api")
 
     # ── Static frontend assets (/assets/*, /favicon.ico, etc.) ─────────────
     # Only mounted when the production build exists (not in local `uvicorn --reload` dev)

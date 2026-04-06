@@ -1,5 +1,6 @@
 import io
 import secrets
+import uuid
 import wave
 from datetime import datetime
 from pathlib import Path
@@ -324,6 +325,7 @@ class ConversationRoom:
         self.language_b = language_b  # joiner's language
         self.participants: list[Participant] = []
         self.created_at = datetime.now()
+        self.owner_uid: str | None = None  # Firebase UID of the room creator (set by WS endpoint)
         from courtaccess.speech.session_recorder import SessionRecorder, TranscriptLogger
         from courtaccess.speech.turn_taking import TurnStateMachine
 
@@ -334,6 +336,11 @@ class ConversationRoom:
         self.session_start_time: datetime | None = None
         self.session_name: str | None = None
         self.session_active = False  # U.4: controlled by creator's session_start
+
+        # DB identifiers — set when the room is backed by a DB row (REST create_room flow).
+        # None for in-memory-only rooms created directly via the WebSocket.
+        self.db_session_id: uuid.UUID | None = None
+        self.db_rt_request_id: uuid.UUID | None = None
 
     @property
     def is_full(self) -> bool:

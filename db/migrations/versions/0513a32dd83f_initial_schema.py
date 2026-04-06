@@ -1,8 +1,8 @@
 """initial_schema
 
-Revision ID: a714a2e44840
+Revision ID: 0513a32dd83f
 Revises:
-Create Date: 2026-03-27 04:01:55.873965
+Create Date: 2026-04-06 05:49:29.194772
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = "a714a2e44840"
+revision: str = "0513a32dd83f"
 down_revision: str | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -42,6 +42,12 @@ def upgrade() -> None:
         sa.Column("preprocessing_flags", postgresql.JSONB(astext_type=sa.Text()), server_default="[]", nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("last_scraped_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "last_updated_at",
+            sa.DateTime(timezone=True),
+            nullable=True,
+            comment="Timestamp of last content change (hash change or new form). Not updated on rename or translation.",
+        ),
         sa.CheckConstraint("status IN ('active', 'archived')", name="form_catalog_status_check"),
         sa.PrimaryKeyConstraint("form_id"),
         sa.UniqueConstraint("form_slug"),
@@ -159,23 +165,17 @@ def upgrade() -> None:
         "sessions",
         sa.Column("session_id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
         sa.Column("user_id", sa.UUID(), nullable=False),
-        sa.Column("type", sa.String(length=20), nullable=False, comment="Session type: realtime or document"),
+        sa.Column("type", sa.String(length=20), nullable=False, comment="realtime or document"),
         sa.Column(
-            "target_language", sa.String(length=20), nullable=False, comment="Target language: spa_Latn or por_Latn"
-        ),
-        sa.Column("input_file_gcs_path", sa.Text(), nullable=True),
-        sa.Column(
-            "status",
+            "target_language",
             sa.String(length=20),
-            server_default="active",
             nullable=False,
-            comment="Status: active, processing, completed, failed",
+            comment="spa_Latn or por_Latn. One session = one language always.",
         ),
+        sa.Column("status", sa.String(length=20), server_default="active", nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
-        sa.CheckConstraint(
-            "status IN ('active', 'processing', 'completed', 'failed', 'ended')", name="sessions_status_check"
-        ),
+        sa.CheckConstraint("status IN ('active', 'processing', 'completed', 'failed')", name="sessions_status_check"),
         sa.CheckConstraint("target_language IN ('spa_Latn', 'por_Latn')", name="sessions_target_language_check"),
         sa.CheckConstraint("type IN ('realtime', 'document')", name="sessions_type_check"),
         sa.ForeignKeyConstraint(
@@ -187,6 +187,54 @@ def upgrade() -> None:
     op.create_index("idx_sessions_status", "sessions", ["status"], unique=False)
     op.create_index("idx_sessions_user_id", "sessions", ["user_id"], unique=False)
     op.create_table(
+        "document_translation_requests",
+        sa.Column("doc_request_id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
+        sa.Column("session_id", sa.UUID(), nullable=False),
+        sa.Column(
+            "input_file_gcs_path",
+            sa.Text(),
+            nullable=False,
+            comment="GCS path of the uploaded original. Reused for second-language requests.",
+        ),
+        sa.Column(
+            "content_hash",
+            sa.String(length=64),
+            nullable=True,
+            comment="SHA-256 of uploaded file bytes. Nullable for legacy rows; required for all new inserts.",
+        ),
+        sa.Column(
+            "target_language",
+            sa.String(length=20),
+            nullable=False,
+            comment="Denormalized from session for query convenience",
+        ),
+        sa.Column("classification_result", sa.String(length=20), nullable=True, comment="LEGAL or NOT_LEGAL"),
+        sa.Column("avg_confidence_score", sa.Float(), nullable=True),
+        sa.Column("pii_findings_count", sa.Integer(), server_default="0", nullable=False),
+        sa.Column("llama_corrections_count", sa.Integer(), server_default="0", nullable=False),
+        sa.Column("processing_time_seconds", sa.Float(), nullable=True),
+        sa.Column("output_file_gcs_path", sa.Text(), nullable=True),
+        sa.Column("signed_url", sa.Text(), nullable=True),
+        sa.Column("signed_url_expires_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("status", sa.String(length=20), server_default="processing", nullable=False),
+        sa.Column("error_message", sa.Text(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.CheckConstraint(
+            "classification_result IS NULL OR classification_result IN ('LEGAL', 'NOT_LEGAL')",
+            name="doc_requests_classification_check",
+        ),
+        sa.CheckConstraint(
+            "status IN ('processing', 'completed', 'failed', 'rejected')", name="doc_requests_status_check"
+        ),
+        sa.CheckConstraint("target_language IN ('spa_Latn', 'por_Latn')", name="doc_requests_target_language_check"),
+        sa.ForeignKeyConstraint(["session_id"], ["sessions.session_id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("doc_request_id"),
+        sa.UniqueConstraint("session_id"),
+    )
+    op.create_index("idx_doc_requests_content_hash", "document_translation_requests", ["content_hash"], unique=False)
+    op.create_index("idx_doc_requests_session_id", "document_translation_requests", ["session_id"], unique=False)
+    op.create_table(
         "pipeline_steps",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("session_id", sa.UUID(), nullable=False),
@@ -196,79 +244,103 @@ def upgrade() -> None:
         sa.Column("metadata", postgresql.JSONB(astext_type=sa.Text()), server_default="{}", nullable=True),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.CheckConstraint("status IN ('running', 'success', 'failed', 'skipped')", name="pipeline_steps_status_check"),
-        sa.ForeignKeyConstraint(
-            ["session_id"],
-            ["sessions.session_id"],
-        ),
+        sa.ForeignKeyConstraint(["session_id"], ["sessions.session_id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("session_id", "step_name", name="pipeline_steps_session_step_key"),
     )
     op.create_index("idx_pipeline_steps_session_id", "pipeline_steps", ["session_id"], unique=False)
     op.create_table(
-        "translation_requests",
-        sa.Column("request_id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
+        "realtime_translation_requests",
+        sa.Column("rt_request_id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
         sa.Column("session_id", sa.UUID(), nullable=False),
         sa.Column(
-            "target_language", sa.String(length=20), nullable=False, comment="Target language: spa_Latn or por_Latn"
-        ),
-        sa.Column(
-            "classification_result", sa.String(length=20), nullable=True, comment="Classification: LEGAL or NOT_LEGAL"
-        ),
-        sa.Column("output_file_gcs_path", sa.Text(), nullable=True),
-        sa.Column("avg_confidence_score", sa.Float(), nullable=True),
-        sa.Column("pii_findings_count", sa.Integer(), server_default="0", nullable=False),
-        sa.Column("llama_corrections_count", sa.Integer(), server_default="0", nullable=False),
-        sa.Column("processing_time_seconds", sa.Float(), nullable=True),
-        sa.Column(
-            "status",
-            sa.String(length=20),
-            server_default="processing",
+            "room_code",
+            sa.String(length=8),
             nullable=False,
-            comment="Status: processing, completed, failed, rejected",
+            comment="Short alphanumeric join code e.g. A3K7P2. Valid until room_code_expires_at or phase→active.",
         ),
-        sa.Column("signed_url", sa.Text(), nullable=True),
-        sa.Column("signed_url_expires_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
-            "error_message",
+            "room_code_expires_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            comment="30 minutes from creation. Code rejected after this even if phase is still 'waiting'.",
+        ),
+        sa.Column("court_division", sa.String(length=100), nullable=True),
+        sa.Column("courtroom", sa.String(length=50), nullable=True),
+        sa.Column("case_docket", sa.String(length=50), nullable=True),
+        sa.Column(
+            "consent_acknowledged",
+            sa.Boolean(),
+            server_default="false",
+            nullable=False,
+            comment="Court official confirmed both parties consent before starting.",
+        ),
+        sa.Column("creator_user_id", sa.UUID(), nullable=False, comment="court_official who created the room."),
+        sa.Column(
+            "partner_user_id",
+            sa.UUID(),
+            nullable=True,
+            comment="LEP individual's user_id if they signed in. NULL if they joined as a guest.",
+        ),
+        sa.Column(
+            "partner_name",
+            sa.String(length=100),
+            nullable=True,
+            comment="LEP individual's name typed by court official at setup. Used as display name for guests.",
+        ),
+        sa.Column(
+            "partner_joined_at",
+            sa.DateTime(timezone=True),
+            nullable=True,
+            comment="Timestamp when the LEP individual joined. NULL until joined.",
+        ),
+        sa.Column("phase", sa.String(length=20), server_default="waiting", nullable=False),
+        sa.Column(
+            "transcript_gcs_path",
             sa.Text(),
             nullable=True,
-            comment="Pipeline failure message shown in the frontend error state",
+            comment="gs://courtaccess-ai-transcripts/{session_id}/transcript.json. Set on session end.",
         ),
-        sa.CheckConstraint(
-            "classification_result IN ('LEGAL', 'NOT_LEGAL')", name="translation_requests_classification_check"
-        ),
-        sa.CheckConstraint(
-            "status IN ('processing', 'completed', 'failed', 'rejected')", name="translation_requests_status_check"
-        ),
-        sa.CheckConstraint(
-            "target_language IN ('spa_Latn', 'por_Latn')", name="translation_requests_target_language_check"
+        sa.Column("transcript_signed_url", sa.Text(), nullable=True),
+        sa.Column("transcript_signed_url_expires_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("total_utterances", sa.Integer(), server_default="0", nullable=False),
+        sa.Column("duration_seconds", sa.Float(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.CheckConstraint("phase IN ('waiting', 'active', 'ended')", name="rt_requests_phase_check"),
+        sa.ForeignKeyConstraint(
+            ["creator_user_id"],
+            ["users.user_id"],
         ),
         sa.ForeignKeyConstraint(
-            ["session_id"],
-            ["sessions.session_id"],
+            ["partner_user_id"],
+            ["users.user_id"],
         ),
-        sa.PrimaryKeyConstraint("request_id"),
+        sa.ForeignKeyConstraint(["session_id"], ["sessions.session_id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("rt_request_id"),
+        sa.UniqueConstraint("room_code"),
+        sa.UniqueConstraint("session_id"),
     )
-    op.create_index("idx_translation_requests_session_id", "translation_requests", ["session_id"], unique=False)
+    op.create_index("idx_rt_requests_phase", "realtime_translation_requests", ["phase"], unique=False)
+    op.create_index("idx_rt_requests_room_code", "realtime_translation_requests", ["room_code"], unique=False)
+    op.create_index("idx_rt_requests_session_id", "realtime_translation_requests", ["session_id"], unique=False)
     op.create_table(
         "audit_logs",
         sa.Column("audit_id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
         sa.Column("user_id", sa.UUID(), nullable=False),
         sa.Column("session_id", sa.UUID(), nullable=True),
-        sa.Column("request_id", sa.UUID(), nullable=True),
+        sa.Column("doc_request_id", sa.UUID(), nullable=True),
+        sa.Column("rt_request_id", sa.UUID(), nullable=True),
         sa.Column("action_type", sa.String(length=100), nullable=False),
         sa.Column("details", postgresql.JSONB(astext_type=sa.Text()), server_default="{}", nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.ForeignKeyConstraint(
-            ["request_id"],
-            ["translation_requests.request_id"],
+            ["doc_request_id"], ["document_translation_requests.doc_request_id"], ondelete="SET NULL"
         ),
         sa.ForeignKeyConstraint(
-            ["session_id"],
-            ["sessions.session_id"],
+            ["rt_request_id"], ["realtime_translation_requests.rt_request_id"], ondelete="SET NULL"
         ),
+        sa.ForeignKeyConstraint(["session_id"], ["sessions.session_id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(
             ["user_id"],
             ["users.user_id"],
@@ -278,25 +350,6 @@ def upgrade() -> None:
     op.create_index("idx_audit_logs_created_at", "audit_logs", ["created_at"], unique=False)
     op.create_index("idx_audit_logs_session_id", "audit_logs", ["session_id"], unique=False)
     op.create_index("idx_audit_logs_user_id", "audit_logs", ["user_id"], unique=False)
-    op.execute("""
-    INSERT INTO roles (role_id, role_name, description) VALUES
-    (1, 'public',         'Default role, basic document translation and form access'),
-    (2, 'court_official', 'Real-time speech translation access'),
-    (3, 'interpreter',    'Side-by-side translation review and correction'),
-    (4, 'admin',          'Full system access, user management, monitoring')
-    ON CONFLICT (role_name) DO NOTHING
-    """)
-
-    # Advance the sequence past the highest explicitly-seeded role_id so that
-    # future INSERT statements (without an explicit role_id) never collide.
-    # is_called=true means the next nextval() call returns MAX(role_id)+1.
-    op.execute("SELECT setval('roles_role_id_seq', (SELECT MAX(role_id) FROM roles), true)")
-
-    op.execute("""
-       INSERT INTO users (user_id, email, name, role_id, firebase_uid, auth_provider, email_verified, mfa_enabled)
-       VALUES ('00000000-0000-0000-0000-000000000001', 'airflow-system@courtaccess.internal', 'Airflow System', 4, NULL, 'system', true, false)
-       ON CONFLICT (email) DO NOTHING
-   """)
     # ### end Alembic commands ###
 
 
@@ -306,10 +359,15 @@ def downgrade() -> None:
     op.drop_index("idx_audit_logs_session_id", table_name="audit_logs")
     op.drop_index("idx_audit_logs_created_at", table_name="audit_logs")
     op.drop_table("audit_logs")
-    op.drop_index("idx_translation_requests_session_id", table_name="translation_requests")
-    op.drop_table("translation_requests")
+    op.drop_index("idx_rt_requests_session_id", table_name="realtime_translation_requests")
+    op.drop_index("idx_rt_requests_room_code", table_name="realtime_translation_requests")
+    op.drop_index("idx_rt_requests_phase", table_name="realtime_translation_requests")
+    op.drop_table("realtime_translation_requests")
     op.drop_index("idx_pipeline_steps_session_id", table_name="pipeline_steps")
     op.drop_table("pipeline_steps")
+    op.drop_index("idx_doc_requests_session_id", table_name="document_translation_requests")
+    op.drop_index("idx_doc_requests_content_hash", table_name="document_translation_requests")
+    op.drop_table("document_translation_requests")
     op.drop_index("idx_sessions_user_id", table_name="sessions")
     op.drop_index("idx_sessions_status", table_name="sessions")
     op.drop_table("sessions")

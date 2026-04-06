@@ -76,6 +76,19 @@ class SessionType(StrEnum):
     DOCUMENT = "document"
 
 
+class RoomPhase(StrEnum):
+    """
+    Lifecycle phase of a two-party real-time room.
+
+    Mirrors the CHECK constraint in db/models.py RealtimeTranslationRequest:
+        phase IN ('waiting', 'active', 'ended')
+    """
+
+    WAITING = "waiting"  # Room created, waiting for partner to join
+    ACTIVE = "active"  # Both parties connected, session in progress
+    ENDED = "ended"  # Session ended; transcript written to GCS
+
+
 class TargetLanguage(StrEnum):
     """Target languages for translation (NLLB Flores-200 BCP-47 codes).
 
@@ -190,15 +203,23 @@ class DocumentResponse(BaseModel):
     """
     Response returned immediately after a successful document upload.
     session_id is the polling key for all subsequent /documents/* requests.
+
+    signed_url and signed_url_expires_at are only populated when the upload
+    endpoint returns a dedup hit (status=translated). They are None for new
+    uploads (status=processing).
     """
 
     session_id: uuid.UUID  # polling key — use for GET /documents/{session_id}
     request_id: uuid.UUID  # the translation_request row for this language run
-    status: DocumentStatus  # always 'processing' on upload
+    status: DocumentStatus  # 'processing' for new uploads; 'translated' for dedup hits
     gcs_input_path: str  # gs://courtaccess-ai-uploads/{session_id}/{filename}
     target_language: str  # 'es' or 'pt'
     created_at: datetime
     estimated_completion_seconds: int = Field(default=300)
+
+    # Populated only for dedup hits — None for normal new uploads
+    signed_url: str | None = None
+    signed_url_expires_at: datetime | None = None
 
 
 class TranslationStatusResponse(BaseModel):
@@ -288,20 +309,133 @@ class SessionResponse(BaseModel):
 
 
 class RoomCreateRequest(BaseModel):
-    """Create a two-party real-time conversation room."""
+    """
+    Create a two-party real-time interpretation room.
 
-    name: str = Field(description="Creator's display name")
-    language_a: str = Field(description="Creator's spoken language code: en, es, or pt")
-    language_b: str = Field(description="Partner's spoken language code: en, es, or pt")
+    Submitted by a court_official or admin via POST /api/sessions/rooms.
+    The creator is always the English speaker; the partner is the LEP individual.
+    """
+
+    target_language: Language = Field(
+        description=(
+            "ISO 639-1 code for the LEP partner's spoken language. "
+            "The court official is assumed to speak English. "
+            "Allowed values: 'es' (Spanish), 'pt' (Portuguese)."
+        ),
+    )
+    court_division: str | None = Field(
+        default=None,
+        max_length=100,
+        description="Court division name, e.g. 'Boston Municipal Court'.",
+    )
+    courtroom: str | None = Field(
+        default=None,
+        max_length=50,
+        description="Courtroom identifier, e.g. 'Courtroom 3'.",
+    )
+    case_docket: str | None = Field(
+        default=None,
+        max_length=50,
+        description="Optional case docket number for session metadata and audit trail.",
+    )
+    partner_name: str = Field(
+        max_length=100,
+        description="LEP individual's display name, typed by the court official at setup.",
+    )
+    consent_acknowledged: bool = Field(
+        description=(
+            "Must be true. Court official confirms that both parties have been informed "
+            "that the session will be interpreted and recorded."
+        ),
+    )
 
 
 class RoomCreateResponse(BaseModel):
-    """Returned after a conversation room is created."""
+    """Returned after a conversation room is successfully created."""
 
-    room_id: str
-    language_a: str
-    language_b: str
-    websocket_url: str
+    session_id: uuid.UUID = Field(description="UUID of the newly created Session row.")
+    rt_request_id: uuid.UUID = Field(description="UUID of the RealtimeTranslationRequest row.")
+    room_code: str = Field(
+        description=(
+            "Short alphanumeric join code (up to 8 characters) to share with the LEP partner. "
+            "Valid until room_code_expires_at or until the session moves to 'active'."
+        ),
+    )
+    room_code_expires_at: datetime = Field(
+        description="UTC timestamp after which the room_code is no longer valid (30 minutes from creation).",
+    )
+    join_url: str = Field(
+        description="Full URL the court official can share with the LEP partner to join the session.",
+    )
+
+
+class RoomJoinRequest(BaseModel):
+    """
+    Join an existing room using its room code.
+
+    Submitted by the LEP partner (guest) via POST /api/sessions/rooms/join.
+    No authentication required — the room_code is the credential.
+    """
+
+    room_code: str = Field(
+        max_length=8,
+        pattern=r"^[A-Z0-9]{4,8}$",
+        description="Alphanumeric room code shared by the court official.",
+    )
+    partner_name: str | None = Field(
+        default=None,
+        max_length=100,
+        description=(
+            "Optional display name override. If omitted, the name the court official entered at room creation is used."
+        ),
+    )
+
+
+class RoomJoinResponse(BaseModel):
+    """Returned after a guest successfully joins a room."""
+
+    session_id: uuid.UUID = Field(description="UUID of the Session to connect to via WebSocket.")
+    rt_request_id: uuid.UUID = Field(description="UUID of the RealtimeTranslationRequest row.")
+    room_token: str = Field(
+        description=(
+            "Short-lived JWT (4-hour expiry) signed by the app. "
+            "Pass as ?token=<room_token> when opening the WebSocket connection."
+        ),
+    )
+    partner_name: str = Field(description="Display name that will appear in the transcript UI.")
+    target_language: Language = Field(
+        description="ISO 639-1 code of the LEP partner's spoken language (the language being interpreted).",
+    )
+    court_division: str | None = Field(default=None, description="Court division, for display in the session UI.")
+    courtroom: str | None = Field(default=None, description="Courtroom identifier, for display in the session UI.")
+
+
+class RoomStatusResponse(BaseModel):
+    """Current status of a real-time room — returned by GET /api/sessions/rooms/{session_id}."""
+
+    phase: RoomPhase = Field(description="Current lifecycle phase: 'waiting', 'active', or 'ended'.")
+    room_code: str = Field(description="The alphanumeric join code (empty string once phase is 'active' or 'ended').")
+    room_code_expires_at: datetime = Field(description="UTC expiry of the room_code.")
+    partner_joined_at: datetime | None = Field(
+        default=None,
+        description="UTC timestamp when the LEP partner joined. None until they connect.",
+    )
+
+
+class RoomPreviewResponse(BaseModel):
+    """
+    Public room info for the guest join page — no auth required.
+
+    Returned by GET /sessions/rooms/{code}/preview.
+    Does NOT expose session_id, creator identity, or audit data.
+    """
+
+    phase: RoomPhase = Field(description="Current phase: 'waiting', 'active', or 'ended'.")
+    target_language: Language = Field(description="LEP partner's spoken language (ISO 639-1).")
+    court_division: str | None = Field(default=None, description="Court division name.")
+    courtroom: str | None = Field(default=None, description="Courtroom identifier.")
+    partner_name: str = Field(description="Display name pre-filled for the LEP individual.")
+    room_code_expires_at: datetime = Field(description="UTC expiry of the room code.")
 
 
 class RoomListResponse(BaseModel):

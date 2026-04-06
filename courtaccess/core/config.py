@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     gcs_bucket_translated: str
     gcs_bucket_forms: str
     gcs_bucket_models: str
+    gcs_bucket_transcripts: str
 
     # ── Auth (GCIP / Firebase) ────────────────────────────────────────────────
     gcip_api_key: str
@@ -107,6 +108,9 @@ class Settings(BaseSettings):
     # ── Auth token ────────────────────────────────────────────────────────────
     access_token_expire_minutes: int
     algorithm: str
+    room_jwt_secret: str
+    room_jwt_expiry_hours: int
+    room_code_expiry_minutes: int
 
     # ── Monitoring & Bias Thresholds ─────────────────────────────────────────
     bias_underserved_threshold: float

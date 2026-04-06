@@ -151,7 +151,7 @@ async def trigger_form_scraper(
     summary="List all court divisions",
     description="Returns a sorted list of all court division names that have forms in the catalog.",
 )
-async def list_divisions(db: DBSession) -> list[str]:
+async def list_divisions(_user: CurrentUser, db: DBSession) -> list[str]:
     return await db_queries_forms.list_divisions(db)
 
 
@@ -166,10 +166,11 @@ async def list_divisions(db: DBSession) -> list[str]:
     summary="Search and list court forms",
     description=(
         "Paginated, filterable list of pre-translated court forms. "
-        "No authentication required — all forms are publicly accessible."
+        "Requires authentication — all authenticated roles are permitted."
     ),
 )
 async def list_forms(
+    _user: CurrentUser,
     db: DBSession,
     q: str | None = Query(default=None, max_length=200, description="Keyword search over form names"),
     division: str | None = Query(default=None, description="Filter by court division"),
@@ -231,9 +232,9 @@ async def list_forms(
     "/{form_id}",
     response_model=FormResponse,
     summary="Get a single court form",
-    description="Return full metadata and signed download URLs for a single court form.",
+    description="Return full metadata and signed download URLs for a single court form. Requires authentication.",
 )
-async def get_form(form_id: uuid.UUID, db: DBSession) -> FormResponse:
+async def get_form(form_id: uuid.UUID, _user: CurrentUser, db: DBSession) -> FormResponse:
     """
     Look up a form by form_id.
 

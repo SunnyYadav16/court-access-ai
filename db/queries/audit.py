@@ -35,10 +35,11 @@ async def write_audit(
     db: AsyncSession,
     user_id: uuid.UUID,
     action_type: str,
-    details: dict[str, Any],
+    details: dict[str, Any] | None = None,
     *,
     session_id: uuid.UUID | None = None,
-    request_id: uuid.UUID | None = None,
+    doc_request_id: uuid.UUID | None = None,
+    rt_request_id: uuid.UUID | None = None,
 ) -> None:
     """
     Append an immutable audit log row to the current session.
@@ -66,9 +67,10 @@ async def write_audit(
         audit_id=uuid.uuid4(),
         user_id=user_id,
         session_id=session_id,
-        request_id=request_id,
+        doc_request_id=doc_request_id,
+        rt_request_id=rt_request_id,
         action_type=action_type,
-        details=details,
+        details=details or {},
     )
     db.add(log)
 

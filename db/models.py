@@ -243,82 +243,45 @@ class RoleRequest(Base):
 
 class Session(Base):
     """
-    A translation session (realtime or document-based).
-    Types:
-      realtime  — Real-time speech interpretation session
-      document  — Document translation session
-    Target languages:
-      spa_Latn  — Spanish (Latin script)
-      por_Latn  — Portuguese (Latin script)
+    Lean parent session. One row per translation event.
+    type='document'  → one DocumentTranslationRequest child
+    type='realtime'  → one RealtimeTranslationRequest child
+    One session = one target language. Second language = second session row.
     """
 
     __tablename__ = "sessions"
 
     session_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        server_default=func.gen_random_uuid(),
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
     )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("users.user_id"),
-        nullable=False,
-    )
-    type: Mapped[str] = mapped_column(
-        String(20),
-        nullable=False,
-        comment="Session type: realtime or document",
-    )
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=False)
+    type: Mapped[str] = mapped_column(String(20), nullable=False, comment="realtime or document")
     target_language: Mapped[str] = mapped_column(
-        String(20),
-        nullable=False,
-        comment="Target language: spa_Latn or por_Latn",
+        String(20), nullable=False, comment="spa_Latn or por_Latn. One session = one language always."
     )
-    input_file_gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
-    status: Mapped[str] = mapped_column(
-        String(20),
-        nullable=False,
-        server_default="active",
-        comment="Status: active, processing, completed, failed",
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        nullable=False,
-    )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     user: Mapped[User] = relationship("User", back_populates="sessions")
-    translation_requests: Mapped[list[TranslationRequest]] = relationship(
-        "TranslationRequest",
-        back_populates="session",
-        passive_deletes=True,
+    document_request: Mapped[DocumentTranslationRequest | None] = relationship(
+        "DocumentTranslationRequest", back_populates="session", uselist=False, passive_deletes=True
     )
-    audit_logs: Mapped[list[AuditLog]] = relationship(
-        "AuditLog",
-        back_populates="session",
-        passive_deletes=True,
+    realtime_request: Mapped[RealtimeTranslationRequest | None] = relationship(
+        "RealtimeTranslationRequest", back_populates="session", uselist=False, passive_deletes=True
     )
-
+    audit_logs: Mapped[list[AuditLog]] = relationship("AuditLog", back_populates="session", passive_deletes=True)
     pipeline_steps: Mapped[list[PipelineStep]] = relationship(
-        "PipelineStep",
-        back_populates="session",
-        passive_deletes=True,
+        "PipelineStep", back_populates="session", passive_deletes=True
     )
 
-    # Constraints and indexes
     __table_args__ = (
         CheckConstraint("type IN ('realtime', 'document')", name="sessions_type_check"),
+        CheckConstraint("target_language IN ('spa_Latn', 'por_Latn')", name="sessions_target_language_check"),
         CheckConstraint(
-            "target_language IN ('spa_Latn', 'por_Latn')",
-            name="sessions_target_language_check",
-        ),
-        CheckConstraint(
-            "status IN ('active', 'processing', 'completed', 'failed', 'ended')",
+            # 'ended' removed — use 'completed' for both session types
+            "status IN ('active', 'processing', 'completed', 'failed')",
             name="sessions_status_check",
         ),
         Index("idx_sessions_user_id", "user_id"),
@@ -334,148 +297,246 @@ class Session(Base):
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-class TranslationRequest(Base):
+class DocumentTranslationRequest(Base):
     """
-    Individual translation request within a session.
-    Tracks classification, PII detection, LLM corrections, and output.
+    Document pipeline data for sessions where type='document'.
+    One-to-one with Session.
+    Deduplication: before creating a new session+row, the API checks
+    content_hash + target_language + user_id for an existing completed row.
+    If found, the existing signed_url is returned — no re-processing.
+    input_file_gcs_path is reused from the matched row for a second-language
+    request on the same file.
     """
 
-    __tablename__ = "translation_requests"
+    __tablename__ = "document_translation_requests"
 
-    request_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        server_default=func.gen_random_uuid(),
+    doc_request_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
     )
     session_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("sessions.session_id", ondelete="CASCADE"),
         nullable=False,
+        unique=True,  # enforces 1-to-1
     )
-    target_language: Mapped[str] = mapped_column(
-        String(20),
-        nullable=False,
-        comment="Target language: spa_Latn or por_Latn",
+
+    # Source file — moved here from sessions
+    input_file_gcs_path: Mapped[str] = mapped_column(
+        Text, nullable=False, comment="GCS path of the uploaded original. Reused for second-language requests."
     )
-    classification_result: Mapped[str | None] = mapped_column(
-        String(20),
+    content_hash: Mapped[str | None] = mapped_column(
+        String(64),
         nullable=True,
-        comment="Classification: LEGAL or NOT_LEGAL",
+        comment="SHA-256 of uploaded file bytes. Nullable for legacy rows; required for all new inserts.",
     )
-    output_file_gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Processing
+    target_language: Mapped[str] = mapped_column(
+        String(20), nullable=False, comment="Denormalized from session for query convenience"
+    )
+    classification_result: Mapped[str | None] = mapped_column(String(20), nullable=True, comment="LEGAL or NOT_LEGAL")
     avg_confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     pii_findings_count: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
     llama_corrections_count: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
     processing_time_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
-    status: Mapped[str] = mapped_column(
-        String(20),
-        nullable=False,
-        server_default="processing",
-        comment="Status: processing, completed, failed, rejected",
-    )
-    signed_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    signed_url_expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        nullable=False,
-    )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-    )
 
-    error_message: Mapped[str | None] = mapped_column(
-        Text,
-        nullable=True,
-        comment="Pipeline failure message shown in the frontend error state",
-    )
+    # Output
+    output_file_gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    signed_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    signed_url_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Status
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="processing")
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Relationships
-    session: Mapped[Session] = relationship("Session", back_populates="translation_requests")
+    session: Mapped[Session] = relationship("Session", back_populates="document_request")
     audit_logs: Mapped[list[AuditLog]] = relationship(
-        "AuditLog",
-        back_populates="request",
-        passive_deletes=True,
+        "AuditLog", back_populates="document_request", passive_deletes=True
     )
 
-    # Constraints and indexes
     __table_args__ = (
+        CheckConstraint("target_language IN ('spa_Latn', 'por_Latn')", name="doc_requests_target_language_check"),
         CheckConstraint(
-            "target_language IN ('spa_Latn', 'por_Latn')",
-            name="translation_requests_target_language_check",
+            "classification_result IS NULL OR classification_result IN ('LEGAL', 'NOT_LEGAL')",
+            name="doc_requests_classification_check",
         ),
         CheckConstraint(
-            "classification_result IN ('LEGAL', 'NOT_LEGAL')",
-            name="translation_requests_classification_check",
+            "status IN ('processing', 'completed', 'failed', 'rejected')", name="doc_requests_status_check"
         ),
-        CheckConstraint(
-            "status IN ('processing', 'completed', 'failed', 'rejected')",
-            name="translation_requests_status_check",
-        ),
-        Index("idx_translation_requests_session_id", "session_id"),
+        Index("idx_doc_requests_session_id", "session_id"),
+        Index("idx_doc_requests_content_hash", "content_hash"),
     )
 
     def __repr__(self) -> str:
-        return f"<TranslationRequest request_id={self.request_id!s} status={self.status!r}>"
+        return f"<DocumentTranslationRequest doc_request_id={self.doc_request_id!s} status={self.status!r}>"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Model 6 — AuditLog
+# Model 6 — RealtimeTranslationRequest
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class RealtimeTranslationRequest(Base):
+    """
+    Real-time session data for sessions where type='realtime'.
+    One-to-one with Session.
+
+    Room lifecycle:
+      waiting → court official created room, code is valid, no one joined yet
+      active  → LEP individual joined (authenticated or guest), session running
+      ended   → session closed by either party or timeout
+
+    Guest join: partner_user_id is NULL when the LEP individual joins without
+    an account. partner_name (typed by the court official at setup) is the
+    display name in that case.
+
+    Transcript: utterance data is held in memory during the session (never
+    written to DB per-turn). On session end, the full JSON transcript is
+    uploaded to GCS and transcript_gcs_path + stats are written here in a
+    single DB update.
+    """
+
+    __tablename__ = "realtime_translation_requests"
+
+    rt_request_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sessions.session_id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,  # enforces 1-to-1
+    )
+
+    # Room setup — filled by court official at creation
+    room_code: Mapped[str] = mapped_column(
+        String(8),
+        nullable=False,
+        unique=True,
+        comment="Short alphanumeric join code e.g. A3K7P2. Valid until room_code_expires_at or phase→active.",
+    )
+    room_code_expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        comment="30 minutes from creation. Code rejected after this even if phase is still 'waiting'.",
+    )
+    court_division: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    courtroom: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    case_docket: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    consent_acknowledged: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default="false",
+        comment="Court official confirmed both parties consent before starting.",
+    )
+
+    # Participants
+    creator_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=False, comment="court_official who created the room."
+    )
+    partner_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.user_id"),
+        nullable=True,
+        comment="LEP individual's user_id if they signed in. NULL if they joined as a guest.",
+    )
+    partner_name: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="LEP individual's name typed by court official at setup. Used as display name for guests.",
+    )
+    partner_joined_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, comment="Timestamp when the LEP individual joined. NULL until joined."
+    )
+
+    # Phase
+    phase: Mapped[str] = mapped_column(String(20), nullable=False, server_default="waiting")
+
+    # Transcript — all NULL during session, written once on session end
+    transcript_gcs_path: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="gs://courtaccess-ai-transcripts/{session_id}/transcript.json. Set on session end."
+    )
+    transcript_signed_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    transcript_signed_url_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Summary stats — computed in-memory, written once on session end
+    total_utterances: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    session: Mapped[Session] = relationship("Session", back_populates="realtime_request")
+    creator: Mapped[User] = relationship("User", foreign_keys=[creator_user_id])
+    partner: Mapped[User | None] = relationship("User", foreign_keys=[partner_user_id])
+    audit_logs: Mapped[list[AuditLog]] = relationship(
+        "AuditLog", back_populates="realtime_request", passive_deletes=True
+    )
+
+    __table_args__ = (
+        CheckConstraint("phase IN ('waiting', 'active', 'ended')", name="rt_requests_phase_check"),
+        Index("idx_rt_requests_session_id", "session_id"),
+        Index("idx_rt_requests_room_code", "room_code"),
+        Index("idx_rt_requests_phase", "phase"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<RealtimeTranslationRequest rt_request_id={self.rt_request_id!s} phase={self.phase!r}>"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Model 7 — AuditLog
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 class AuditLog(Base):
     """
-    Immutable audit trail for all user actions.
+    Immutable audit trail. request_id split into two nullable FKs —
+    one per child table — so a single audit row can reference either
+    a document request or a realtime request without a polymorphic hack.
     """
 
     __tablename__ = "audit_logs"
 
     audit_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        server_default=func.gen_random_uuid(),
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
     )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("users.user_id"),
-        nullable=False,
-    )
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=False)
     session_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("sessions.session_id", ondelete="SET NULL"),
         nullable=True,
     )
-    request_id: Mapped[uuid.UUID | None] = mapped_column(
+    # One of these two will be set, the other NULL, depending on session type
+    doc_request_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("translation_requests.request_id", ondelete="SET NULL"),
+        ForeignKey("document_translation_requests.doc_request_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    rt_request_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("realtime_translation_requests.rt_request_id", ondelete="SET NULL"),
         nullable=True,
     )
     action_type: Mapped[str] = mapped_column(String(100), nullable=False)
-    details: Mapped[dict | None] = mapped_column(
-        JSONB,
-        server_default="{}",
-        nullable=True,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        nullable=False,
-    )
+    details: Mapped[dict | None] = mapped_column(JSONB, server_default="{}", nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships
     user: Mapped[User] = relationship("User", back_populates="audit_logs")
     session: Mapped[Session | None] = relationship("Session", back_populates="audit_logs")
-    request: Mapped[TranslationRequest | None] = relationship(
-        "TranslationRequest",
-        back_populates="audit_logs",
+    document_request: Mapped[DocumentTranslationRequest | None] = relationship(
+        "DocumentTranslationRequest", back_populates="audit_logs"
+    )
+    realtime_request: Mapped[RealtimeTranslationRequest | None] = relationship(
+        "RealtimeTranslationRequest", back_populates="audit_logs"
     )
 
-    # Indexes
     __table_args__ = (
         Index("idx_audit_logs_user_id", "user_id"),
         Index("idx_audit_logs_session_id", "session_id"),
@@ -487,7 +548,7 @@ class AuditLog(Base):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Model 7 — FormCatalog
+# Model 8 — FormCatalog
 # ══════════════════════════════════════════════════════════════════════════════
 
 
@@ -548,7 +609,7 @@ class FormCatalog(Base):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Model 8 — FormVersion
+# Model 9 — FormVersion
 # ══════════════════════════════════════════════════════════════════════════════
 
 
@@ -597,7 +658,7 @@ class FormVersion(Base):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Model 9 — FormAppearance
+# Model 10 — FormAppearance
 # ══════════════════════════════════════════════════════════════════════════════
 
 

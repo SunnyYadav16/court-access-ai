@@ -107,20 +107,32 @@ class LegalVerifierService:
             project = s.vertex_project_id
             location = s.vertex_location
 
-            # Read the SA JSON content (not a file path).
-            # Empty string / None → skip to ADC.
-            sa_json_content = s.gcp_service_account_json
+            # Two auth modes:
+            #   Local dev  — GCP_SERVICE_ACCOUNT_JSON is a path to a key file.
+            #   Production — GCP_SERVICE_ACCOUNT_JSON is empty; ADC from VM SA.
+            import os as _os
 
-            if sa_json_content:
-                # Local dev — explicit SA JSON key supplied as env var content
+            sa_key_path = (s.gcp_service_account_json or "").strip()
+
+            if sa_key_path and _os.path.isfile(sa_key_path):
+                # Local dev — read the service-account key file from disk.
                 from google.oauth2 import service_account
 
+                with open(sa_key_path) as _f:
+                    sa_info = json.load(_f)
                 credentials = service_account.Credentials.from_service_account_info(
-                    json.loads(sa_json_content),
+                    sa_info,
                     scopes=["https://www.googleapis.com/auth/cloud-platform"],
                 )
-                logger.info("[LegalVerifier] Using explicit service account credentials.")
-            else:
+                logger.info("[LegalVerifier] Using service account key file: %s", sa_key_path)
+            elif sa_key_path:
+                logger.warning(
+                    "[LegalVerifier] GCP_SERVICE_ACCOUNT_JSON='%s' is not a readable file — falling through to ADC.",
+                    sa_key_path,
+                )
+                sa_key_path = ""  # force ADC path below
+
+            if not sa_key_path:
                 # Production — use GCE metadata server (ADC).
                 #
                 # docker-compose builds GOOGLE_APPLICATION_CREDENTIALS as
