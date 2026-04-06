@@ -24,13 +24,14 @@ DB tables used:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Response, UploadFile, status
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import aliased
 
@@ -44,7 +45,7 @@ from api.schemas.schemas import (
 )
 from courtaccess.core import gcs
 from courtaccess.core.config import get_settings
-from db.models import PipelineStep, TranslationRequest
+from db.models import DocumentTranslationRequest, PipelineStep
 from db.models import Session as SessionModel
 from db.queries.audit import write_audit
 
@@ -95,6 +96,7 @@ _ELEVATED_ROLES = {2, 3, 4}  # court_official, interpreter, admin
 async def upload_document(
     user: Annotated[CurrentUser, Depends(require_verified_email)],
     db: DBSession,
+    response: Response,
     file: UploadFile = File(...),  # noqa: B008
     target_language: str = Form(
         default="es",
@@ -129,6 +131,9 @@ async def upload_document(
     dag_id = "document_pipeline_dag" if is_pdf else "docx_pipeline_dag"
     original_format = "pdf" if is_pdf else "docx"
 
+    # ── Compute content hash (dedup key) ─────────────────────────────────────
+    content_hash = hashlib.sha256(contents).hexdigest()
+
     # ── Validate language ────────────────────────────────────────────────────
     lang = target_language.strip().lower()
     if lang not in _NLLB_TARGET:
@@ -138,39 +143,149 @@ async def upload_document(
         )
     nllb_target = _NLLB_TARGET[lang]
 
+    # ── Dedup check ──────────────────────────────────────────────────────────
+    # Look for a completed translation of the same file+language by this user.
+    # Matching on (content_hash, target_language, user_id, status='completed').
+    now = datetime.now(tz=UTC)
+
+    dedup_result = await db.execute(
+        select(DocumentTranslationRequest)
+        .join(SessionModel, SessionModel.session_id == DocumentTranslationRequest.session_id)
+        .where(
+            DocumentTranslationRequest.content_hash == content_hash,
+            DocumentTranslationRequest.target_language == nllb_target,
+            SessionModel.user_id == user.user_id,
+            DocumentTranslationRequest.status == "completed",
+        )
+        .limit(1)
+    )
+    existing = dedup_result.scalar_one_or_none()
+
+    if existing is not None:
+        # ── Case A: URL still valid → return immediately, no DAG ─────────────
+        if existing.signed_url and existing.signed_url_expires_at and existing.signed_url_expires_at > now:
+            logger.info(
+                "Dedup hit (URL valid): doc_request_id=%s hash=%s... lang=%s",
+                existing.doc_request_id,
+                content_hash[:12],
+                lang,
+            )
+            response.status_code = status.HTTP_200_OK
+            return DocumentResponse(
+                session_id=existing.session_id,
+                request_id=existing.doc_request_id,
+                status=DocumentStatus.TRANSLATED,
+                gcs_input_path=existing.input_file_gcs_path,
+                target_language=lang,
+                created_at=existing.created_at,
+                estimated_completion_seconds=0,
+                signed_url=existing.signed_url,
+                signed_url_expires_at=existing.signed_url_expires_at,
+            )
+
+        # ── Case B: URL expired → regenerate, update row, return ─────────────
+        if existing.output_file_gcs_path:
+            try:
+                bucket, blob_name = gcs.parse_gcs_uri(existing.output_file_gcs_path)
+                new_url = await asyncio.to_thread(
+                    gcs.generate_signed_url,
+                    bucket,
+                    blob_name,
+                    settings.signed_url_expiry_seconds,
+                    settings.gcp_service_account_json,
+                )
+                new_expires_at = now + timedelta(seconds=settings.signed_url_expiry_seconds)
+                existing.signed_url = new_url
+                existing.signed_url_expires_at = new_expires_at
+                await db.commit()
+
+                logger.info(
+                    "Dedup hit (URL refreshed): doc_request_id=%s hash=%s... lang=%s",
+                    existing.doc_request_id,
+                    content_hash[:12],
+                    lang,
+                )
+                response.status_code = status.HTTP_200_OK
+                return DocumentResponse(
+                    session_id=existing.session_id,
+                    request_id=existing.doc_request_id,
+                    status=DocumentStatus.TRANSLATED,
+                    gcs_input_path=existing.input_file_gcs_path,
+                    target_language=lang,
+                    created_at=existing.created_at,
+                    estimated_completion_seconds=0,
+                    signed_url=new_url,
+                    signed_url_expires_at=new_expires_at,
+                )
+            except Exception as exc:
+                # URL regeneration failed — fall through and re-process the file.
+                logger.warning(
+                    "Dedup hit but URL refresh failed for doc_request_id=%s: %s — re-processing",
+                    existing.doc_request_id,
+                    exc,
+                )
+
+    # ── No exact dedup hit (or URL refresh failed) — check for second language ─
+
     # ── IDs and timestamps ───────────────────────────────────────────────────
     session_id = uuid.uuid4()
     request_id = uuid.uuid4()
-    now = datetime.now(tz=UTC)
     start_time = now.isoformat()
 
-    # ── Upload to GCS ────────────────────────────────────────────────────────
+    # ── Sanitize filename (needed regardless of upload path) ─────────────────
     import os
     import re
 
-    # Sanitize filename to prevent path traversal
     raw_name = os.path.basename(file.filename or "")
     safe_name = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", raw_name)
     if not safe_name or safe_name.startswith("."):
         safe_name = f"document.{original_format}"
 
-    blob_name = f"{session_id}/{safe_name}"
-    gcs_path = f"gs://{settings.gcs_bucket_uploads}/{blob_name}"
-
-    try:
-        await asyncio.to_thread(
-            gcs.upload_bytes,
-            settings.gcs_bucket_uploads,
-            blob_name,
-            contents,
-            file.content_type or "application/octet-stream",
+    # ── Second-language dedup: same file, different target language ───────────
+    # The user already uploaded this exact file and got a translation in another
+    # language. Reuse the existing GCS object — no re-upload needed.
+    second_lang_result = await db.execute(
+        select(DocumentTranslationRequest)
+        .join(SessionModel, SessionModel.session_id == DocumentTranslationRequest.session_id)
+        .where(
+            DocumentTranslationRequest.content_hash == content_hash,
+            DocumentTranslationRequest.target_language != nllb_target,
+            SessionModel.user_id == user.user_id,
         )
-    except Exception as exc:
-        logger.error("GCS upload failed: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to upload file to storage. Please try again.",
-        ) from exc
+        .limit(1)
+    )
+    same_file = second_lang_result.scalar_one_or_none()
+
+    if same_file is not None:
+        # Reuse the existing GCS object — skip the upload entirely.
+        gcs_path = same_file.input_file_gcs_path
+        # Derive filename from the stored path for audit log and DAG conf.
+        safe_name = gcs_path.split("/")[-1]
+        logger.info(
+            "Second-language reuse: gcs=%s new_lang=%s source_doc_request_id=%s",
+            gcs_path,
+            lang,
+            same_file.doc_request_id,
+        )
+    else:
+        # ── Fresh upload — file not seen before ───────────────────────────
+        blob_name = f"{session_id}/{safe_name}"
+        gcs_path = f"gs://{settings.gcs_bucket_uploads}/{blob_name}"
+
+        try:
+            await asyncio.to_thread(
+                gcs.upload_bytes,
+                settings.gcs_bucket_uploads,
+                blob_name,
+                contents,
+                file.content_type or "application/octet-stream",
+            )
+        except Exception as exc:
+            logger.error("GCS upload failed: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Failed to upload file to storage. Please try again.",
+            ) from exc
 
     # ── Insert session row ───────────────────────────────────────────────────
     # status='processing' matches the TranslationRequest status inserted below
@@ -190,12 +305,14 @@ async def upload_document(
     )
     db.add(session_obj)
 
-    # ── Insert translation_request row ───────────────────────────────────────
+    # ── Insert document_translation_request row ─────────────────────────────
     # The DAG only UPDATEs this row — it never INSERTs.
-    request_obj = TranslationRequest(
-        request_id=request_id,
+    request_obj = DocumentTranslationRequest(
+        doc_request_id=request_id,
         session_id=session_id,
+        input_file_gcs_path=gcs_path,
         target_language=nllb_target,
+        content_hash=content_hash,
         status="processing",
         created_at=now,
     )
@@ -213,7 +330,7 @@ async def upload_document(
             "file_size_bytes": len(contents),
         },
         session_id=session_id,
-        request_id=request_id,
+        doc_request_id=request_obj.doc_request_id,
     )
 
     await db.commit()
@@ -301,10 +418,9 @@ async def get_document_status(
 ) -> TranslationStatusResponse:
     # ── Fetch session + latest translation_request ───────────────────────────
     result = await db.execute(
-        select(SessionModel, TranslationRequest)
-        .join(TranslationRequest, TranslationRequest.session_id == SessionModel.session_id)
+        select(SessionModel, DocumentTranslationRequest)
+        .join(DocumentTranslationRequest, DocumentTranslationRequest.session_id == SessionModel.session_id)
         .where(SessionModel.session_id == session_id)
-        .order_by(desc(TranslationRequest.created_at))
         .limit(1)
     )
     row = result.first()
@@ -420,15 +536,15 @@ async def list_documents(
     # per session_id.  A plain JOIN would return multiple rows per session when
     # retranslate creates a second TranslationRequest, causing len(items) != total.
     ranked_tr = select(
-        TranslationRequest,
+        DocumentTranslationRequest,
         func.row_number()
         .over(
-            partition_by=TranslationRequest.session_id,
-            order_by=desc(TranslationRequest.created_at),
+            partition_by=DocumentTranslationRequest.session_id,
+            order_by=desc(DocumentTranslationRequest.created_at),
         )
         .label("rn"),
     ).subquery("ranked_tr")
-    latest_tr = aliased(TranslationRequest, ranked_tr)
+    latest_tr = aliased(DocumentTranslationRequest, ranked_tr)
 
     result = await db.execute(
         select(SessionModel, latest_tr)
@@ -504,14 +620,17 @@ async def delete_document(
             "Wait for completion or contact an admin to cancel the DAG run.",
         )
 
-    req_result = await db.execute(select(TranslationRequest).where(TranslationRequest.session_id == session_id))
+    req_result = await db.execute(
+        select(DocumentTranslationRequest).where(DocumentTranslationRequest.session_id == session_id)
+    )
     req_objs = req_result.scalars().all()
 
     # ── Delete GCS objects ───────────────────────────────────────────────────
     # Run deletes concurrently in threads — don't block on either
     gcs_tasks = []
-    if session_obj.input_file_gcs_path:
-        b, bl = gcs.parse_gcs_uri(session_obj.input_file_gcs_path)
+    # input_file_gcs_path lives on DocumentTranslationRequest (not Session)
+    if req_objs and req_objs[0].input_file_gcs_path:
+        b, bl = gcs.parse_gcs_uri(req_objs[0].input_file_gcs_path)
         gcs_tasks.append(asyncio.to_thread(gcs.delete_blob, b, bl))
 
     for req_obj in req_objs:
@@ -529,7 +648,7 @@ async def delete_document(
         action_type="document_delete",
         details={"deleted_by": str(user.user_id), "session_status": session_obj.status},
         session_id=session_id,
-        request_id=req_objs[0].request_id if req_objs else None,
+        doc_request_id=req_objs[0].doc_request_id if req_objs else None,
     )
 
     # ── Delete explicitly (DB FK lacks ondelete="CASCADE" for requests) ──────
@@ -596,8 +715,12 @@ async def retranslate_document(
             detail=f"Session already has a '{lang}' translation. Choose a different language.",
         )
 
-    # Guard: GCS input must still exist (it should — we haven't deleted it)
-    if not session_obj.input_file_gcs_path:
+    # Guard: GCS input must still exist — fetch the original doc request to get the path
+    doc_req_result = await db.execute(
+        select(DocumentTranslationRequest).where(DocumentTranslationRequest.session_id == session_id).limit(1)
+    )
+    original_req = doc_req_result.scalar_one_or_none()
+    if not original_req or not original_req.input_file_gcs_path:
         raise HTTPException(
             status_code=status.HTTP_410_GONE,
             detail="Original file is no longer available for re-translation.",
@@ -606,12 +729,12 @@ async def retranslate_document(
     # ── New IDs and timestamps ──────────────────────────────────────────────
     new_request_id = uuid.uuid4()
     now = datetime.now(tz=UTC)
-    gcs_path = session_obj.input_file_gcs_path
+    gcs_path = original_req.input_file_gcs_path
 
-    # ── Insert new translation_request under the SAME session ────────────────
-    request_obj = TranslationRequest(
-        request_id=new_request_id,
+    # ── Insert new document_translation_request under the SAME session ────────
+    request_obj = DocumentTranslationRequest(
         session_id=session_id,
+        input_file_gcs_path=gcs_path,
         target_language=nllb_target,
         status="processing",
         created_at=now,
@@ -624,7 +747,7 @@ async def retranslate_document(
         action_type="document_retranslate",
         details={"target_language": lang, "gcs_path": gcs_path},
         session_id=session_id,
-        request_id=new_request_id,
+        doc_request_id=request_obj.doc_request_id,
     )
 
     await db.commit()

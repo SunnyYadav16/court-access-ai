@@ -289,6 +289,61 @@ export const formsApi = {
 // Session endpoints
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Realtime endpoints
+// ══════════════════════════════════════════════════════════════════════════════
+
+export interface RoomCreateRequest {
+  target_language: "es" | "pt";
+  court_division?: string | null;
+  courtroom?: string | null;
+  case_docket?: string | null;
+  partner_name: string;
+  consent_acknowledged: boolean;
+}
+
+export interface RoomCreateResponse {
+  session_id: string;
+  rt_request_id: string;
+  room_code: string;
+  room_code_expires_at: string;
+  join_url: string;
+}
+
+export interface RoomPreviewResponse {
+  phase: "waiting" | "active" | "ended";
+  target_language: string;
+  court_division: string | null;
+  courtroom: string | null;
+  partner_name: string;
+  room_code_expires_at: string;
+}
+
+export interface RoomStatusResponse {
+  phase: "waiting" | "active" | "ended";
+  room_code: string;
+  room_code_expires_at: string;
+  partner_joined_at: string | null;
+}
+
+export const realtimeApi = {
+  /** Create a new two-party interpretation room. Returns room code + join URL. */
+  createRoom: (body: RoomCreateRequest): Promise<RoomCreateResponse> =>
+    api.post<RoomCreateResponse>("/sessions/rooms", body).then((r) => r.data),
+
+  /** Public room preview for the guest join page — no auth required. */
+  getRoomPreview: (roomCode: string): Promise<RoomPreviewResponse> =>
+    api.get<RoomPreviewResponse>(`/sessions/rooms/${roomCode}/preview`).then((r) => r.data),
+
+  /** Poll room status — used by the lobby screen to detect when the partner joins. */
+  getRoomStatus: (roomCode: string): Promise<RoomStatusResponse> =>
+    api.get<RoomStatusResponse>(`/sessions/rooms/${roomCode}/status`).then((r) => r.data),
+
+  /** End a room session (creator only). Idempotent — 204 if already ended. */
+  endRoom: (sessionId: string): Promise<void> =>
+    api.post(`/sessions/rooms/${sessionId}/end`).then(() => undefined),
+};
+
 export const sessionsApi = {
   /** Create a new real-time interpretation session. */
   create: (

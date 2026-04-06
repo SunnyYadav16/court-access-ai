@@ -19,6 +19,7 @@ export const SCREENS = {
 
   // Realtime interpretation
   REALTIME_SETUP: "REALTIME_SETUP",
+  REALTIME_LOBBY: "REALTIME_LOBBY",
   REALTIME_SESSION: "REALTIME_SESSION",
 
   // Document translation
@@ -42,6 +43,27 @@ export const SCREENS = {
 
 /** Union type of all valid screen IDs */
 export type ScreenId = (typeof SCREENS)[keyof typeof SCREENS];
+
+/**
+ * Maps ScreenId values to their URL paths for use with React Router's
+ * useNavigate inside public routes (/login, /signup).
+ * Authenticated home screens all collapse to "/" — ProtectedApp picks
+ * the correct home screen based on the user's role.
+ */
+export const SCREEN_TO_PATH: Partial<Record<ScreenId, string>> = {
+  [SCREENS.LANDING]:        "/",
+  [SCREENS.LOGIN]:          "/login",
+  [SCREENS.SIGNUP]:         "/signup",
+  [SCREENS.FORGOT]:         "/forgot",
+  [SCREENS.RESET]:          "/reset",
+  [SCREENS.VERIFY_EMAIL]:   "/verify-email",
+  [SCREENS.MFA]:            "/mfa",
+  // Authenticated home screens — redirect to "/" and let ProtectedApp route
+  [SCREENS.HOME_PUBLIC]:      "/",
+  [SCREENS.HOME_OFFICIAL]:    "/",
+  [SCREENS.HOME_INTERPRETER]: "/",
+  [SCREENS.HOME_ADMIN]:       "/",
+};
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Auth Types & Constants

@@ -15,12 +15,27 @@
 # ══════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
+# ── GCP credentials ───────────────────────────────────────────────────────────
+# GOOGLE_APPLICATION_CREDENTIALS → Firebase Admin SDK
+# GCP_DVC_CREDENTIALS            → DVC + gcsfs (GCS bucket access)
+# If GCP_DVC_CREDENTIALS is set, override GOOGLE_APPLICATION_CREDENTIALS
+# specifically for the dvc pull call so gcsfs authenticates correctly.
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
 log()  { echo -e "${GREEN}[entrypoint]${NC} $1"; }
 warn() { echo -e "${YELLOW}[entrypoint]${NC} $1"; }
+
+setup_gcp_credentials() {
+    if [[ -n "${GCP_DVC_CREDENTIALS:-}" ]] && [[ -f "${GCP_DVC_CREDENTIALS}" ]]; then
+        log "DVC credentials found at ${GCP_DVC_CREDENTIALS}"
+    else
+        warn "GCP_DVC_CREDENTIALS not set or file missing — dvc pull will fail."
+    fi
+}
+
+setup_gcp_credentials
 
 # ── Step 1: Pull model weights ────────────────────────────────────────────────
 # Three modes:
@@ -68,13 +83,65 @@ pull_models() {
         return 0
     fi
 
-    # Attempt DVC pull
+    # Attempt DVC pull with retries to handle concurrent startup locks
     log "Pulling models via DVC..."
-    if dvc pull --allow-missing 2>&1; then
-        log "DVC pull complete."
-    else
-        warn "DVC pull failed (GCS credentials may not be configured). Trying DVC checkout from local cache..."
-        dvc checkout 2>&1 || warn "DVC checkout also failed. Models may not be available."
+    local attempts=0
+    local max_attempts=30
+    local success=false
+
+    while [ $attempts -lt $max_attempts ]; do
+        set +e
+        local dvc_output
+        # Resolve credentials: prefer GCP_DVC_CREDENTIALS, fall back to
+        # GOOGLE_APPLICATION_CREDENTIALS, then empty — safe under set -u.
+        local resolved_gcp_creds="${GCP_DVC_CREDENTIALS:-${GOOGLE_APPLICATION_CREDENTIALS:-}}"
+        # Only pass GOOGLE_APPLICATION_CREDENTIALS if it resolves to an existing
+        # file; otherwise let DVC use ADC (GCE metadata server) unobstructed.
+        # dvc_output=$(dvc pull --allow-missing 2>&1)
+        if [ -n "$resolved_gcp_creds" ] && [ -f "$resolved_gcp_creds" ]; then
+            dvc_output=$(GOOGLE_APPLICATION_CREDENTIALS="$resolved_gcp_creds" dvc pull --allow-missing 2>&1)
+        else
+            dvc_output=$(dvc pull --allow-missing 2>&1)
+        fi
+        local dvc_status=$?
+        set -e
+
+        if [ $dvc_status -eq 0 ]; then
+            log "DVC pull complete."
+            success=true
+            break
+        elif echo "$dvc_output" | grep -qi "Unable to acquire lock"; then
+            attempts=$((attempts + 1))
+            warn "DVC pull is locked by another process. Waiting ($attempts/$max_attempts)..."
+            sleep $(( 3 + RANDOM % 4 ))
+        else
+            warn "DVC pull failed (auth or config): $dvc_output"
+            break
+        fi
+    done
+
+    if [ "$success" = false ]; then
+        warn "Trying DVC checkout from local cache..."
+        attempts=0
+        while [ $attempts -lt $max_attempts ]; do
+            set +e
+            local checkout_output
+            checkout_output=$(dvc checkout 2>&1)
+            local checkout_status=$?
+            set -e
+
+            if [ $checkout_status -eq 0 ]; then
+                log "DVC checkout complete."
+                break
+            elif echo "$checkout_output" | grep -qi "Unable to acquire lock"; then
+                attempts=$((attempts + 1))
+                warn "DVC checkout is locked by another process. Waiting ($attempts/$max_attempts)..."
+                sleep $(( 3 + RANDOM % 4 ))
+            else
+                warn "DVC checkout failed: $checkout_output"
+                break
+            fi
+        done
     fi
 
     cd - >/dev/null
@@ -92,6 +159,14 @@ register_models() {
 }
 
 # ── Step 3: Run ───────────────────────────────────────────────────────────────
+
+# Ensure the session recordings directory exists and is writable by appuser.
+# SESSION_RECORDINGS_DIR may point outside /app (e.g. a mounted volume);
+# mkdir -p is a no-op if the path already exists and is accessible.
+_rec_dir="${SESSION_RECORDINGS_DIR:-/tmp/courtaccess/sessions}"
+mkdir -p "$_rec_dir" || warn "Could not create SESSION_RECORDINGS_DIR='$_rec_dir' — recording writes may fail."
+unset _rec_dir
+
 pull_models
 register_models
 
@@ -117,13 +192,17 @@ else
     # Resolve connection details from individual env vars (same pattern as the app).
     _PG_HOST="${POSTGRES_HOST:-localhost}"
     _PG_PORT="${POSTGRES_PORT:-5432}"
-    _PG_USER="${POSTGRES_USER:-}"
     _RETRIES=15
     _WAIT=2
 
+    # Use a TCP-level check rather than pg_isready to avoid version mismatches
+    # between the installed postgresql-client and the postgres:16 server.
+    # (docker-compose depends_on: postgres: service_healthy already guarantees
+    # Postgres is up, but we keep a short loop as a safety net in case the
+    # container starts before the healthcheck window closes.)
     log "Waiting for Postgres at ${_PG_HOST}:${_PG_PORT} (up to $((_RETRIES * _WAIT))s)..."
     for i in $(seq 1 "$_RETRIES"); do
-        if pg_isready -h "$_PG_HOST" -p "$_PG_PORT" -U "$_PG_USER" -q 2>/dev/null; then
+        if (exec 3<>"/dev/tcp/$_PG_HOST/$_PG_PORT") 2>/dev/null; then
             log "Postgres is ready."
             break
         fi

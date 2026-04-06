@@ -1,20 +1,20 @@
 # ══════════════════════════════════════════════════════════════════════════════
-# docker-compose.yml — CourtAccess AI (local development)
+# docker-compose.prod.yml — CourtAccess AI (production VM)
 #
-# Services:
-#   postgres          — shared DB for Airflow metadata + app data (dev only)
-#   redis             — translation cache for LegalReviewer (dev only)
-#   mlflow            — MLflow Tracking Server UI (port 5000)
-#   api               — FastAPI application server
-#   airflow-apiserver — Airflow UI + REST API (port 8080)
-#   airflow-scheduler — DAG scheduler
-#   airflow-dag-processor — DAG file processor
-#   airflow-triggerer — Deferred task triggerer
-#   airflow-init      — One-shot: DB migrate + create admin user
+# Differences from docker-compose.yml (local dev):
+#   - No local postgres container — uses Cloud SQL directly via POSTGRES_HOST
+#   - No live code volume mounts — code is baked into the Docker image
+#   - No .git / .dvc / .config volume mounts — no local credentials needed
+#   - VM's attached service account handles all GCP auth (ADC)
+#   - GOOGLE_APPLICATION_CREDENTIALS and GCP_DVC_CREDENTIALS are empty
+#   - _PIP_ADDITIONAL_REQUIREMENTS removed (use Dockerfile for prod deps)
+#   - Redis port not exposed publicly
+#   - Named volumes for logs, data, forms, models (no host bind mounts)
+#   - dags/ is still a bind mount so DAGs can be updated via git pull
+#     without rebuilding the image
 #
-# NOTE: GPU inference services (Whisper, NLLB, PaddleOCR) are defined here
-# as stubs. They are disabled by default (profiles: [gpu]) and require a
-# machine with NVIDIA drivers + nvidia-container-toolkit installed.
+# Run with:
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d
 # ══════════════════════════════════════════════════════════════════════════════
 
 x-airflow-common:
@@ -38,7 +38,7 @@ x-airflow-common:
     AIRFLOW__API__AUTH_BACKENDS: 'airflow.providers.fab.auth_manager.api.auth.backend.basic_auth'
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_SECRET_KEY}
 
-    # ── Database ──
+    # ── Database (Cloud SQL) ──
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${AIRFLOW_DB}
 
     # ── Scheduler ──
@@ -50,22 +50,21 @@ x-airflow-common:
     # ── Git/DVC ──
     GIT_DISCOVERY_ACROSS_FILESYSTEM: '1'
 
-    # ── Redis (translation cache) ──
+    # ── Redis ──
     REDIS_URL: ${REDIS_URL}
-
-    # ── MLflow ──
-    # MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
 
     # ── Application ──
     APP_ENV: ${APP_ENV}
 
-    # ── Database (sync psycopg2 — asyncpg is unusable in Airflow task processes) ──
+    # ── Database URL ──
     DATABASE_URL: "postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}"
 
     # ── Google Cloud / GCS ──
     GCP_SERVICE_ACCOUNT_JSON: ${GCP_SERVICE_ACCOUNT_JSON}
     GCS_BUCKET_UPLOADS: ${GCS_BUCKET_UPLOADS}
     GCS_BUCKET_TRANSLATED: ${GCS_BUCKET_TRANSLATED}
+    GCS_BUCKET_FORMS: ${GCS_BUCKET_FORMS}
+    GCS_BUCKET_MODELS: ${GCS_BUCKET_MODELS}
     GCS_BUCKET_TRANSCRIPTS: ${GCS_BUCKET_TRANSCRIPTS}
     SIGNED_URL_EXPIRY_SECONDS: ${SIGNED_URL_EXPIRY_SECONDS}
 
@@ -75,12 +74,14 @@ x-airflow-common:
     VERTEX_LEGAL_LLM_MODEL: ${VERTEX_LEGAL_LLM_MODEL}
     LEGAL_VERIFY_TIMEOUT: ${LEGAL_VERIFY_TIMEOUT}
 
-    # ── Feature flags (controls stub vs real mode for every DAG task) ──
+    # ── Feature flags ──
     USE_REAL_CLASSIFICATION: ${USE_REAL_CLASSIFICATION}
     USE_REAL_TRANSLATION: ${USE_REAL_TRANSLATION}
     USE_VERTEX_LEGAL_REVIEW: ${USE_VERTEX_LEGAL_REVIEW}
     USE_REAL_OCR: ${USE_REAL_OCR}
     USE_REAL_HANDWRITING_OCR: ${USE_REAL_HANDWRITING_OCR}
+
+    # ── Model Paths (inside container) ──
     NLLB_MODEL_PATH: ${NLLB_MODEL_PATH}
     WHISPER_MODEL_PATH: ${WHISPER_MODEL_PATH}
     PIPER_TTS_ES_PATH: ${PIPER_TTS_ES_PATH}
@@ -128,68 +129,38 @@ x-airflow-common:
     PDF_RENDER_DPI: ${PDF_RENDER_DPI}
     VALIDATION_CONFIDENCE_THRESHOLD: ${VALIDATION_CONFIDENCE_THRESHOLD}
 
-    # ── Additional pip packages (dev only — prefer Dockerfile for production) ──
-    _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS}
-
-    # ── Firebase ──
-    GOOGLE_APPLICATION_CREDENTIALS: '/opt/airflow/${GOOGLE_APPLICATION_CREDENTIALS}'
-
-    # ── DVC ──
-    GCP_DVC_CREDENTIALS: '/opt/airflow/${GCP_DVC_CREDENTIALS}'
+    # ── GCP credentials ──
+    # Empty in prod — VM's attached service account handles auth via ADC.
+    # No key files needed.
+    GOOGLE_APPLICATION_CREDENTIALS: ''
+    GCP_DVC_CREDENTIALS: ''
 
   env_file:
-    - .env
+    - .env.production
 
   volumes:
     &airflow-common-volumes
+    # dags/ is a bind mount so DAG updates via git pull take effect
+    # without rebuilding the image.
     - ./dags:/opt/airflow/dags
-    - ./courtaccess:/opt/airflow/courtaccess    # live code changes in dev
-    - ./db:/opt/airflow/db                      # Added missing db module
-    - ./logs:/opt/airflow/logs
-    - ./data:/opt/airflow/data
-    - ./forms:/opt/airflow/forms
-    - ./models:/opt/airflow/models
-    # DVC needs access to .git (at monorepo root) and its own config + local remote
-    - ./.git:/opt/airflow/.git
-    - ./.dvc:/opt/airflow/.dvc
-    - ./dvc_storage:/opt/airflow/dvc_storage
-    - ./.config:/opt/airflow/.config:ro
+    # Named volumes — no host bind mounts in prod
+    - airflow-logs:/opt/airflow/logs
+    - airflow-data:/opt/airflow/data
+    - airflow-forms:/opt/airflow/forms
+    - shared-models:/opt/airflow/models
 
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     &airflow-common-depends-on
-    postgres:
-      condition: service_healthy
     redis:
       condition: service_healthy
 
 services:
 
-  # ── PostgreSQL ─────────────────────────────────────────────────────────────
-  postgres:
-    image: postgres:16
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres-db-volume:/var/lib/postgresql/data
-      - ./db/init-airflow-db.sql:/docker-entrypoint-initdb.d/10-init-airflow-db.sql
-      # - ./db/init-mlflow-db.sql:/docker-entrypoint-initdb.d/20-init-mlflow-db.sql
-    healthcheck:
-      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}"]
-      interval: 10s
-      retries: 5
-      start_period: 5s
-    restart: always
-
   # ── Redis ──────────────────────────────────────────────────────────────────
+  # Port NOT exposed in prod — only accessible within the Docker network.
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -199,46 +170,20 @@ services:
       start_period: 5s
     restart: always
 
-  # ── MLflow Tracking Server ─────────────────────────────────────────────────
-  # mlflow:
-  #   image: ghcr.io/mlflow/mlflow:v2.13.0
-  #   command: >
-  #     bash -c "pip install psycopg2-binary google-cloud-storage 'protobuf<5.0.0' && mlflow server
-  #     --backend-store-uri postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/mlflow
-  #     --artifacts-destination gs://${GCS_BUCKET_MODELS}/mlflow-artifacts/
-  #     --host 0.0.0.0
-  #     --port 5000"
-  #   ports:
-  #     - "5050:5000"
-  #   environment:
-  #     # GCS auth — ADC from the mounted .config directory
-  #     GOOGLE_APPLICATION_CREDENTIALS: /root/.config/gcloud/application_default_credentials.json
-  #   volumes:
-  #     - ./.config:/root/.config:ro
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #   healthcheck:
-  #     test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/')"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 5
-  #     start_period: 20s
-  #   restart: unless-stopped
-
   # ── FastAPI ────────────────────────────────────────────────────────────────
   api:
     build:
       context: .
-      dockerfile: Dockerfile
-      target: api
+      dockerfile: gpu.Dockerfile
       args:
+        # VITE_* vars are baked into the frontend bundle at build time.
         VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY}
         VITE_FIREBASE_AUTH_DOMAIN: ${VITE_FIREBASE_AUTH_DOMAIN}
         VITE_FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID}
         VITE_FIREBASE_STORAGE_BUCKET: ${VITE_FIREBASE_STORAGE_BUCKET}
         VITE_FIREBASE_MESSAGING_SENDER_ID: ${VITE_FIREBASE_MESSAGING_SENDER_ID}
         VITE_FIREBASE_APP_ID: ${VITE_FIREBASE_APP_ID}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
     ports:
       - "8000:8000"
     environment:
@@ -248,7 +193,7 @@ services:
       SECRET_KEY: ${SECRET_KEY}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
       SIGNED_URL_EXPIRY_SECONDS: ${SIGNED_URL_EXPIRY_SECONDS}
-      # ── Database (POSTGRES_HOST/PORT resolved from env file) ──
+      # ── Database (Cloud SQL) ──
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
@@ -262,7 +207,7 @@ services:
       GCS_BUCKET_FORMS: ${GCS_BUCKET_FORMS}
       GCS_BUCKET_MODELS: ${GCS_BUCKET_MODELS}
       GCS_BUCKET_TRANSCRIPTS: ${GCS_BUCKET_TRANSCRIPTS}
-      GCP_SERVICE_ACCOUNT_JSON: ${GCP_SERVICE_ACCOUNT_JSON}
+      GCP_SERVICE_ACCOUNT_JSON: ''
       # ── Auth (GCIP / Firebase) ──
       GCIP_API_KEY: ${GCIP_API_KEY}
       GCIP_AUTH_DOMAIN: ${GCIP_AUTH_DOMAIN}
@@ -277,9 +222,8 @@ services:
       VERTEX_LOCATION: ${VERTEX_LOCATION}
       VERTEX_LEGAL_LLM_MODEL: ${VERTEX_LEGAL_LLM_MODEL}
       LEGAL_VERIFY_TIMEOUT: ${LEGAL_VERIFY_TIMEOUT}
-      # ── Redis & MLflow ──
+      # ── Redis ──
       REDIS_URL: ${REDIS_URL}
-      # MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
       # ── Feature Flags & Model Paths ──
       USE_REAL_CLASSIFICATION: ${USE_REAL_CLASSIFICATION}
       USE_REAL_TRANSLATION: ${USE_REAL_TRANSLATION}
@@ -297,78 +241,66 @@ services:
       WHISPER_MODEL: ${WHISPER_MODEL}
       NLLB_MODEL: ${NLLB_MODEL}
       VAD_SPEECH_THRESHOLD: ${VAD_SPEECH_THRESHOLD}
-      PIPER_VOICES_DIR: /app/models/piper-voices
+      PIPER_VOICES_DIR: ${PIPER_VOICES_DIR}
       SESSION_RECORDINGS_DIR: ${SESSION_RECORDINGS_DIR}
       TURN_GRACE_A_MS: ${TURN_GRACE_A_MS}
       TURN_GRACE_B_MS: ${TURN_GRACE_B_MS}
       TTS_LOCKOUT_BUFFER_MS: ${TTS_LOCKOUT_BUFFER_MS}
-
       # ── Monitoring & Bias Thresholds ──
       BIAS_UNDERSERVED_THRESHOLD: ${BIAS_UNDERSERVED_THRESHOLD}
       BIAS_TRANSLATION_COVERAGE_MIN: ${BIAS_TRANSLATION_COVERAGE_MIN}
       BIAS_LANGUAGE_GAP_MAX: ${BIAS_LANGUAGE_GAP_MAX}
-
       # ── Model & Extraction Overrides ──
       OCR_CONFIDENCE_THRESHOLD: ${OCR_CONFIDENCE_THRESHOLD}
       VERTEX_MAX_RETRIES: ${VERTEX_MAX_RETRIES}
       TRANSLATION_HALLUCINATION_RATIO_MAX: ${TRANSLATION_HALLUCINATION_RATIO_MAX}
       TRANSLATION_HALLUCINATION_RATIO_MIN: ${TRANSLATION_HALLUCINATION_RATIO_MIN}
-
-      # ── Anomaly Detection Thresholds ──
+      # ── Anomaly Detection ──
       ANOMALY_FORM_DROP_PCT: ${ANOMALY_FORM_DROP_PCT}
       ANOMALY_MASS_NEW_FORMS: ${ANOMALY_MASS_NEW_FORMS}
       ANOMALY_DOWNLOAD_FAIL_PCT: ${ANOMALY_DOWNLOAD_FAIL_PCT}
       ANOMALY_MIN_PDF_SIZE_BYTES: ${ANOMALY_MIN_PDF_SIZE_BYTES}
       ANOMALY_MAX_PDF_SIZE_BYTES: ${ANOMALY_MAX_PDF_SIZE_BYTES}
       ANOMALY_SCHEMA_ERRORS: ${ANOMALY_SCHEMA_ERRORS}
-
       # ── Scraper Tuning ──
       SCRAPER_BATCH_SIZE: ${SCRAPER_BATCH_SIZE}
       SCRAPER_BATCH_SLEEP_SEC: ${SCRAPER_BATCH_SLEEP_SEC}
       SCRAPER_PRE_DOWNLOAD_SLEEP: ${SCRAPER_PRE_DOWNLOAD_SLEEP}
       SCRAPER_REQUEST_TIMEOUT: ${SCRAPER_REQUEST_TIMEOUT}
-
       # ── Processor Tuning ──
       PDF_RENDER_DPI: ${PDF_RENDER_DPI}
       VALIDATION_CONFIDENCE_THRESHOLD: ${VALIDATION_CONFIDENCE_THRESHOLD}
-
       # ── Airflow (API Client) ──
       AIRFLOW_BASE_URL: ${AIRFLOW_BASE_URL}
       AIRFLOW_USERNAME: ${AIRFLOW_USERNAME}
       AIRFLOW_PASSWORD: ${AIRFLOW_PASSWORD}
+      # ── GCP credentials (empty — VM uses attached service account via ADC) ──
+      GOOGLE_APPLICATION_CREDENTIALS: ''
+      GCP_DVC_CREDENTIALS: ''
 
-      # ── Git ──
-      GIT_DISCOVERY_ACROSS_FILESYSTEM: '1'
-
-      # ── Firebase ──
-      GOOGLE_APPLICATION_CREDENTIALS: '/app/${GOOGLE_APPLICATION_CREDENTIALS}'
-
-      # ── DVC ──
-      GCP_DVC_CREDENTIALS: '/app/${GCP_DVC_CREDENTIALS}'
-
+    # No live code volume mounts in prod — everything is baked into the image.
     volumes:
-      - ./courtaccess:/app/courtaccess   # live code reloading in dev
-      - ./api:/app/api
-      - ./db:/app/db
-      - ./models:/app/models             # DVC-tracked model weights
-      - ./.git:/app/.git                 # DVC needs git history
-      - ./.dvc:/app/.dvc                 # DVC remote config
-      - ./data:/app/data                 # glossaries, schemas
-      - ./.config:/app/.config:ro
+      - shared-models:/app/models
+
+    # ── GPU Configuration ──
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    env_file:
+      - .env.production
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
-      # mlflow:
-      #   condition: service_started
-      # Wait for airflow-init to finish before running alembic migrations, so
-      # the two init processes do not race to write the schema simultaneously.
       airflow-init:
         condition: service_completed_successfully
     restart: unless-stopped
 
-  # ── Airflow: API Server (UI + REST API) ────────────────────────────────────
+  # ── Airflow: API Server ────────────────────────────────────────────────────
   airflow-apiserver:
     <<: *airflow-common
     command: api-server
@@ -441,32 +373,23 @@ services:
     command:
       - -c
       - |
-        mkdir -p /opt/airflow/data/forms /opt/airflow/forms /opt/airflow/models /opt/airflow/dvc_storage /opt/airflow/logs
-        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/data /opt/airflow/forms /opt/airflow/models /opt/airflow/dvc_storage /opt/airflow/logs
+        mkdir -p /opt/airflow/data/forms /opt/airflow/forms /opt/airflow/models /opt/airflow/logs
+        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/data /opt/airflow/forms /opt/airflow/models /opt/airflow/logs
 
-        # Git safe.directory — required because repo is owned by host user but
-        # accessed by airflow user (UID 50000) inside the container.
-        git config --global --add safe.directory /opt/airflow
-
-        # Initialize DVC if needed, then configure the local fallback remote.
-        # --local writes to .dvc/config.local (gitignored), NOT .dvc/config,
-        # so the host's default remote (gcs) is never overwritten by this container.
+        # In prod, DVC authenticates via the VM's attached service account (ADC).
+        # No key file needed — just pull models directly from GCS.
         cd /opt/airflow
         if [ ! -d ".dvc" ]; then
-          dvc init
+          dvc init --no-scm
           echo "DVC initialized."
         fi
-        dvc remote add --local local_storage /opt/airflow/dvc_storage 2>/dev/null || \
-          dvc remote modify --local local_storage url /opt/airflow/dvc_storage
-        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/.dvc
-        echo "DVC remote configured: $(dvc remote list)"
 
-        # Pull models once here (as root, before other services start) so that
-        # the api and Airflow worker containers that start concurrently find
-        # models already present and skip DVC — avoiding the shared-lock race.
-        GOOGLE_APPLICATION_CREDENTIALS="${GCP_DVC_CREDENTIALS}" dvc pull --allow-missing 2>&1 || \
-          dvc checkout 2>&1 || \
-          echo "[airflow-init] DVC pull/checkout failed — models must be provided via volume mount."
+        # Configure GCS remote explicitly (no .dvc/config mounted in prod)
+        dvc remote add -d gcs_remote gs://$${GCS_BUCKET_MODELS} 2>/dev/null || \
+          dvc remote modify gcs_remote url gs://$${GCS_BUCKET_MODELS}
+
+        dvc pull --allow-missing 2>&1 || \
+          echo "[airflow-init] DVC pull failed — models must be pre-loaded into the models volume."
         chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/models 2>/dev/null || true
 
         exec /entrypoint airflow version
@@ -479,32 +402,9 @@ services:
     user: "0:0"
     volumes: *airflow-common-volumes
 
-  # ── GPU: Whisper ASR  (disabled by default, requires nvidia-container-toolkit)
-  whisper:
-    build:
-      context: .
-      dockerfile: gpu.Dockerfile
-    profiles: [gpu]
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    volumes:
-      - ./models:/app/models
-      - ./courtaccess:/app/courtaccess
-    environment:
-      MODEL_NAME: whisper-large-v3
-      WHISPER_MODEL_PATH: /app/models/whisper-large-v3
-      NLLB_MODEL_PATH: /app/models/nllb-200-distilled-1.3B-ct2
-      SILERO_VAD_MODEL_PATH: /app/models/silero-vad-v4/silero_vad.jit.pt
-      PIPER_TTS_ES_PATH: /app/models/piper-tts-es
-      PIPER_TTS_PT_PATH: /app/models/piper-tts-pt
-      PIPER_TTS_EN_PATH: /app/models/piper-tts-en
-    restart: unless-stopped
-
 volumes:
-  postgres-db-volume:
   redis-data:
+  airflow-logs:
+  airflow-data:
+  airflow-forms:
+  shared-models:

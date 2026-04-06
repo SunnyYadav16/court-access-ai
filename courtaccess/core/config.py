@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     gcs_bucket_translated: str
     gcs_bucket_forms: str
     gcs_bucket_models: str
+    gcs_bucket_transcripts: str
 
     # ── Auth (GCIP / Firebase) ────────────────────────────────────────────────
     gcip_api_key: str
@@ -69,9 +70,9 @@ class Settings(BaseSettings):
     signed_url_expiry_seconds: int
 
     # ── Airflow ───────────────────────────────────────────────────────────────
-    airflow_base_url: str | None = None
-    airflow_username: str | None = None
-    airflow_password: str | None = None
+    airflow_base_url: str | None
+    airflow_username: str | None
+    airflow_password: str | None
 
     # ── MLflow ────────────────────────────────────────────────────────────────
     mlflow_tracking_uri: str | None = None
@@ -86,43 +87,62 @@ class Settings(BaseSettings):
     use_real_ocr: bool
 
     # ── Model paths (inside container) ───────────────────────────────────────
-    nllb_model_path: str | None = None
-    whisper_model_path: str | None = None
-    piper_tts_es_path: str | None = None
-    piper_tts_pt_path: str | None = None
+    nllb_model_path: str | None
+    whisper_model_path: str | None
+    piper_tts_es_path: str | None
+    piper_tts_pt_path: str | None
+    silero_vad_model_path: str | None = None
+
+    # ── Real-Time Speech Pipeline ────────────────────────────────────────────
+    # All fields below are only read when use_real_speech=True; they default to
+    # None so Settings() can instantiate without them when the speech pipeline
+    # is disabled (USE_REAL_SPEECH=false).
+    use_real_speech: bool
+    whisper_model: str | None = None
+    nllb_model: str | None = None
+    vad_speech_threshold: float | None = None
+    piper_voices_dir: str | None = None
+    piper_tts_en_path: str | None = None
+    session_recordings_dir: str | None = None
+    turn_grace_a_ms: float | None = None
+    turn_grace_b_ms: float | None = None
+    tts_lockout_buffer_ms: float | None = None
 
     # ── Auth token ────────────────────────────────────────────────────────────
     access_token_expire_minutes: int
     algorithm: str
+    room_jwt_secret: str
+    room_jwt_expiry_hours: int
+    room_code_expiry_minutes: int
 
     # ── Monitoring & Bias Thresholds ─────────────────────────────────────────
-    bias_underserved_threshold: float = 0.5
-    bias_translation_coverage_min: float = 20.0
-    bias_language_gap_max: float = 30.0
+    bias_underserved_threshold: float
+    bias_translation_coverage_min: float
+    bias_language_gap_max: float
 
     # ── Model & Extraction Overrides ──────────────────────────────────────────
-    ocr_confidence_threshold: float = 0.35
-    vertex_max_retries: int = 3
-    translation_hallucination_ratio_max: float = 2.5
-    translation_hallucination_ratio_min: float = 0.1
+    ocr_confidence_threshold: float
+    vertex_max_retries: int
+    translation_hallucination_ratio_max: float
+    translation_hallucination_ratio_min: float
 
     # ── Anomaly Detection Thresholds ────────────────────────────────────────
-    anomaly_form_drop_pct: float = 20.0
-    anomaly_mass_new_forms: int = 50
-    anomaly_download_fail_pct: float = 10.0
-    anomaly_min_pdf_size_bytes: int = 1024
-    anomaly_max_pdf_size_bytes: int = 50 * 1024 * 1024
-    anomaly_schema_errors: int = 0
+    anomaly_form_drop_pct: float
+    anomaly_mass_new_forms: int
+    anomaly_download_fail_pct: float
+    anomaly_min_pdf_size_bytes: int
+    anomaly_max_pdf_size_bytes: int
+    anomaly_schema_errors: int
 
     # ── Scraper Tuning ────────────────────────────────────────────────────────
-    scraper_batch_size: int = 10
-    scraper_batch_sleep_sec: int = 15
-    scraper_pre_download_sleep: int = 60
-    scraper_request_timeout: int = 30
+    scraper_batch_size: int
+    scraper_batch_sleep_sec: int
+    scraper_pre_download_sleep: int
+    scraper_request_timeout: int
 
     # ── Processor Tuning ──────────────────────────────────────────────────────
-    pdf_render_dpi: int = 300
-    validation_confidence_threshold: float = 0.85
+    pdf_render_dpi: int
+    validation_confidence_threshold: float
 
 
 settings = Settings()

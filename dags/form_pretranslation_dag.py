@@ -280,7 +280,10 @@ def task_translate_spanish(**context) -> dict:
 
     config = get_language_config("spanish")
     translator = Translator(config).load()
-    regions_es = _translate_regions(ocr_result["regions"], LANG_ES, translator)
+    try:
+        regions_es = _translate_regions(ocr_result["regions"], LANG_ES, translator)
+    finally:
+        translator.unload()
 
     logger.info("Spanish translation complete: %d region(s).", len(regions_es))
     ti.xcom_push(key="regions_es", value=regions_es)
@@ -300,7 +303,10 @@ def task_translate_portuguese(**context) -> dict:
 
     config = get_language_config("portuguese")
     translator = Translator(config).load()
-    regions_pt = _translate_regions(ocr_result["regions"], LANG_PT, translator)
+    try:
+        regions_pt = _translate_regions(ocr_result["regions"], LANG_PT, translator)
+    finally:
+        translator.unload()
 
     logger.info("Portuguese translation complete: %d region(s).", len(regions_pt))
     ti.xcom_push(key="regions_pt", value=regions_pt)

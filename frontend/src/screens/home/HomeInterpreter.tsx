@@ -44,7 +44,7 @@ export default function HomeInterpreter({ onNav }: Props) {
 
       <WelcomeBanner
         firstName={firstName}
-        roleDescription="As an interpreter, you can join active courtroom sessions or review and correct AI-generated translations to help improve system accuracy using the services below."
+        roleDescription="As an interpreter, you can review and correct AI-generated translations to improve system accuracy, or upload documents for translation using the services below."
       />
 
       <div className="max-w-7xl mx-auto px-5 py-8">
@@ -53,16 +53,17 @@ export default function HomeInterpreter({ onNav }: Props) {
           Interpreter Dashboard
         </h1>
         <p className="text-sm mb-6" style={{ color: "#4A5568" }}>
-          Join sessions and review AI translations
+          Review AI translations and manage interpretation work
         </p>
         <div className="flex flex-col gap-3">
-          {/* TODO: Fetch from sessionsApi */}
-          <FeatureCard icon="🎙" title="Join Real-Time Session"
-            desc="Join an active courtroom interpretation session"
-            badge="2 ACTIVE" onClick={() => onNav(SCREENS.REALTIME_SETUP)} />
-          <FeatureCard icon="✏️" title="Translation Review"
+          {/* TODO: Fetch pending count from sessionsApi */}
+          <FeatureCard icon="✏️" title="Translation Review Queue"
             desc="Review and correct AI-generated translations to improve accuracy"
+            badge="3 PENDING"
             onClick={() => onNav(SCREENS.INTERPRETER_REVIEW)} />
+          <FeatureCard icon="📄" title="Upload Document"
+            desc="Upload a legal PDF document for AI-powered translation"
+            onClick={() => onNav(SCREENS.DOC_UPLOAD)} />
         </div>
       </div>
       <ScreenLabel name="HOME — INTERPRETER" />

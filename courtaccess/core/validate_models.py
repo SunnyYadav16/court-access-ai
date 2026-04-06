@@ -88,14 +88,14 @@ def validate(project_root: str = ".") -> dict:
     from courtaccess.core.config import settings
 
     use_real_translation = settings.use_real_translation
-    use_vertex = settings.use_vertex_legal_review
+    use_vertex_legal_review = settings.use_vertex_legal_review
     nllb_model_path = settings.nllb_model_path or "/opt/airflow/models/nllb-200-distilled-1.3B-ct2"
     threshold = settings.validation_confidence_threshold
 
     # ── Params (logged as MLflow params — strings, not floats) ───────────────
     params = {
         "use_real_translation": str(use_real_translation).lower(),
-        "use_vertex_legal_review": str(use_vertex).lower(),
+        "use_vertex_legal_review": str(use_vertex_legal_review).lower(),
         "nllb_model_path": nllb_model_path,
         "target_language": "es",
         "validation_set_size": str(len(VALIDATION_SET)),

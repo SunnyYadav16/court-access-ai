@@ -11,6 +11,7 @@
  */
 
 import { create } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
 import type { User as FirebaseUser, Unsubscribe } from "firebase/auth";
 import {
   onAuthStateChanged,
@@ -69,6 +70,8 @@ interface AuthStoreState {
   documentSession: { sessionId: string; targetLanguage: string } | null;
   // Final result stored by DocProcessing so DocResults can render without a round-trip
   documentResult: DocumentStatus | null;
+  // Selected form for FormDetail page
+  selectedForm: any | null;
 }
 
 interface AuthStoreActions {
@@ -101,6 +104,7 @@ interface AuthStoreActions {
   // Document session
   setDocumentSession: (s: { sessionId: string; targetLanguage: string } | null) => void;
   setDocumentResult: (r: DocumentStatus | null) => void;
+  setSelectedForm: (form: any | null) => void;
 }
 
 type AuthStore = AuthStoreState & AuthStoreActions;
@@ -118,8 +122,10 @@ function isOAuthUser(user: FirebaseUser): boolean {
 
 // ── Store ────────────────────────────────────────────────────────────────────
 
-const useAuthStore = create<AuthStore>((set, get) => ({
-  // Initial state
+const useAuthStore = create<AuthStore>()(
+  persist(
+    (set, get) => ({
+      // Initial state
   user: null,
   authState: "loading",
   role: null,
@@ -131,6 +137,7 @@ const useAuthStore = create<AuthStore>((set, get) => ({
   pendingVerificationEmail: null,
   documentSession: null,
   documentResult: null,
+  selectedForm: null,
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -256,6 +263,7 @@ const useAuthStore = create<AuthStore>((set, get) => ({
     } catch {
       // Ignore sign-out errors
     }
+    sessionStorage.clear();
     set({
       user: null,
       authState: "unauthenticated",
@@ -328,6 +336,7 @@ const useAuthStore = create<AuthStore>((set, get) => ({
 
   setDocumentSession: (s) => set({ documentSession: s }),
   setDocumentResult: (r) => set({ documentResult: r }),
+  setSelectedForm: (f) => set({ selectedForm: f }),
 
   fetchBackendUser: async () => {
     try {
@@ -349,7 +358,18 @@ const useAuthStore = create<AuthStore>((set, get) => ({
       throw new Error("Backend user fetch failed");
     }
   },
-}));
+    }),
+    {
+      name: "auth-storage",
+      storage: createJSONStorage(() => sessionStorage),
+      partialize: (state) => ({
+        documentSession: state.documentSession,
+        documentResult: state.documentResult,
+        selectedForm: state.selectedForm,
+      }),
+    }
+  )
+);
 
 // Listen for forced logout from Axios interceptor
 if (typeof window !== "undefined") {
