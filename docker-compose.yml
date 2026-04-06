@@ -360,11 +360,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      # mlflow:
-      #   condition: service_started
-      # Wait for airflow-init to finish before running alembic migrations, so
-      # the two init processes do not race to write the schema simultaneously.
       airflow-init:
+        condition: service_completed_successfully
+      model-loader:
         condition: service_completed_successfully
     restart: unless-stopped
 
@@ -385,6 +383,8 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+      model-loader:
+        condition: service_completed_successfully
 
   # ── Airflow: Scheduler ─────────────────────────────────────────────────────
   airflow-scheduler:
@@ -400,6 +400,8 @@ services:
     depends_on:
       <<: *airflow-common-depends-on
       airflow-init:
+        condition: service_completed_successfully
+      model-loader:
         condition: service_completed_successfully
 
   # ── Airflow: DAG Processor ─────────────────────────────────────────────────
@@ -417,6 +419,8 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+      model-loader:
+        condition: service_completed_successfully
 
   # ── Airflow: Triggerer ─────────────────────────────────────────────────────
   airflow-triggerer:
@@ -433,8 +437,13 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+      model-loader:
+        condition: service_completed_successfully
 
   # ── Airflow: Init (one-shot) ───────────────────────────────────────────────
+  # Responsibility: DB migrate + admin user creation ONLY.
+  # Model loading is handled by the separate model-loader service so that a
+  # model update never forces a full-stack restart.
   airflow-init:
     <<: *airflow-common
     entrypoint: /bin/bash
@@ -443,32 +452,6 @@ services:
       - |
         mkdir -p /opt/airflow/data/forms /opt/airflow/forms /opt/airflow/models /opt/airflow/dvc_storage /opt/airflow/logs
         chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/data /opt/airflow/forms /opt/airflow/models /opt/airflow/dvc_storage /opt/airflow/logs
-
-        # Git safe.directory — required because repo is owned by host user but
-        # accessed by airflow user (UID 50000) inside the container.
-        git config --global --add safe.directory /opt/airflow
-
-        # Initialize DVC if needed, then configure the local fallback remote.
-        # --local writes to .dvc/config.local (gitignored), NOT .dvc/config,
-        # so the host's default remote (gcs) is never overwritten by this container.
-        cd /opt/airflow
-        if [ ! -d ".dvc" ]; then
-          dvc init
-          echo "DVC initialized."
-        fi
-        dvc remote add --local local_storage /opt/airflow/dvc_storage 2>/dev/null || \
-          dvc remote modify --local local_storage url /opt/airflow/dvc_storage
-        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/.dvc
-        echo "DVC remote configured: $(dvc remote list)"
-
-        # Pull models once here (as root, before other services start) so that
-        # the api and Airflow worker containers that start concurrently find
-        # models already present and skip DVC — avoiding the shared-lock race.
-        GOOGLE_APPLICATION_CREDENTIALS="${GCP_DVC_CREDENTIALS}" dvc pull --allow-missing 2>&1 || \
-          dvc checkout 2>&1 || \
-          echo "[airflow-init] DVC pull/checkout failed — models must be provided via volume mount."
-        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/models 2>/dev/null || true
-
         exec /entrypoint airflow version
     environment:
       <<: *airflow-common-env
@@ -478,6 +461,24 @@ services:
       _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
     user: "0:0"
     volumes: *airflow-common-volumes
+
+  # ── Model Loader (one-shot) ────────────────────────────────────────────────
+  # Runs in parallel with airflow-init (no shared dependency between them).
+  # Starts immediately at stack-up — the GCS model download races postgres init
+  # rather than waiting behind it, which minimises total cold-start time.
+  # All model-consuming services depend on this completing successfully.
+  model-loader:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command: ["-c", "/usr/local/bin/model-loader.sh"]
+    environment:
+      <<: *airflow-common-env
+      MODEL_LOADER_MODE: local
+    volumes: *airflow-common-volumes
+    user: "0:0"
+    restart: "no"
+    # No depends_on — only needs host bind mounts (.git, .dvc, models,
+    # dvc_storage, .config) and GCS network access, both available immediately.
 
   # ── GPU: Whisper ASR  (disabled by default, requires nvidia-container-toolkit)
   whisper:

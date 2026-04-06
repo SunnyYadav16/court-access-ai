@@ -143,9 +143,14 @@ RUN playwright install chromium
 # Copy DAGs, model stubs, and entrypoint
 COPY --chown=airflow:root dags/ /opt/airflow/dags/
 COPY --chown=airflow:root models/*.dvc /opt/airflow/models/
+# dvc-pointers/ is never a volume mount — it lives purely in the image layer.
+# model-loader.sh (prod mode) copies from here into the shared-models volume to
+# overwrite any stale .dvc hashes that persisted from a previous image version.
+COPY --chown=airflow:root models/*.dvc /opt/airflow/dvc-pointers/
 COPY --chown=airflow:root scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY --chown=airflow:root scripts/model-loader.sh /usr/local/bin/model-loader.sh
 USER root
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/model-loader.sh
 USER airflow
 
 ENTRYPOINT ["docker-entrypoint.sh"]

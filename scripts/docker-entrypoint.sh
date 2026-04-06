@@ -44,6 +44,22 @@ setup_gcp_credentials
 #   C) Neither → skip (models must be mounted manually or baked into image)
 
 pull_models() {
+    # Fast-path: model-loader service already ran and wrote the sentinel.
+    # When model-loader completes before this container starts (guaranteed by
+    # depends_on: service_completed_successfully), every container hits this
+    # path and returns immediately — no DVC lock contention possible.
+    #
+    # Two known mount points for the shared-models volume:
+    #   /opt/airflow/models  — airflow-* containers (Dockerfile target:airflow)
+    #   /app/models          — api container (gpu.Dockerfile, WORKDIR /app)
+    local sentinel
+    for sentinel in "/opt/airflow/models/.models-ready" "/app/models/.models-ready"; do
+        if [[ -f "$sentinel" ]]; then
+            log "Models ready (sentinel found at ${sentinel}) — skipping DVC pull."
+            return 0
+        fi
+    done
+
     # Skip if DVC is not installed (e.g., lightweight API container in stub mode)
     if ! command -v dvc &>/dev/null; then
         warn "DVC not installed — skipping model pull. Models must be provided externally."
