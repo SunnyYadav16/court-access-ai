@@ -21,10 +21,9 @@ falls back to logging what would be registered.
 """
 
 import logging
+import os
 import re
 from pathlib import Path
-
-from courtaccess.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +34,8 @@ DVC_MODELS: list[tuple[str, str, str]] = [
     ("nllb-200-distilled-1.3B-ct2.dvc", "nllb-200-1.3B-ct2", "NLLB-200 Translation (CTranslate2 float16)"),
     ("piper-tts-es.dvc", "piper-tts-es", "Piper TTS Spanish (es_MX ONNX)"),
     ("piper-tts-pt.dvc", "piper-tts-pt", "Piper TTS Portuguese (pt_BR ONNX)"),
-    ("spacy-en-core-web-lg.dvc", "spacy-en-core-web-lg", "spaCy NER model for PII detection"),
-    ("tfdv-baseline-stats.dvc", "tfdv-baseline-stats", "TFDV monitoring baseline statistics"),
+    ("piper-tts-en.dvc", "piper-tts-en", "Piper TTS English (en_US ONNX)"),
+    ("silero-vad-v4.dvc", "silero-vad-v4", "Silero VAD v4 (speech activity detection)"),
 ]
 
 # Llama 4 Maverick is API-only (Vertex AI) — no DVC file, registered separately.
@@ -82,10 +81,10 @@ def register_models(project_root: str = ".") -> list[dict]:
     try:
         import mlflow as _mlflow
 
-        _mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
+        _mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI"))
         _mlflow.set_experiment("courtaccess-model-registry")
         mlflow = _mlflow
-        logger.info("MLflow connected at %s", settings.mlflow_tracking_uri)
+        logger.info("MLflow connected at %s", os.getenv("MLFLOW_TRACKING_URI"))
     except Exception as exc:
         logger.warning(
             "MLflow unavailable (%s) — running in log-only mode. Models will be listed but not registered.",
@@ -116,7 +115,7 @@ def register_models(project_root: str = ".") -> list[dict]:
             "size_bytes": parsed["size_bytes"],
             "size_mb": round(parsed["size_bytes"] / 1_048_576, 1),
             "description": description,
-            "gcs_remote": settings.gcs_bucket_models,
+            "gcs_remote": os.getenv("GCS_BUCKET_MODELS", ""),
         }
 
         if mlflow is not None:
@@ -128,7 +127,7 @@ def register_models(project_root: str = ".") -> list[dict]:
                             "md5": parsed["md5"],
                             "size_mb": model_info["size_mb"],
                             "dvc_file": dvc_filename,
-                            "gcs_bucket": settings.gcs_bucket_models,
+                            "gcs_bucket": os.getenv("GCS_BUCKET_MODELS", ""),
                         }
                     )
                     mlflow.log_metrics(
@@ -167,9 +166,9 @@ def register_models(project_root: str = ".") -> list[dict]:
         "model_name": "llama-4-maverick",
         "type": "api_endpoint",
         "provider": "vertex_ai",
-        "vertex_legal_llm_model": settings.vertex_legal_llm_model,
-        "vertex_project_id": settings.vertex_project_id,
-        "vertex_location": settings.vertex_location,
+        "vertex_legal_llm_model": os.getenv("VERTEX_LEGAL_LLM_MODEL", ""),
+        "vertex_project_id": os.getenv("VERTEX_PROJECT_ID", ""),
+        "vertex_location": os.getenv("VERTEX_LOCATION", ""),
         "description": "Llama 4 Maverick — legal review via Vertex AI API",
     }
 
@@ -181,9 +180,9 @@ def register_models(project_root: str = ".") -> list[dict]:
                         "model_name": "llama-4-maverick",
                         "type": "api_endpoint",
                         "provider": "vertex_ai",
-                        "vertex_legal_llm_model": settings.vertex_legal_llm_model,
-                        "vertex_project_id": settings.vertex_project_id,
-                        "vertex_location": settings.vertex_location,
+                        "vertex_legal_llm_model": os.getenv("VERTEX_LEGAL_LLM_MODEL", ""),
+                        "vertex_project_id": os.getenv("VERTEX_PROJECT_ID", ""),
+                        "vertex_location": os.getenv("VERTEX_LOCATION", ""),
                     }
                 )
                 mlflow.log_dict(llama_info, "model_info.json")
@@ -199,8 +198,8 @@ def register_models(project_root: str = ".") -> list[dict]:
         llama_info["reason"] = "mlflow_unavailable"
         logger.info(
             "[LOG-ONLY] Model 'llama-4-maverick': Vertex AI endpoint at %s/%s",
-            settings.vertex_project_id,
-            settings.vertex_legal_llm_model,
+            os.getenv("VERTEX_PROJECT_ID", ""),
+            os.getenv("VERTEX_LEGAL_LLM_MODEL", ""),
         )
 
     results.append(llama_info)

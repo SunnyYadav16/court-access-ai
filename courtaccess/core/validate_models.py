@@ -160,9 +160,7 @@ def validate(project_root: str = ".") -> dict:
     try:
         import mlflow as _mlflow
 
-        from courtaccess.core.config import settings
-
-        tracking_uri = settings.mlflow_tracking_uri or os.getenv("MLFLOW_TRACKING_URI")
+        tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
         _mlflow.set_tracking_uri(tracking_uri)
         _mlflow.set_experiment(EXPERIMENT_NAME)
         mlflow = _mlflow

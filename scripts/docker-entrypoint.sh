@@ -170,7 +170,7 @@ register_models() {
         return 0
     fi
 
-    log "Registering models in MLflow..."
+    log "Registering models in MLflow (container: ${HOSTNAME:-unknown}, uri: ${MLFLOW_TRACKING_URI})..."
     python3 -m courtaccess.core.register_models 2>&1 || warn "MLflow registration failed (non-blocking)."
 }
 
