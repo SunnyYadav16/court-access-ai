@@ -62,7 +62,10 @@ class LegalReviewer:
         self.glossary = glossary or {}
         self.verification_mode = verification_mode  # "document" | "audio"
 
-        self._vertex_max_retries = int(os.getenv("VERTEX_MAX_RETRIES"))
+        try:
+            self._vertex_max_retries = int(os.getenv("VERTEX_MAX_RETRIES"))  # type: ignore[arg-type]
+        except (ValueError, TypeError):
+            self._vertex_max_retries = 3
         self._use_vertex_legal_review = str(os.getenv("USE_VERTEX_LEGAL_REVIEW")).lower() == "true"
 
         self._vertex_project_id = os.getenv("VERTEX_PROJECT_ID")
@@ -444,27 +447,24 @@ class LegalReviewer:
             # '/app/${GOOGLE_APPLICATION_CREDENTIALS}'. When the env var is
             # empty in .env.production this expands to '/app/' — a directory.
             # Temporarily clear any invalid path so ADC reaches the metadata server.
-            import os as _os
-
-            gac = _os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+            gac = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
             _cleared_gac = False
-            if gac and not _os.path.isfile(gac):
-                del _os.environ["GOOGLE_APPLICATION_CREDENTIALS"]
-                _cleared_gac = True
-                logger.info(
-                    "GOOGLE_APPLICATION_CREDENTIALS='%s' is not a valid file — "
-                    "clearing so ADC uses GCE metadata server.",
-                    gac,
-                )
-
             try:
+                if gac and not os.path.isfile(gac):
+                    del os.environ["GOOGLE_APPLICATION_CREDENTIALS"]
+                    _cleared_gac = True
+                    logger.info(
+                        "GOOGLE_APPLICATION_CREDENTIALS='%s' is not a valid file — "
+                        "clearing so ADC uses GCE metadata server.",
+                        gac,
+                    )
                 if self._vertex_credentials is None:
                     self._vertex_credentials, _ = google.auth.default(
                         scopes=["https://www.googleapis.com/auth/cloud-platform"]
                     )
             finally:
                 if _cleared_gac:
-                    _os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = gac
+                    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = gac
 
         self._vertex_credentials.refresh(google.auth.transport.requests.Request())
 

@@ -92,8 +92,11 @@ pull_models() {
     while [ $attempts -lt $max_attempts ]; do
         set +e
         local dvc_output
+        # Resolve credentials: prefer GCP_DVC_CREDENTIALS, fall back to
+        # GOOGLE_APPLICATION_CREDENTIALS, then empty — safe under set -u.
+        local resolved_gcp_creds="${GCP_DVC_CREDENTIALS:-${GOOGLE_APPLICATION_CREDENTIALS:-}}"
         # dvc_output=$(dvc pull --allow-missing 2>&1)
-        dvc_output=$(GOOGLE_APPLICATION_CREDENTIALS="${GCP_DVC_CREDENTIALS:-${GOOGLE_APPLICATION_CREDENTIALS}}" dvc pull --allow-missing 2>&1)
+        dvc_output=$(GOOGLE_APPLICATION_CREDENTIALS="$resolved_gcp_creds" dvc pull --allow-missing 2>&1)
         local dvc_status=$?
         set -e
 

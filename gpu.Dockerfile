@@ -135,7 +135,7 @@ RUN uv pip install "torch>=2.3.0" --index-url https://download.pytorch.org/whl/c
 RUN uv pip install ".[speech]"
 
 # GPU inference libs
-RUN uv pip install paddlepaddle-gpu paddleocr>=2.7.0
+RUN uv pip install paddlepaddle-gpu "paddleocr>=2.7.0"
 
 # DVC for model pulling at startup
 RUN uv pip install "dvc[gs]>=3.50.0"

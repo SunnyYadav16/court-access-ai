@@ -356,6 +356,7 @@ async def create_room(
     )
     in_mem_room.db_session_id = session_id
     in_mem_room.db_rt_request_id = rt_request_id
+    in_mem_room.owner_uid = user.firebase_uid  # authorises creator when they open the WS
     conversation_rooms[room_code] = in_mem_room
 
     # Dynamically determine the frontend base URL from CORS allowed origins
@@ -915,6 +916,25 @@ async def session_websocket(
             await websocket.send_json({"type": "error", "message": f"Room {room_id_param} is full"})
             await websocket.close()
             return
+
+        # ── Authorise the join ────────────────────────────────────────────
+        # Guests (room JWT): the JWT is scoped to one session — verify it
+        # matches this room's DB session before admitting the participant.
+        # Firebase users: only the room owner or an admin may join.
+        # Ad-hoc WS-only rooms (no db_session_id / owner_uid) are open to
+        # any caller that already passed the role check above.
+        _auth_denied = False
+        if ws_user.is_guest:
+            if room.db_session_id is None or ws_user.session_id != room.db_session_id:
+                _auth_denied = True
+        elif room.owner_uid is not None and caller_uid != room.owner_uid and ws_user.role != UserRole.ADMIN:
+            _auth_denied = True
+        if _auth_denied:
+            reason = "Not authorized to join this room"
+            await websocket.send_json({"type": "error", "message": reason})
+            await websocket.close(code=4003, reason=reason)
+            return
+
         room_id = room_id_param
         user_lang = room.language_b
     else:

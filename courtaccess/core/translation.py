@@ -147,6 +147,8 @@ class Translator:
             logger.info("spaCy en_core_web_lg loaded in %.2fs", time.time() - t0)
 
             model_path = os.getenv("NLLB_MODEL_PATH")
+            if not model_path:
+                raise RuntimeError("NLLB_MODEL_PATH is not set — cannot load AutoTokenizer or ctranslate2.Translator.")
 
             t1 = time.time()
             from transformers import AutoTokenizer
