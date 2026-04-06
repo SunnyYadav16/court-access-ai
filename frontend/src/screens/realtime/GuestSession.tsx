@@ -234,9 +234,10 @@ export default function GuestSession({ meta, code }: Props) {
 
   // ── Handlers ──────────────────────────────────────────────────────────────
   const handleMicToggle = useCallback(() => {
+    const currentIsMuted = useRealtimeStore.getState().isMuted
     toggleMute()
-    sendMarker(isMuted ? "MIC_UNMUTE" : "MIC_MUTE")
-  }, [isMuted, toggleMute, sendMarker])
+    sendMarker(currentIsMuted ? "MIC_UNMUTE" : "MIC_MUTE")
+  }, [toggleMute, sendMarker])
 
   function handleLeave() {
     disconnect()

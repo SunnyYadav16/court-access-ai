@@ -205,6 +205,11 @@ class Translator:
         except Exception as e:
             logger.debug("malloc_trim unavailable: %s", e)
 
+    def _ensure_loaded(self) -> None:
+        """Raise RuntimeError if real-speech mode is on but models are unloaded."""
+        if self._use_real and (self._nlp is None or self._tokenizer is None or self._ct2_translator is None):
+            raise RuntimeError("Translator models have been unloaded. Call load() before translating.")
+
     def translate_one(self, text: str, target_lang: str) -> str:
         """
         Translate a single string through the full 8-step protection pipeline.
@@ -223,6 +228,7 @@ class Translator:
                 self.config replaces hardcoded Spanish dicts.
                 self._nlp replaces module-level global.
         """
+        self._ensure_loaded()
         if not text or not text.strip():
             return text
 
@@ -297,6 +303,7 @@ class Translator:
         Returns:
             {"original": str, "translated": str, "confidence": float}
         """
+        self._ensure_loaded()
         if not self._use_real:
             return self._stub_translate(text, target_lang)
 

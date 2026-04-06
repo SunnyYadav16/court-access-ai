@@ -392,25 +392,32 @@ async def join_room(
 ) -> RoomJoinResponse:
     """
     Full flow:
-      1. Look up RealtimeTranslationRequest by room_code.
+      1. Look up RealtimeTranslationRequest by room_code (SELECT FOR UPDATE).
       2. Validate: exists (404), phase=='waiting' (409), not expired (410).
       3. Optionally resolve Firebase token → partner_user_id.
       4. Resolve partner_name: body override > pre-filled by court official.
-      5. Update rt_request: phase='active', partner_joined_at, partner_user_id.
-      6. Update parent Session: status='active' (explicit, idempotent).
-      7. Write audit log (realtime_room_joined), commit all in one transaction.
-      8. Issue room JWT via create_room_token().
-      9. Return RoomJoinResponse with JWT + session context.
+      5. Update rt_request: phase='joining' (token issued, WS not yet open),
+         partner_name, partner_user_id — but NOT partner_joined_at yet.
+      6. Write audit log (realtime_token_issued), commit in one transaction.
+      7. Issue room JWT via create_room_token().
+      8. Return RoomJoinResponse with JWT + session context.
+
+    phase='joining' is an intermediate state meaning a valid JWT has been issued
+    but the guest has not yet opened the WebSocket. The WS handler flips the
+    phase to 'active' and stamps partner_joined_at once the connection is
+    actually admitted. Using SELECT FOR UPDATE serialises concurrent POST calls
+    so only one JWT is ever minted per room.
     """
     from db.models import RealtimeTranslationRequest
     from db.models import Session as SessionModel
     from db.queries.audit import write_audit
 
     now = datetime.now(tz=UTC)
+    room_code = body.room_code.strip().upper()  # normalise: DB always stores uppercase
 
-    # ── 1. Look up room by code ───────────────────────────────────────────────
+    # ── 1. Look up room by code (FOR UPDATE serialises concurrent joins) ─────────
     result = await db.execute(
-        select(RealtimeTranslationRequest).where(RealtimeTranslationRequest.room_code == body.room_code)
+        select(RealtimeTranslationRequest).where(RealtimeTranslationRequest.room_code == room_code).with_for_update()
     )
     rt_request = result.scalar_one_or_none()
 
@@ -457,28 +464,30 @@ async def join_room(
         else (rt_request.partner_name or "Guest")
     )
 
-    # ── 5 & 6. Update rt_request + Session in one transaction ─────────────────
-    rt_request.phase = "active"
-    rt_request.partner_joined_at = now
+    # ── 5. Mark token issued (phase='joining') — WS connect will flip to 'active' ─
+    # Do NOT set partner_joined_at here; it is set only once the WebSocket
+    # handshake succeeds so the lobby reflects real connectivity.
+    rt_request.phase = "joining"
     rt_request.partner_name = partner_name
     if partner_user_id is not None:
         rt_request.partner_user_id = partner_user_id
 
+    # Still need the Session row to read target_language for the response.
     session_result = await db.execute(select(SessionModel).where(SessionModel.session_id == rt_request.session_id))
     session = session_result.scalar_one_or_none()
     if session is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Session record missing.")
-    session.status = "active"
+    # session.status stays 'active' only after WS admits the participant.
 
-    # ── 7. Audit log ──────────────────────────────────────────────────────────
+    # ── 6. Audit log ──────────────────────────────────────────────────────────
     await write_audit(
         db,
         user_id=audit_user_id,
-        action_type="realtime_room_joined",
+        action_type="realtime_token_issued",
         session_id=rt_request.session_id,
         rt_request_id=rt_request.rt_request_id,
         details={
-            "room_code": body.room_code,
+            "room_code": room_code,
             "partner_name": partner_name,
             "is_guest": partner_user_id is None,
             "partner_user_id": str(partner_user_id) if partner_user_id else None,
@@ -661,7 +670,8 @@ async def end_room(
     session.completed_at = now
 
     # ── 6. Phase 3.4 — GCS transcript upload ──────────────────────────────────
-    room = conversation_rooms.get(str(session_id))
+    # conversation_rooms is keyed by room_code, not session_id.
+    room = conversation_rooms.get(rt_request.room_code)
     if room and room.transcript_logger is not None:
         import asyncio
         import json
@@ -963,6 +973,36 @@ async def session_websocket(
     participant = Participant(websocket, user_name, user_lang, audio_session, role=role)
     room.add_participant(participant)
 
+    # ── Promote phase to 'active' once the guest socket is admitted ───────
+    # join_room() sets phase='joining' (token issued) but defers the final
+    # transition here so partner_joined_at reflects actual WS connectivity.
+    # Best-effort: a DB failure is logged but does not close the socket.
+    if ws_user.is_guest and room.db_rt_request_id is not None:
+        try:
+            from db.database import AsyncSessionLocal
+            from db.models import RealtimeTranslationRequest
+            from db.models import Session as SessionModel
+
+            async with AsyncSessionLocal() as _ws_db:
+                _rt_res = await _ws_db.execute(
+                    select(RealtimeTranslationRequest).where(
+                        RealtimeTranslationRequest.rt_request_id == room.db_rt_request_id
+                    )
+                )
+                _rt_req = _rt_res.scalar_one_or_none()
+                if _rt_req is not None and _rt_req.phase == "joining":
+                    _rt_req.phase = "active"
+                    _rt_req.partner_joined_at = datetime.now(tz=UTC)
+                    _sess_res = await _ws_db.execute(
+                        select(SessionModel).where(SessionModel.session_id == _rt_req.session_id)
+                    )
+                    _sess = _sess_res.scalar_one_or_none()
+                    if _sess is not None:
+                        _sess.status = "active"
+                    await _ws_db.commit()
+        except Exception as _e:
+            logger.warning("Failed to promote room phase to active on WS connect: %s", _e)
+
     # ── Notify participants ───────────────────────────────────────────────
     if len(room.participants) == 1:
         await participant.send_json_safe(
@@ -1148,7 +1188,7 @@ async def session_websocket(
             if msg_type == "transcript" and room.recorder is not None:
                 room.recorder.add_speech_pcm(role, pcm, 16_000)
                 if tts_wav and current_partner:
-                    room.recorder.add_tts_pcm(current_partner.language, tts_wav)
+                    room.recorder.add_tts_pcm(current_partner.role, tts_wav)
                 if room.transcript_logger is not None:
                     room.transcript_logger.add_entry(
                         speaker_role=role,
@@ -1189,7 +1229,7 @@ async def session_websocket(
             return
 
         room.session_active = True
-        room.session_start_time = datetime.now()
+        room.session_start_time = datetime.now(tz=UTC)
         ts = room.session_start_time.strftime("%Y%m%d_%H%M%S")
         room.session_name = f"{ts}_{room_id}_{room.language_a}-{room.language_b}"
 
@@ -1223,9 +1263,13 @@ async def session_websocket(
             return
         room.session_active = False
         await _finalize_recording()
+        # DB-backed rooms broadcast "ended" — the DB row was finalised and the
+        # room code is spent.  Ad-hoc WS-only rooms broadcast "ready" to allow
+        # the creator to start a new session within the same room object.
+        terminal_status = "ended" if room.db_session_id is not None else "ready"
         for p in room.participants:
             if p.ws_open:
-                await p.send_json_safe({"type": "session_status", "status": "ready"})
+                await p.send_json_safe({"type": "session_status", "status": terminal_status})
         logger.info("Room %s: session ended by %s", room_id, user_name)
 
     async def _handle_mic_mute(muted: bool) -> None:
@@ -1259,7 +1303,11 @@ async def session_websocket(
             return
         if getattr(room, "artifacts_uploaded", False):
             return
-        room.artifacts_uploaded = True
+        # Guard against concurrent calls (e.g. session_end + WS disconnect racing).
+        if getattr(room, "artifacts_uploading", False):
+            return
+        room.artifacts_uploading = True
+        # artifacts_uploaded is set only after all durable writes succeed (below).
         session_dir = SESSIONS_DIR / room.session_name
         try:
             pending = [t for t in background_tasks if not t.done()]
@@ -1399,13 +1447,19 @@ async def session_websocket(
                             "transcript_url": transcript_signed_url,
                         }
                     )
+            # All durable writes succeeded — mark as done.
+            room.artifacts_uploaded = True
             logger.info("Room %s: session finalised → %s", room_id, session_dir)
 
         except Exception as exc:
             logger.exception("Room %s: failed to finalise recording: %s", room_id, exc)
         finally:
-            room.recorder = None
-            room.transcript_logger = None
+            room.artifacts_uploading = False
+            # Only discard in-memory objects after a successful upload so that a
+            # retry call (e.g. from the WS disconnect handler) can attempt again.
+            if getattr(room, "artifacts_uploaded", False):
+                room.recorder = None
+                room.transcript_logger = None
 
     # ── Main receive loop ─────────────────────────────────────────────────
 
@@ -1494,14 +1548,19 @@ async def session_websocket(
         logger.exception("Room %s: [%s] error: %s", room_id, user_name, exc)
     finally:
         participant.ws_open = False
-        for t in background_tasks:
-            if not t.done():
-                t.cancel()
 
-        # Finalize recording if session was active when this participant left
+        # Finalize first — _finalize_recording() drains queued ASR/MT tasks
+        # via asyncio.gather before writing audio/transcript to disk.  Cancelling
+        # background_tasks first would silently drop in-flight utterances.
         if room.session_active:
             room.session_active = False
             await _finalize_recording()
+
+        # Cancel any tasks that finalization didn't drain (e.g. partial tasks
+        # still running after an abrupt disconnect mid-utterance).
+        for t in background_tasks:
+            if not t.done():
+                t.cancel()
 
         # Notify partner
         departing_partner = room.get_partner(participant)

@@ -283,6 +283,16 @@ const useRealtimeStore = create<RealtimeStore>()(
         caseDocket: state.caseDocket,
         messages: state.messages,
       }),
+      onRehydrateStorage: () => (state) => {
+        // JSON serialises Date → ISO string; convert back so
+        // timestamp.toLocaleTimeString() doesn't crash after a page refresh.
+        if (state?.messages) {
+          state.messages = state.messages.map((m) => ({
+            ...m,
+            timestamp: new Date(m.timestamp as unknown as string),
+          }));
+        }
+      },
     }
   )
 );

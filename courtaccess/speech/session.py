@@ -1,5 +1,6 @@
 import io
 import secrets
+import tempfile
 import uuid
 import wave
 from datetime import datetime
@@ -18,7 +19,10 @@ logger = get_logger(__name__)
 
 def _get_recordings_dir() -> Path:
     """Resolve recordings directory from settings (lazy, creates on first call)."""
-    d = Path(get_settings().session_recordings_dir)
+    recordings_dir = get_settings().session_recordings_dir or str(
+        Path(tempfile.gettempdir()) / "courtaccess" / "sessions"
+    )
+    d = Path(recordings_dir)
     d.mkdir(parents=True, exist_ok=True)
     return d
 

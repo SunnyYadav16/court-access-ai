@@ -239,10 +239,14 @@ async def _resolve_role_request(
     if decision == "approved":
         user_result = await db.execute(select(User).where(User.user_id == req.user_id))
         target = user_result.scalar_one_or_none()
-        if target:
-            target.role_id = req.requested_role_id
-            target.role_approved_by = admin_user_id
-            target.role_approved_at = req.reviewed_at
+        if target is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User {req.user_id} not found — cannot apply role approval.",
+            )
+        target.role_id = req.requested_role_id
+        target.role_approved_by = admin_user_id
+        target.role_approved_at = req.reviewed_at
 
     await write_audit(
         db,

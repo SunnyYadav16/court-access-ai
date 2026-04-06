@@ -31,7 +31,7 @@
 #     && rm -rf /var/lib/apt/lists/*
 
 # # Install uv
-# COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+# COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /bin/uv
 
 # # Make python3.11 the default python3
 # RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
@@ -69,11 +69,11 @@
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ── Stage 0: Build React frontend ────────────────────────────────────────────
-FROM node:22-slim AS frontend-build
+FROM node:22.22.0-slim AS frontend-build
 
 WORKDIR /frontend
 
-RUN npm install -g pnpm
+RUN npm install -g pnpm@10.30.3
 
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
@@ -119,7 +119,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /bin/uv
 
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
 
@@ -150,6 +150,16 @@ COPY --from=frontend-build /frontend/dist ./frontend/dist
 
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Run as non-root for container hardening.
+# HOME=/tmp gives DVC and git a writable directory for caches/config
+# without needing a real home directory.
+RUN groupadd --system appuser && useradd --system --gid appuser --no-create-home --home-dir /tmp appuser \
+    && chown -R appuser:appuser /app /usr/local/bin/docker-entrypoint.sh
+
+ENV HOME=/tmp
+
+USER appuser
 
 EXPOSE 8000
 

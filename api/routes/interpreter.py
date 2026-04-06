@@ -119,8 +119,12 @@ async def list_review_sessions(
 
     if target_language:
         nllb = nllb_target.get(target_language.strip().lower())
-        if nllb:
-            q = q.where(SessionModel.target_language == nllb)
+        if nllb is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported target_language '{target_language}'. Allowed values: {list(nllb_target.keys())}.",
+            )
+        q = q.where(SessionModel.target_language == nllb)
 
     result = await db.execute(q)
     rows = result.all()
@@ -131,7 +135,7 @@ async def list_review_sessions(
             target_language=s.target_language,
             status=r.status,
             avg_confidence_score=r.avg_confidence_score,
-            llama_corrections_count=r.llama_corrections_count,
+            llama_corrections_count=r.llama_corrections_count or 0,
             created_at=s.created_at.isoformat(),
         )
         for s, r in rows

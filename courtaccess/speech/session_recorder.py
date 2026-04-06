@@ -28,6 +28,7 @@ import hashlib
 import io
 import json
 import os
+import tempfile
 import time
 import wave
 from datetime import UTC, datetime
@@ -43,7 +44,10 @@ logger = get_logger(__name__)
 
 def _get_sessions_dir() -> Path:
     """Resolve session recordings directory from settings (lazy)."""
-    d = Path(get_settings().session_recordings_dir)
+    recordings_dir = get_settings().session_recordings_dir or str(
+        Path(tempfile.gettempdir()) / "courtaccess" / "sessions"
+    )
+    d = Path(recordings_dir)
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -105,17 +109,13 @@ class SessionRecorder:
         self.name_a = name_a
         self.name_b = name_b
 
-        # Per-language PCM buffers (list of int16 byte strings)
-        self._tracks: dict[str, list[bytes]] = {
-            language_a: [],
-            language_b: [],
-        }
+        # Per-role PCM buffers keyed by role ("a" / "b").
+        # Keying by role (not language) keeps buffers distinct when both
+        # participants speak the same language.
+        self._tracks: dict[str, list[bytes]] = {"a": [], "b": []}
 
-        # Running sample count per track (for alignment)
-        self._sample_counts: dict[str, int] = {
-            language_a: 0,
-            language_b: 0,
-        }
+        # Running sample count per role track (for alignment)
+        self._sample_counts: dict[str, int] = {"a": 0, "b": 0}
 
         self._start_time = time.time()
 
@@ -138,30 +138,29 @@ class SessionRecorder:
             pcm:  float32 numpy array in [-1, 1] at *source_sample_rate*.
             source_sample_rate: sample rate of the input PCM.
         """
-        lang = self.language_a if role == "a" else self.language_b
-        other_lang = self.language_b if role == "a" else self.language_a
+        other_role = "b" if role == "a" else "a"
 
         pcm_16k = self._resample_if_needed(pcm, source_sample_rate)
         pcm_bytes = self._float32_to_int16_bytes(pcm_16k)
         n_samples = len(pcm_16k)
 
         # Append speech to speaker's track
-        self._tracks[lang].append(pcm_bytes)
-        self._sample_counts[lang] += n_samples
+        self._tracks[role].append(pcm_bytes)
+        self._sample_counts[role] += n_samples
 
         # Pad other track with silence
         silence = b"\x00\x00" * n_samples  # 2 bytes per int16 sample
-        self._tracks[other_lang].append(silence)
-        self._sample_counts[other_lang] += n_samples
+        self._tracks[other_role].append(silence)
+        self._sample_counts[other_role] += n_samples
 
-    def add_tts_pcm(self, target_lang: str, wav_bytes: bytes) -> None:
+    def add_tts_pcm(self, role: str, wav_bytes: bytes) -> None:
         """
         Extract raw PCM from TTS WAV output and append to the target
-        language track.  The other track is padded with equivalent silence.
+        role track.  The other track is padded with equivalent silence.
 
         Args:
-            target_lang: language code the TTS was synthesised in.
-            wav_bytes:   complete WAV file bytes from Piper TTS.
+            role:      "a" or "b" — the participant whose track receives the TTS.
+            wav_bytes: complete WAV file bytes from Piper TTS.
         """
         if not wav_bytes:
             return
@@ -189,15 +188,16 @@ class SessionRecorder:
         pcm_bytes = self._float32_to_int16_bytes(pcm_16k)
         n_samples = len(pcm_16k)
 
-        # Append TTS to target track
-        self._tracks[target_lang].append(pcm_bytes)
-        self._sample_counts[target_lang] += n_samples
+        other_role = "b" if role == "a" else "a"
+
+        # Append TTS to target role track
+        self._tracks[role].append(pcm_bytes)
+        self._sample_counts[role] += n_samples
 
         # Pad the other track with silence
-        other_lang = self.language_b if target_lang == self.language_a else self.language_a
         silence = b"\x00\x00" * n_samples
-        self._tracks[other_lang].append(silence)
-        self._sample_counts[other_lang] += n_samples
+        self._tracks[other_role].append(silence)
+        self._sample_counts[other_role] += n_samples
 
     # ------------------------------------------------------------------ #
     #  Finalisation                                                        #
@@ -216,10 +216,14 @@ class SessionRecorder:
 
         paths: dict[str, Path] = {}
 
-        for lang in [self.language_a, self.language_b]:
-            filename = f"{self.session_name}_{lang}.wav"
+        # Map role → language for filenames/metadata; roles always differ so
+        # buffers remain distinct even when language_a == language_b.
+        role_lang = {"a": self.language_a, "b": self.language_b}
+
+        for role, lang in role_lang.items():
+            filename = f"{self.session_name}_{role}_{lang}.wav"
             wav_path = output_dir / filename
-            pcm_data = b"".join(self._tracks[lang])
+            pcm_data = b"".join(self._tracks[role])
 
             with wave.open(str(wav_path), "wb") as wf:
                 wf.setnchannels(self.CHANNELS)
@@ -227,9 +231,9 @@ class SessionRecorder:
                 wf.setframerate(self.SAMPLE_RATE)
                 wf.writeframes(pcm_data)
 
-            duration_s = self._sample_counts[lang] / self.SAMPLE_RATE
+            duration_s = self._sample_counts[role] / self.SAMPLE_RATE
             logger.info("Wrote %s (%.1fs, %d bytes)", wav_path.name, duration_s, len(pcm_data))
-            paths[lang] = wav_path
+            paths[role] = wav_path
 
         return paths
 
@@ -589,10 +593,12 @@ def upload_wav_tracks(
 
     Args:
         session_name: Session identifier used as the GCS path prefix.
-        wav_paths:    ``{lang: local_wav_path}`` from ``SessionRecorder.finalize()``.
+        wav_paths:    ``{role: local_wav_path}`` from ``SessionRecorder.finalize()``
+                      where role is ``"a"`` or ``"b"``.  The WAV filename already
+                      encodes the language (e.g. ``session_a_en.wav``).
 
     Returns:
-        Mapping of ``audio_{lang}`` → ``gs://`` URI for each uploaded track.
+        Mapping of ``audio_{role}`` → ``gs://`` URI for each uploaded track.
         Empty dict when audio storage is disabled or bucket is not configured.
     """
     from courtaccess.core import gcs
@@ -605,12 +611,12 @@ def upload_wav_tracks(
         return {}
 
     uploaded: dict[str, str] = {}
-    for lang, wav_path in wav_paths.items():
+    for role, wav_path in wav_paths.items():
         blob_name = f"sessions/{session_name}/{wav_path.name}"
         try:
             gcs.upload_bytes(bucket, blob_name, wav_path.read_bytes(), "audio/wav")
             uri = gcs.gcs_uri(bucket, blob_name)
-            uploaded[f"audio_{lang}"] = uri
+            uploaded[f"audio_{role}"] = uri
             logger.info("Uploaded audio track → %s", uri)
         except Exception as exc:
             logger.warning("Failed to upload audio %s: %s", wav_path.name, exc)

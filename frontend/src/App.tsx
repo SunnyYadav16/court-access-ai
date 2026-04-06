@@ -61,6 +61,7 @@ const ROLE_SCREENS: Record<UserRole, Set<ScreenId>> = {
     SCREENS.DOC_UPLOAD, SCREENS.DOC_PROCESSING, SCREENS.DOC_RESULTS,
     SCREENS.FORMS_LIBRARY, SCREENS.FORM_DETAIL,
     SCREENS.SETTINGS,
+    SCREENS.REALTIME_SESSION, // guests enter via JoinRoomScreen (room-code auth)
   ]),
   court_official: new Set([
     SCREENS.LANDING,

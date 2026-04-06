@@ -103,7 +103,8 @@ export default function RealtimeLobby({ onNav }: Props) {
           // Brief pause so the user reads the confirmation, then navigate
           setTimeout(goToSession, JOIN_CONFIRM_DELAY_MS)
         } else if (status.phase === "ended") {
-          // Room expired or was closed externally
+          // Room expired or was closed externally — stop polling immediately
+          clearInterval(pollId)
           setPollError("This room has ended. Please create a new session.")
         }
       } catch {

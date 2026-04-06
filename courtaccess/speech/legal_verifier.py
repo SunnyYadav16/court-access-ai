@@ -74,6 +74,8 @@ class LegalVerifierService:
     _instance: Optional["LegalVerifierService"] = None
     _client = None
     _model: str = ""
+    _credentials = None  # google.auth credentials object — stored for refresh
+    _base_url: str = ""  # Vertex AI OpenAI-compat base URL — stored for client rebuild
 
     def __new__(cls) -> "LegalVerifierService":
         if cls._instance is None:
@@ -170,6 +172,8 @@ class LegalVerifierService:
                 f"projects/{project}/locations/{location}/endpoints/openapi"
             )
 
+            LegalVerifierService._credentials = credentials
+            LegalVerifierService._base_url = base_url
             LegalVerifierService._client = openai.OpenAI(
                 base_url=base_url,
                 api_key=credentials.token,
@@ -188,6 +192,32 @@ class LegalVerifierService:
             raise RuntimeError("[LegalVerifier] VERTEX_PROJECT_ID setting is required.") from None
         except Exception as exc:
             raise RuntimeError(f"[LegalVerifier] Failed to initialise Vertex AI client: {exc}") from exc
+
+    # ------------------------------------------------------------------ #
+    #  Token refresh                                                      #
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def _ensure_client_fresh(cls) -> None:
+        """Refresh the Vertex AI token and rebuild the OpenAI client if expired.
+
+        Google OAuth2 tokens expire after ~1 hour.  Calling this before every
+        verify() call ensures long-running sessions never hit a 401.
+        """
+        creds = cls._credentials
+        if creds is None:
+            return
+        if not creds.valid:
+            import google.auth.transport.requests
+
+            creds.refresh(google.auth.transport.requests.Request())
+            import openai
+
+            cls._client = openai.OpenAI(
+                base_url=cls._base_url,
+                api_key=creds.token,
+            )
+            logger.debug("[LegalVerifier] Credentials refreshed; OpenAI client rebuilt.")
 
     # ------------------------------------------------------------------ #
     #  Public API                                                         #
@@ -248,6 +278,7 @@ class LegalVerifierService:
         )
 
         try:
+            LegalVerifierService._ensure_client_fresh()
             client = LegalVerifierService._client
             model = LegalVerifierService._model
 

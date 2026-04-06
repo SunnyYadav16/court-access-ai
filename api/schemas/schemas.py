@@ -13,7 +13,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -316,7 +316,7 @@ class RoomCreateRequest(BaseModel):
     The creator is always the English speaker; the partner is the LEP individual.
     """
 
-    target_language: Language = Field(
+    target_language: Literal["es", "pt"] = Field(
         description=(
             "ISO 639-1 code for the LEP partner's spoken language. "
             "The court official is assumed to speak English. "

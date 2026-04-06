@@ -91,19 +91,22 @@ class Settings(BaseSettings):
     whisper_model_path: str | None
     piper_tts_es_path: str | None
     piper_tts_pt_path: str | None
-    silero_vad_model_path: str
+    silero_vad_model_path: str | None = None
 
     # ── Real-Time Speech Pipeline ────────────────────────────────────────────
+    # All fields below are only read when use_real_speech=True; they default to
+    # None so Settings() can instantiate without them when the speech pipeline
+    # is disabled (USE_REAL_SPEECH=false).
     use_real_speech: bool
-    whisper_model: str
-    nllb_model: str
-    vad_speech_threshold: float
-    piper_voices_dir: str | None
-    piper_tts_en_path: str
-    session_recordings_dir: str
-    turn_grace_a_ms: float
-    turn_grace_b_ms: float
-    tts_lockout_buffer_ms: float
+    whisper_model: str | None = None
+    nllb_model: str | None = None
+    vad_speech_threshold: float | None = None
+    piper_voices_dir: str | None = None
+    piper_tts_en_path: str | None = None
+    session_recordings_dir: str | None = None
+    turn_grace_a_ms: float | None = None
+    turn_grace_b_ms: float | None = None
+    tts_lockout_buffer_ms: float | None = None
 
     # ── Auth token ────────────────────────────────────────────────────────────
     access_token_expire_minutes: int

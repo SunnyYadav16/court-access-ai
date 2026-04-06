@@ -49,11 +49,11 @@ export default function HomeOfficial({ onNav }: Props) {
   const [toast, setToast] = useState<string | null>(null)
   useEffect(() => {
     const msg = sessionStorage.getItem("pending_toast")
-    if (msg) {
-      sessionStorage.removeItem("pending_toast")
-      setToast(msg)
-      setTimeout(() => setToast(null), 4_000)
-    }
+    if (!msg) return;
+    sessionStorage.removeItem("pending_toast")
+    setToast(msg)
+    const timerId: number = window.setTimeout(() => setToast(null), 4_000)
+    return () => window.clearTimeout(timerId)
   }, [])
 
   return (

@@ -83,6 +83,11 @@ export interface ConnectOptions {
 // RealtimeSetup opens the socket; RealtimeSession inherits it without reconnecting.
 const _wsRef = { current: null as WebSocket | null };
 
+// Module-level timer ref for the mic-unlock timeout.
+// Stored at module scope (matching _wsRef) so _close() can cancel it even
+// after a component unmount/remount cycle.
+const _micUnlockTimer = { current: null as ReturnType<typeof setTimeout> | null };
+
 // Export so screens can check connection state without going through the hook return value.
 export { _wsRef };
 
@@ -119,6 +124,10 @@ export function useRealtimeWebSocket({
   const _close = useCallback(() => {
     wsRef.current?.close();
     wsRef.current = null;
+    if (_micUnlockTimer.current !== null) {
+      clearTimeout(_micUnlockTimer.current);
+      _micUnlockTimer.current = null;
+    }
     onStopCapture?.();
   }, [onStopCapture]);
 
@@ -235,7 +244,13 @@ export function useRealtimeWebSocket({
         case "mic_locked": {
           setMicLocked(true);
           const durationMs = (msg.duration_ms as number | undefined) ?? 2000;
-          setTimeout(() => setMicLocked(false), durationMs);
+          if (_micUnlockTimer.current !== null) {
+            clearTimeout(_micUnlockTimer.current);
+          }
+          _micUnlockTimer.current = setTimeout(() => {
+            _micUnlockTimer.current = null;
+            setMicLocked(false);
+          }, durationMs);
           break;
         }
 
@@ -344,7 +359,13 @@ export function useRealtimeWebSocket({
       };
 
       ws.onclose = () => {
-        wsRef.current = null;
+        // If wsRef.current is still set, the close was unexpected (server drop,
+        // network error) — run the full cleanup that manual disconnect also runs.
+        // If _close() was already called first, wsRef is already null and we
+        // skip straight to onClose to avoid double-stopping capture.
+        if (wsRef.current !== null) {
+          _close();
+        }
         onClose?.();
       };
     },

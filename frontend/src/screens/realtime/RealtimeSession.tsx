@@ -343,9 +343,9 @@ export default function RealtimeSession({ onNav }: Props) {
 
   // ── Action handlers ────────────────────────────────────────────────────────
   function handleToggleMute() {
-    // Send marker BEFORE toggling — isMuted still reflects the pre-toggle
-    // state, so: muted → send UNMUTE; unmuted → send MUTE.
-    sendMarker(isMuted ? "MIC_UNMUTE" : "MIC_MUTE")
+    // Read live store value so the marker is never stale between renders.
+    const currentIsMuted = useRealtimeStore.getState().isMuted
+    sendMarker(currentIsMuted ? "MIC_UNMUTE" : "MIC_MUTE")
     toggleMute()
   }
 
@@ -436,7 +436,7 @@ export default function RealtimeSession({ onNav }: Props) {
                 border: "none"
               }}
             >
-              {phase === "ended" ? "Exit Room" : "End Session"}
+              {phase === "ended" ? "Exit Room" : isCreator ? "End Session" : "Leave Room"}
             </button>
           </div>
         </div>

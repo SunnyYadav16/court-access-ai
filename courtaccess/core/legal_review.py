@@ -25,6 +25,7 @@ import hashlib
 import json
 import logging
 import os
+import threading
 import time
 
 from courtaccess.languages.base import LanguageConfig
@@ -63,7 +64,8 @@ class LegalReviewer:
         self.verification_mode = verification_mode  # "document" | "audio"
 
         try:
-            self._vertex_max_retries = int(os.getenv("VERTEX_MAX_RETRIES"))  # type: ignore[arg-type]
+            _retries = int(os.getenv("VERTEX_MAX_RETRIES"))  # type: ignore[arg-type]
+            self._vertex_max_retries = max(1, _retries)
         except (ValueError, TypeError):
             self._vertex_max_retries = 3
         self._use_vertex_legal_review = str(os.getenv("USE_VERTEX_LEGAL_REVIEW")).lower() == "true"
@@ -74,6 +76,7 @@ class LegalReviewer:
         self._gcp_sa_json = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
 
         self._vertex_credentials = None
+        self._vertex_credentials_lock = threading.Lock()
         self._cache_hits = 0
         self._cache_misses = 0
 
@@ -431,40 +434,41 @@ class LegalReviewer:
         import google.auth.transport.requests
         from openai import OpenAI
 
-        if self._gcp_sa_json:
-            # Local dev — explicit SA JSON key
-            from google.oauth2 import service_account
+        with self._vertex_credentials_lock:
+            if self._gcp_sa_json:
+                # Local dev — explicit SA JSON key
+                from google.oauth2 import service_account
 
-            if self._vertex_credentials is None:
-                self._vertex_credentials = service_account.Credentials.from_service_account_info(
-                    json.loads(self._gcp_sa_json),
-                    scopes=["https://www.googleapis.com/auth/cloud-platform"],
-                )
-        else:
-            # Production — use GCE metadata server (ADC).
-            #
-            # docker-compose builds GOOGLE_APPLICATION_CREDENTIALS as
-            # '/app/${GOOGLE_APPLICATION_CREDENTIALS}'. When the env var is
-            # empty in .env.production this expands to '/app/' — a directory.
-            # Temporarily clear any invalid path so ADC reaches the metadata server.
-            gac = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-            _cleared_gac = False
-            try:
-                if gac and not os.path.isfile(gac):
-                    del os.environ["GOOGLE_APPLICATION_CREDENTIALS"]
-                    _cleared_gac = True
-                    logger.info(
-                        "GOOGLE_APPLICATION_CREDENTIALS='%s' is not a valid file — "
-                        "clearing so ADC uses GCE metadata server.",
-                        gac,
-                    )
                 if self._vertex_credentials is None:
-                    self._vertex_credentials, _ = google.auth.default(
-                        scopes=["https://www.googleapis.com/auth/cloud-platform"]
+                    self._vertex_credentials = service_account.Credentials.from_service_account_info(
+                        json.loads(self._gcp_sa_json),
+                        scopes=["https://www.googleapis.com/auth/cloud-platform"],
                     )
-            finally:
-                if _cleared_gac:
-                    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = gac
+            else:
+                # Production — use GCE metadata server (ADC).
+                #
+                # docker-compose builds GOOGLE_APPLICATION_CREDENTIALS as
+                # '/app/${GOOGLE_APPLICATION_CREDENTIALS}'. When the env var is
+                # empty in .env.production this expands to '/app/' — a directory.
+                # Temporarily clear any invalid path so ADC reaches the metadata server.
+                gac = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+                _cleared_gac = False
+                try:
+                    if gac and not os.path.isfile(gac):
+                        del os.environ["GOOGLE_APPLICATION_CREDENTIALS"]
+                        _cleared_gac = True
+                        logger.info(
+                            "GOOGLE_APPLICATION_CREDENTIALS='%s' is not a valid file — "
+                            "clearing so ADC uses GCE metadata server.",
+                            gac,
+                        )
+                    if self._vertex_credentials is None:
+                        self._vertex_credentials, _ = google.auth.default(
+                            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+                        )
+                finally:
+                    if _cleared_gac:
+                        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = gac
 
         self._vertex_credentials.refresh(google.auth.transport.requests.Request())
 

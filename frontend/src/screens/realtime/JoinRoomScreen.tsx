@@ -12,7 +12,7 @@
  *   error       → room not found / expired / already active
  */
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { GoogleAuthProvider, getRedirectResult, signInWithRedirect, type User as FirebaseUser } from "firebase/auth"
 import { auth } from "@/config/firebase"
@@ -89,7 +89,7 @@ function PrimaryButton({
 }: {
   onClick: () => void
   disabled?: boolean
-  children: React.ReactNode
+  children: ReactNode
 }) {
   return (
     <button
@@ -115,7 +115,7 @@ function OutlineButton({
 }: {
   onClick: () => void
   disabled?: boolean
-  children: React.ReactNode
+  children: ReactNode
 }) {
   return (
     <button

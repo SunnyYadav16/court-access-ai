@@ -95,8 +95,14 @@ pull_models() {
         # Resolve credentials: prefer GCP_DVC_CREDENTIALS, fall back to
         # GOOGLE_APPLICATION_CREDENTIALS, then empty — safe under set -u.
         local resolved_gcp_creds="${GCP_DVC_CREDENTIALS:-${GOOGLE_APPLICATION_CREDENTIALS:-}}"
+        # Only pass GOOGLE_APPLICATION_CREDENTIALS if it resolves to an existing
+        # file; otherwise let DVC use ADC (GCE metadata server) unobstructed.
         # dvc_output=$(dvc pull --allow-missing 2>&1)
-        dvc_output=$(GOOGLE_APPLICATION_CREDENTIALS="$resolved_gcp_creds" dvc pull --allow-missing 2>&1)
+        if [ -n "$resolved_gcp_creds" ] && [ -f "$resolved_gcp_creds" ]; then
+            dvc_output=$(GOOGLE_APPLICATION_CREDENTIALS="$resolved_gcp_creds" dvc pull --allow-missing 2>&1)
+        else
+            dvc_output=$(dvc pull --allow-missing 2>&1)
+        fi
         local dvc_status=$?
         set -e
 
@@ -153,6 +159,14 @@ register_models() {
 }
 
 # ── Step 3: Run ───────────────────────────────────────────────────────────────
+
+# Ensure the session recordings directory exists and is writable by appuser.
+# SESSION_RECORDINGS_DIR may point outside /app (e.g. a mounted volume);
+# mkdir -p is a no-op if the path already exists and is accessible.
+_rec_dir="${SESSION_RECORDINGS_DIR:-/tmp/courtaccess/sessions}"
+mkdir -p "$_rec_dir" || warn "Could not create SESSION_RECORDINGS_DIR='$_rec_dir' — recording writes may fail."
+unset _rec_dir
+
 pull_models
 register_models
 
@@ -188,7 +202,7 @@ else
     # container starts before the healthcheck window closes.)
     log "Waiting for Postgres at ${_PG_HOST}:${_PG_PORT} (up to $((_RETRIES * _WAIT))s)..."
     for i in $(seq 1 "$_RETRIES"); do
-        if bash -c "echo >/dev/tcp/${_PG_HOST}/${_PG_PORT}" 2>/dev/null; then
+        if (exec 3<>"/dev/tcp/$_PG_HOST/$_PG_PORT") 2>/dev/null; then
             log "Postgres is ready."
             break
         fi
