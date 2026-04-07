@@ -30,7 +30,7 @@ MAGIC_BYTES = {
 }
 
 # ── Thresholds ────────────────────────────────────────────────────────────────
-MIN_VALID_PDF_SIZE = int(os.getenv("ANOMALY_MIN_PDF_SIZE_BYTES"))
+MIN_VALID_PDF_SIZE = int(os.getenv("ANOMALY_MIN_PDF_SIZE_BYTES", "1024"))
 
 
 def _detect_file_type(file_path: str) -> str | None:
