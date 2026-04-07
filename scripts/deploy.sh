@@ -2,10 +2,11 @@
 # scripts/deploy.sh — called by the deploy-to-vm SSH action in deploy.yml.
 #
 # Usage (on the VM):
-#   bash ~/app/scripts/deploy.sh <github_sha>
+#   bash ~/court-access-ai/scripts/deploy.sh <github_sha>
 #
 # The CI workflow passes ${{ github.sha }} as $1.
-# All docker compose commands assume the working directory is ~/app.
+# APP_DIR is resolved from the script's own location — works regardless of
+# where it is called from, as long as the repo is cloned intact.
 #
 # Sequence:
 #   1. git fetch + reset  — pins repo to the exact deployed SHA (not branch HEAD)
@@ -21,8 +22,9 @@
 
 set -euo pipefail
 
+# APP_DIR resolves to the repo root regardless of call site (~/court-access-ai).
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPOSE="docker compose -f ${APP_DIR}/docker-compose.prod.yml"
+COMPOSE="docker compose -f ${APP_DIR}/docker-compose.prod.yml --env-file ${APP_DIR}/.env.production"
 STATE_FILE="${APP_DIR}/.deploy_state"
 
 # ── 1. Argument validation ─────────────────────────────────────────────────────
@@ -36,10 +38,19 @@ fi
 # On a fresh project the scraper DAG hasn't fired yet, so we seed an empty
 # manifest so the first tagged release can proceed. Subsequent deploys use
 # the real manifest written by form_scraper_dag each Monday.
-MANIFEST_GCS="gs://${GCS_BUCKET_FORMS}/manifests/form_catalog_manifest.json"
-if ! gsutil -q stat "${MANIFEST_GCS}" 2>/dev/null; then
-  echo "⚠️  No manifest found at ${MANIFEST_GCS} — seeding empty manifest for first deploy."
-  echo '{"forms":[],"total_active_forms":0}' | gsutil cp - "${MANIFEST_GCS}"
+#
+# Load GCS_BUCKET_FORMS from .env.production so we don't hard-code bucket names.
+if [ -f "${APP_DIR}/.env.production" ]; then
+  GCS_BUCKET_FORMS_LOCAL=$(grep -E '^GCS_BUCKET_FORMS=' "${APP_DIR}/.env.production" | cut -d= -f2-)
+fi
+GCS_BUCKET_FORMS_LOCAL="${GCS_BUCKET_FORMS_LOCAL:-}"
+
+if [ -n "${GCS_BUCKET_FORMS_LOCAL}" ]; then
+  MANIFEST_GCS="gs://${GCS_BUCKET_FORMS_LOCAL}/manifests/form_catalog_manifest.json"
+  if ! gsutil -q stat "${MANIFEST_GCS}" 2>/dev/null; then
+    echo "⚠️  No manifest found at ${MANIFEST_GCS} — seeding empty manifest for first deploy."
+    echo '{"forms":[],"total_active_forms":0}' | gsutil cp - "${MANIFEST_GCS}"
+  fi
 fi
 
 # ── 2. Checkout exact deployed SHA ────────────────────────────────────────────
