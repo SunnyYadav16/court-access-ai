@@ -24,7 +24,6 @@ import pytest
 
 from courtaccess.core.ingest_document import classify_page, ingest_pdf, is_content_image
 
-
 # ── Page mock builder ─────────────────────────────────────────────────────────
 
 def _make_page(
@@ -265,7 +264,6 @@ class TestClassifyPageScanned:
 
     def test_high_image_coverage_is_scanned_even_with_text(self):
         # img_coverage > 40% overrides span count
-        page_area = 595.0 * 842.0
         large_rect = pymupdf.Rect(0, 0, 595, 450)  # covers > 50% of page
 
         img = (1, 0, 595, 450, 8, "DeviceRGB", "", "", "jpeg", 0, 0)
@@ -279,7 +277,7 @@ class TestClassifyPageScanned:
         assert result["img_coverage"] > 40.0
 
     def test_few_spans_no_images_falls_back_to_scanned(self):
-        # 1–5 spans, no images, coverage 0 → doesn't reach DIGITAL branch
+        # 1-5 spans, no images, coverage 0 -> doesn't reach DIGITAL branch
         page = _make_page(span_texts=["word1", "word2", "word3"])
         result = classify_page(page)
         assert result["page_type"] == "SCANNED"
@@ -413,9 +411,8 @@ class TestIngestPdf:
         pdf.write_bytes(b"%PDF-1.4\n")
         mock_doc = MagicMock()
         mock_doc.page_count = 0
-        with patch("pymupdf.open", return_value=mock_doc):
-            with pytest.raises(ValueError):
-                ingest_pdf(str(pdf))
+        with patch("pymupdf.open", return_value=mock_doc), pytest.raises(ValueError):
+            ingest_pdf(str(pdf))
 
     def test_single_page_pdf_returns_correct_contract(self, tmp_path):
         pdf = tmp_path / "test.pdf"

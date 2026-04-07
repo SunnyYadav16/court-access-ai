@@ -43,7 +43,6 @@ from courtaccess.core.pdf_utils import (
     safe_color,
 )
 
-
 # ── Span / line dict builders ─────────────────────────────────────────────────
 
 def _span(text="text", font="", flags=0, size=12.0, color=0,
@@ -768,7 +767,7 @@ class TestGetAvailableWidth:
 
     def test_cell_not_covering_y_mid_is_skipped(self):
         avail = pymupdf.Rect(50, 100, 200, 120)   # y_mid = 110
-        cell = pymupdf.Rect(0, 0, 300, 50)         # cell y range 0–50, doesn't cover 110
+        cell = pymupdf.Rect(0, 0, 300, 50)         # cell y range 0-50, doesn't cover 110
         result = _get_available_width(avail, [cell], page_width=594.0)
         # Falls back to margin calculation
         assert result == pytest.approx(558.0 - 50.0)

@@ -31,7 +31,6 @@ from courtaccess.core.classify_document import (
     classify_document,
 )
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _make_vertex_response(payload: dict) -> MagicMock:
