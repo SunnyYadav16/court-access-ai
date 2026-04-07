@@ -81,8 +81,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     # ── Initialize Firebase Admin SDK ────────────────────────────────────────
-    # Credentials auto-detected from GOOGLE_APPLICATION_CREDENTIALS env var (local)
-    # or Workload Identity (GKE). No arguments needed.
     if not firebase_admin._apps:  # Only initialize once
         firebase_admin.initialize_app()
         logger.info("Firebase Admin SDK initialized")

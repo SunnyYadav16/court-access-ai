@@ -54,7 +54,8 @@ defaults:
 env:
   REGISTRY: ${{ vars.GCP_ARTIFACT_REGISTRY }}
   REPOSITORY: ${{ vars.GCP_ARTIFACT_REPOSITORY }}
-  API_IMAGE: courtaccess-api
+  API_CPU_IMAGE: courtaccess-api-cpu
+  API_GPU_IMAGE: courtaccess-api-gpu
   AIRFLOW_IMAGE: courtaccess-airflow
 
 jobs:
@@ -91,24 +92,24 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       # ── 6. Compute image tags ────────────────────────────────────────────────
-      # Short SHA (7 chars) for immutable image reference.
+      # Full SHA for immutable image reference — matches what deploy.yml uses.
       # deploy.yml reads reports/image-digest.txt to know which exact image to deploy.
       - name: Compute image tags
         id: tags
         run: |
-          SHORT_SHA="${GITHUB_SHA::7}"
           PROJECT_ID="${{ vars.GCP_PROJECT_ID }}"
           BASE="${{ env.REGISTRY }}/${PROJECT_ID}/${{ env.REPOSITORY }}"
-          echo "short_sha=${SHORT_SHA}"                                        >> "$GITHUB_OUTPUT"
-          echo "api_tag=${BASE}/${{ env.API_IMAGE }}:${SHORT_SHA}"             >> "$GITHUB_OUTPUT"
-          echo "api_latest=${BASE}/${{ env.API_IMAGE }}:latest"                >> "$GITHUB_OUTPUT"
-          echo "airflow_tag=${BASE}/${{ env.AIRFLOW_IMAGE }}:${SHORT_SHA}"     >> "$GITHUB_OUTPUT"
-          echo "airflow_latest=${BASE}/${{ env.AIRFLOW_IMAGE }}:latest"        >> "$GITHUB_OUTPUT"
+          echo "api_cpu_tag=${BASE}/${{ env.API_CPU_IMAGE }}:${{ github.sha }}"         >> "$GITHUB_OUTPUT"
+          echo "api_cpu_latest=${BASE}/${{ env.API_CPU_IMAGE }}:latest"             >> "$GITHUB_OUTPUT"
+          echo "api_gpu_tag=${BASE}/${{ env.API_GPU_IMAGE }}:${{ github.sha }}"         >> "$GITHUB_OUTPUT"
+          echo "api_gpu_latest=${BASE}/${{ env.API_GPU_IMAGE }}:latest"             >> "$GITHUB_OUTPUT"
+          echo "airflow_tag=${BASE}/${{ env.AIRFLOW_IMAGE }}:${{ github.sha }}"     >> "$GITHUB_OUTPUT"
+          echo "airflow_latest=${BASE}/${{ env.AIRFLOW_IMAGE }}:latest"             >> "$GITHUB_OUTPUT"
 
-      # ── 7. Build & push — api target ─────────────────────────────────────────
-      # Includes the React frontend (built inside the Docker multi-stage build).
+      # ── 7. Build & push — api-cpu target ────────────────────────────────────
+      # CPU-only image for local dev (no GPU required). Uses the multi-stage Dockerfile.
       # Cache: GitHub Actions cache backend keeps layer cache across runs.
-      - name: Build & push api image
+      - name: Build & push api-cpu image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -116,13 +117,48 @@ jobs:
           target: api
           push: true
           tags: |
-            ${{ steps.tags.outputs.api_tag }}
-            ${{ steps.tags.outputs.api_latest }}
+            ${{ steps.tags.outputs.api_cpu_tag }}
+            ${{ steps.tags.outputs.api_cpu_latest }}
+          # VITE_* vars are baked into the React bundle at build time and cannot
+          # be injected at runtime. Sensitive values come from Secrets; public
+          # config (project IDs, domains) come from Variables.
+          build-args: |
+            VITE_FIREBASE_API_KEY=${{ secrets.VITE_FIREBASE_API_KEY }}
+            VITE_FIREBASE_AUTH_DOMAIN=${{ vars.VITE_FIREBASE_AUTH_DOMAIN }}
+            VITE_FIREBASE_PROJECT_ID=${{ vars.VITE_FIREBASE_PROJECT_ID }}
+            VITE_FIREBASE_STORAGE_BUCKET=${{ vars.VITE_FIREBASE_STORAGE_BUCKET }}
+            VITE_FIREBASE_MESSAGING_SENDER_ID=${{ vars.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+            VITE_FIREBASE_APP_ID=${{ secrets.VITE_FIREBASE_APP_ID }}
+            VITE_API_BASE_URL=${{ vars.VITE_API_BASE_URL }}
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
           provenance: false   # disable SLSA provenance (not needed for this registry)
 
-      # ── 8. Build & push — airflow target ─────────────────────────────────────
+      # ── 8. Build & push — api-gpu target ────────────────────────────────────
+      # gpu.Dockerfile — used exclusively by docker-compose.prod.yml.
+      # Same VITE_* build args as the CPU image (ARGs are declared in gpu.Dockerfile).
+      - name: Build & push api-gpu image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: gpu.Dockerfile
+          push: true
+          tags: |
+            ${{ steps.tags.outputs.api_gpu_tag }}
+            ${{ steps.tags.outputs.api_gpu_latest }}
+          build-args: |
+            VITE_FIREBASE_API_KEY=${{ secrets.VITE_FIREBASE_API_KEY }}
+            VITE_FIREBASE_AUTH_DOMAIN=${{ vars.VITE_FIREBASE_AUTH_DOMAIN }}
+            VITE_FIREBASE_PROJECT_ID=${{ vars.VITE_FIREBASE_PROJECT_ID }}
+            VITE_FIREBASE_STORAGE_BUCKET=${{ vars.VITE_FIREBASE_STORAGE_BUCKET }}
+            VITE_FIREBASE_MESSAGING_SENDER_ID=${{ vars.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+            VITE_FIREBASE_APP_ID=${{ secrets.VITE_FIREBASE_APP_ID }}
+            VITE_API_BASE_URL=${{ vars.VITE_API_BASE_URL }}
+          cache-from: type=gha,scope=api-gpu
+          cache-to: type=gha,mode=max,scope=api-gpu
+          provenance: false
+
+      # ── 10. Build & push — airflow target ────────────────────────────────────
       # apache/airflow:3.1.7 base + courtaccess package + DAGs + Playwright/Chromium
       - name: Build & push airflow image
         uses: docker/build-push-action@v6
@@ -138,7 +174,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=airflow
           provenance: false
 
-      # ── 9. Write image digest report ─────────────────────────────────────────
+      # ── 11. Write image digest report ────────────────────────────────────────
       # deploy.yml reads this file to know exactly which SHA to deploy.
       # Keeps deployments reproducible — no implicit :latest tag chasing.
       - name: Write image digest report
@@ -146,11 +182,11 @@ jobs:
           mkdir -p reports
           cat > reports/image-digest.txt <<EOF
           build_sha:       ${{ github.sha }}
-          short_sha:       ${{ steps.tags.outputs.short_sha }}
           actor:           ${{ github.actor }}
           timestamp:       $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-          api_image:       ${{ steps.tags.outputs.api_tag }}
+          api_cpu_image:   ${{ steps.tags.outputs.api_cpu_tag }}
+          api_gpu_image:   ${{ steps.tags.outputs.api_gpu_tag }}
           airflow_image:   ${{ steps.tags.outputs.airflow_tag }}
           EOF
           echo "── Image digest report ──"
@@ -163,7 +199,7 @@ jobs:
           path: reports/image-digest.txt
           retention-days: 90   # keep long enough to trace any deployed version
 
-      # ── 10. Notify on build failure (email) ──────────────────────────────────
+      # ── 12. Notify on build failure (email) ──────────────────────────────────
       # Requirement 5 — only fires when a previous step in this job failed.
       # Requires 4 secrets: NOTIFY_EMAIL_FROM, NOTIFY_EMAIL_TO,
       #                     NOTIFY_EMAIL_PASSWORD (SMTP app password),

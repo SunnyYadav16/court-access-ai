@@ -501,7 +501,7 @@ Key relationship: one session → one uploaded file → multiple translation req
 | Backend API | FastAPI (REST + WebSocket) |
 | Audio Capture | WebRTC |
 | Orchestration | Apache Airflow 3.x (3 DAGs) |
-| Compute | Google Kubernetes Engine (GKE) with GPU node pools |
+| Compute | Google Compute Engine (GCE) VM with GPU (Docker Compose, gpu.Dockerfile) |
 | File Storage | Google Cloud Storage (GCS) with CMEK encryption |
 | Database | Cloud SQL (PostgreSQL) via SQLAlchemy async + Alembic |
 | File Delivery | GCS Signed URLs (1-hour expiry) |
