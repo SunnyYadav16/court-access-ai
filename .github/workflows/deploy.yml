@@ -15,17 +15,21 @@
 #                                          rollback-on-failure
 #
 # Required GitHub Actions repository variables (Settings → Variables):
-#   GCP_PROJECT_ID   — GCP project ID
+#   GCP_PROJECT_ID, GCP_REGION, GCP_ARTIFACT_REGISTRY, GCP_ARTIFACT_REPOSITORY
+#   APP_ENV, DEBUG, ALLOWED_ORIGINS, POSTGRES_DB, POSTGRES_HOST, POSTGRES_PORT
+#   GCS_BUCKET_*, GCIP_AUTH_DOMAIN, GCIP_PROJECT_ID
+#   VERTEX_PROJECT_ID, VERTEX_LOCATION, VERTEX_LEGAL_LLM_MODEL, LEGAL_VERIFY_TIMEOUT
+#   SIGNED_URL_EXPIRY_SECONDS, AIRFLOW_BASE_URL, MLFLOW_TRACKING_URI
+#   USE_REAL_*, ACCESS_TOKEN_EXPIRE_MINUTES, ALGORITHM, VALIDATION_CONFIDENCE_THRESHOLD
+#   VM_SSH_HOST, VM_SSH_USER, VM_EXTERNAL_IP
 #
 # Required GitHub Actions secrets (Settings → Secrets):
-#   GCP_WORKLOAD_IDENTITY_PROVIDER — WIF provider resource name
-#   GCP_SERVICE_ACCOUNT            — SA email (needs AR + GCS roles)
-#   VM_HOST                        — GCE VM IP or hostname
-#   VM_SSH_USER                    — SSH username on the VM
-#   VM_SSH_KEY                     — Private SSH key for VM_SSH_USER
-#   NOTIFY_EMAIL_FROM              — sender address (e.g. ci@courtaccess.ai)
-#   NOTIFY_EMAIL_TO                — recipient(s) for deploy notifications
-#   NOTIFY_EMAIL_PASSWORD          — SMTP app password for the sender
+#   GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_SERVICE_ACCOUNT
+#   VM_SSH_PRIVATE_KEY, VM_KNOWN_HOSTS
+#   SECRET_KEY, POSTGRES_USER, POSTGRES_PASSWORD
+#   GCIP_API_KEY, REDIS_URL, ROOM_JWT_SECRET
+#   AIRFLOW_USERNAME, AIRFLOW_PASSWORD
+#   NOTIFY_EMAIL_FROM, NOTIFY_EMAIL_TO, NOTIFY_EMAIL_PASSWORD
 
 name: Deploy to VM
 
@@ -49,7 +53,7 @@ defaults:
 env:
   REGISTRY: ${{ vars.GCP_ARTIFACT_REGISTRY }}
   REPOSITORY: ${{ vars.GCP_ARTIFACT_REPOSITORY }}
-  API_IMAGE: courtaccess-api
+  API_GPU_IMAGE: courtaccess-api-gpu
   AIRFLOW_IMAGE: courtaccess-airflow
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -65,44 +69,87 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
+      # ── App ──
       APP_ENV: ${{ vars.APP_ENV }}
       DEBUG: ${{ vars.DEBUG }}
       SECRET_KEY: ${{ secrets.SECRET_KEY }}
       ALLOWED_ORIGINS: ${{ vars.ALLOWED_ORIGINS }}
+      # ── Database ──
       POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
       POSTGRES_DB: ${{ vars.POSTGRES_DB }}
       POSTGRES_HOST: ${{ vars.POSTGRES_HOST }}
       POSTGRES_PORT: ${{ vars.POSTGRES_PORT }}
+      # ── GCP ──
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       GCP_REGION: ${{ vars.GCP_REGION }}
+      GCP_SERVICE_ACCOUNT_JSON: ""
       GCS_BUCKET_UPLOADS: ${{ vars.GCS_BUCKET_UPLOADS }}
       GCS_BUCKET_TRANSLATED: ${{ vars.GCS_BUCKET_TRANSLATED }}
       GCS_BUCKET_FORMS: ${{ vars.GCS_BUCKET_FORMS }}
       GCS_BUCKET_MODELS: ${{ vars.GCS_BUCKET_MODELS }}
+      GCS_BUCKET_TRANSCRIPTS: ${{ vars.GCS_BUCKET_TRANSCRIPTS }}
+      SIGNED_URL_EXPIRY_SECONDS: ${{ vars.SIGNED_URL_EXPIRY_SECONDS }}
+      # ── Firebase/GCIP ──
       GCIP_API_KEY: ${{ secrets.GCIP_API_KEY }}
       GCIP_AUTH_DOMAIN: ${{ vars.GCIP_AUTH_DOMAIN }}
       GCIP_PROJECT_ID: ${{ vars.GCIP_PROJECT_ID }}
+      # ── Vertex AI ──
       VERTEX_PROJECT_ID: ${{ vars.VERTEX_PROJECT_ID }}
       VERTEX_LOCATION: ${{ vars.VERTEX_LOCATION }}
       VERTEX_LEGAL_LLM_MODEL: ${{ vars.VERTEX_LEGAL_LLM_MODEL }}
       LEGAL_VERIFY_TIMEOUT: ${{ vars.LEGAL_VERIFY_TIMEOUT }}
-      GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
-      SIGNED_URL_EXPIRY_SECONDS: ${{ vars.SIGNED_URL_EXPIRY_SECONDS }}
+      VERTEX_MAX_RETRIES: ${{ vars.VERTEX_MAX_RETRIES }}
+      # ── Airflow ──
       AIRFLOW_BASE_URL: ${{ vars.AIRFLOW_BASE_URL }}
       AIRFLOW_USERNAME: ${{ secrets.AIRFLOW_USERNAME }}
       AIRFLOW_PASSWORD: ${{ secrets.AIRFLOW_PASSWORD }}
+      # ── MLflow ──
       MLFLOW_TRACKING_URI: ${{ vars.MLFLOW_TRACKING_URI }}
+      # ── Redis ──
       REDIS_URL: ${{ secrets.REDIS_URL }}
-      # ── Model toggles map to GitHub Variables so you can flip them without editing YAML ──
+      # ── Auth ──
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${{ vars.ACCESS_TOKEN_EXPIRE_MINUTES }}
+      ALGORITHM: ${{ vars.ALGORITHM }}
+      ROOM_JWT_SECRET: ${{ secrets.ROOM_JWT_SECRET }}
+      ROOM_JWT_EXPIRY_HOURS: "4"
+      ROOM_CODE_EXPIRY_MINUTES: "60"
+      # ── Model toggles ──
       USE_REAL_CLASSIFICATION: ${{ vars.USE_REAL_CLASSIFICATION }}
       USE_REAL_TRANSLATION: ${{ vars.USE_REAL_TRANSLATION }}
       USE_VERTEX_LEGAL_REVIEW: ${{ vars.USE_VERTEX_LEGAL_REVIEW }}
       USE_REAL_OCR: ${{ vars.USE_REAL_OCR }}
-      ACCESS_TOKEN_EXPIRE_MINUTES: ${{ vars.ACCESS_TOKEN_EXPIRE_MINUTES }}
-      ALGORITHM: ${{ vars.ALGORITHM }}
-      # Confidence threshold for translation quality gate.
+      USE_REAL_HANDWRITING_OCR: ${{ vars.USE_REAL_HANDWRITING_OCR }}
+      USE_REAL_SPEECH: ${{ vars.USE_REAL_SPEECH }}
+      # ── Model paths (empty — no weights in CI) ──
+      NLLB_MODEL_PATH: ""
+      WHISPER_MODEL_PATH: ""
+      PIPER_TTS_ES_PATH: ""
+      PIPER_TTS_PT_PATH: ""
+      # ── Validation ──
       VALIDATION_CONFIDENCE_THRESHOLD: ${{ vars.VALIDATION_CONFIDENCE_THRESHOLD }}
+      # ── Monitoring & Bias Thresholds ──
+      BIAS_UNDERSERVED_THRESHOLD: "0.5"
+      BIAS_TRANSLATION_COVERAGE_MIN: "20.0"
+      BIAS_LANGUAGE_GAP_MAX: "30.0"
+      # ── Model & Extraction Overrides ──
+      OCR_CONFIDENCE_THRESHOLD: "0.35"
+      TRANSLATION_HALLUCINATION_RATIO_MAX: "2.5"
+      TRANSLATION_HALLUCINATION_RATIO_MIN: "0.1"
+      # ── Anomaly Detection Thresholds ──
+      ANOMALY_FORM_DROP_PCT: "20.0"
+      ANOMALY_MASS_NEW_FORMS: "50"
+      ANOMALY_DOWNLOAD_FAIL_PCT: "10.0"
+      ANOMALY_MIN_PDF_SIZE_BYTES: "1024"
+      ANOMALY_MAX_PDF_SIZE_BYTES: "52428800"
+      ANOMALY_SCHEMA_ERRORS: "0"
+      # ── Scraper Tuning ──
+      SCRAPER_BATCH_SIZE: "10"
+      SCRAPER_BATCH_SLEEP_SEC: "15"
+      SCRAPER_PRE_DOWNLOAD_SLEEP: "60"
+      SCRAPER_REQUEST_TIMEOUT: "30"
+      # ── Processor Tuning ──
+      PDF_RENDER_DPI: "300"
 
     steps:
       - name: Checkout
@@ -119,6 +166,9 @@ jobs:
 
       - name: Install package with dev + monitoring extras
         run: uv pip install --system ".[dev,monitoring]"
+
+      - name: Install DVC with GCS support
+        run: pip install "dvc[gs]" --quiet
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -144,29 +194,18 @@ jobs:
 
       - name: Check model DVC pointer sync
         # Runs dvc status on the models/ directory ONLY — not pipeline outputs.
-        #
-        # Why scoped to models/ and not the full dvc.lock?
-        #   • Pipeline outputs (form_catalog.json, pretranslation_report.json) are
-        #     expected to drift as source code evolves between dvc repro runs.
-        #   • Model .dvc files should NOT drift: if a model hash changed without
-        #     a matching dvc.lock update, the wrong weights will be deployed.
-        #   • This job has GCS auth (unlike model-validation in test.yml), so
-        #     dvc status can actually reach the remote to validate hashes.
-        #
         # Fails deployment if any model .dvc file is out of sync with the remote.
         # This catches: uncommitted dvc add, manually edited .dvc files, or a
-        # model retrained without updating dvc.lock.
+        # model retrained without updating the pointer.
         run: |
           STATUS=$(dvc status models/ --json 2>/dev/null || echo "{}")
 
-          # dvc status returns {} when everything is in sync
           if [ "$STATUS" = "{}" ] || [ "$STATUS" = "[]" ] || [ -z "$STATUS" ]; then
             echo "✅ All model .dvc files are in sync with the remote."
           else
             echo "❌ Model DVC state is out of sync — deployment blocked."
             echo ""
-            echo "This means a model .dvc file was modified without running:"
-            echo "  dvc add models/<model-dir> && dvc push && git add && git commit"
+            echo "Fix: dvc add models/<model-dir> && dvc push && git add && git commit"
             echo ""
             echo "Changes detected:"
             echo "$STATUS"
@@ -202,10 +241,8 @@ jobs:
         run: python -m courtaccess.core.register_models
 
       - name: Validate translation pipeline (pre-deploy gate)
-        # Runs the fixed 20-phrase reference set against the pipeline and logs
-        # metrics to the real MLflow server so every tagged release leaves a
-        # visible validation run in the UI.
-        # Exits non-zero if nllb_avg_confidence < VALIDATION_CONFIDENCE_THRESHOLD (0.85).
+        # Runs the fixed 20-phrase reference set against the pipeline.
+        # Exits non-zero if nllb_avg_confidence < VALIDATION_CONFIDENCE_THRESHOLD.
         run: python -m courtaccess.core.validate_models
 
   # ════════════════════════════════════════════════════════════════════════════
@@ -228,11 +265,13 @@ jobs:
 
     steps:
       # ── Configure SSH ──────────────────────────────────────────────────────
+      # VM_SSH_HOST and VM_SSH_USER are Variables (not sensitive).
+      # VM_SSH_PRIVATE_KEY and VM_KNOWN_HOSTS are Secrets.
       - name: Set up SSH key
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.VM_SSH_PRIVATE_KEY }}"    > ~/.ssh/deploy_key
-          echo "${{ secrets.VM_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          echo "${{ secrets.VM_SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          echo "${{ secrets.VM_KNOWN_HOSTS }}"     > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/deploy_key
           chmod 644 ~/.ssh/known_hosts
 
@@ -242,12 +281,12 @@ jobs:
       - name: Save current deployment for rollback
         id: save-rollback
         run: |
-          SSH="ssh -i ~/.ssh/deploy_key ${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}"
+          SSH="ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes ${{ vars.VM_SSH_USER }}@${{ vars.VM_SSH_HOST }}"
 
           API_IMG=$($SSH "docker ps --filter name=courtaccess-api --format '{{.Image}}' | head -1" 2>/dev/null || true)
           AIRFLOW_IMG=$($SSH "docker ps --filter name=courtaccess-airflow --format '{{.Image}}' | head -1" 2>/dev/null || true)
 
-          echo "api_image=${API_IMG:-none}"     >> "$GITHUB_OUTPUT"
+          echo "api_image=${API_IMG:-none}"         >> "$GITHUB_OUTPUT"
           echo "airflow_image=${AIRFLOW_IMG:-none}" >> "$GITHUB_OUTPUT"
 
           echo "Rollback references saved:"
@@ -255,16 +294,16 @@ jobs:
           echo "  Airflow: ${AIRFLOW_IMG:-none}"
 
       # ── Deploy ─────────────────────────────────────────────────────────────
-      # scripts/deploy.sh receives IMAGE_TAG and handles: docker pull, compose
-      # down/up, and basic container health checks on the VM itself.
+      # deploy.sh handles: git reset to exact SHA, docker pull, ordered restart,
+      # health check. The repo is cloned at ~/court-access-ai on the VM.
       - name: Deploy
         uses: appleboy/ssh-action@v1
         with:
-          host: ${{ secrets.VM_SSH_HOST }}
-          username: ${{ secrets.VM_SSH_USER }}
+          host: ${{ vars.VM_SSH_HOST }}
+          username: ${{ vars.VM_SSH_USER }}
           key: ${{ secrets.VM_SSH_PRIVATE_KEY }}
           script: |
-            bash ~/app/scripts/deploy.sh "${{ github.sha }}"
+            bash ~/court-access-ai/scripts/deploy.sh "${{ github.sha }}"
 
   # ════════════════════════════════════════════════════════════════════════════
   # Job 3 — post-deploy-validation
@@ -284,7 +323,7 @@ jobs:
       - name: Smoke test — GET /health
         run: |
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            "${BASE_URL}/health" --max-time 10)
+            "${BASE_URL}/health" --max-time 15)
 
           if [ "$STATUS" -ne 200 ]; then
             echo "❌ /health returned HTTP ${STATUS} (expected 200)"
@@ -295,16 +334,15 @@ jobs:
       - name: Smoke test — GET /api/forms/
         run: |
           RESPONSE=$(curl -s "${BASE_URL}/api/forms/?page=1&page_size=1" \
-            --max-time 10)
+            --max-time 15)
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            "${BASE_URL}/api/forms/?page=1&page_size=1" --max-time 10)
+            "${BASE_URL}/api/forms/?page=1&page_size=1" --max-time 15)
 
           if [ "$STATUS" -ne 200 ]; then
             echo "❌ /api/forms/ returned HTTP ${STATUS} (expected 200)"
             exit 1
           fi
 
-          # Verify the response has a 'total' field >= 0
           TOTAL=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('total', -1))")
           if [ "$TOTAL" -lt 0 ]; then
             echo "❌ /api/forms/ response missing 'total' field"
@@ -356,22 +394,22 @@ jobs:
       - name: Rollback via SSH
         uses: appleboy/ssh-action@v1
         with:
-          host: ${{ secrets.VM_SSH_HOST }}
-          username: ${{ secrets.VM_SSH_USER }}
+          host: ${{ vars.VM_SSH_HOST }}
+          username: ${{ vars.VM_SSH_USER }}
           key: ${{ secrets.VM_SSH_PRIVATE_KEY }}
           script: |
             API_IMAGE="${{ needs.deploy-to-vm.outputs.rollback_api_image }}"
             AIRFLOW_IMAGE="${{ needs.deploy-to-vm.outputs.rollback_airflow_image }}"
 
-            cd ~/app
+            cd ~/court-access-ai
 
             if [ "$API_IMAGE" = "none" ] || [ -z "$API_IMAGE" ]; then
               echo "⚠️  No previous API image to roll back to — skipping."
             else
               echo "Rolling back API to: ${API_IMAGE}"
-              # Extract the SHA tag from the full image ref; APP_VERSION is what
-              # docker-compose.prod.yml uses to select the image.
-              APP_VERSION="${API_IMAGE##*:}" docker compose -f docker-compose.prod.yml up -d --no-deps api
+              APP_VERSION="${API_IMAGE##*:}" \
+                docker compose -f docker-compose.prod.yml --env-file .env.production \
+                up -d --no-deps api
               echo "✅ API rolled back."
             fi
 
@@ -379,7 +417,9 @@ jobs:
               echo "⚠️  No previous Airflow image to roll back to — skipping."
             else
               echo "Rolling back Airflow to: ${AIRFLOW_IMAGE}"
-              APP_VERSION="${AIRFLOW_IMAGE##*:}" docker compose -f docker-compose.prod.yml up -d --no-deps \
+              APP_VERSION="${AIRFLOW_IMAGE##*:}" \
+                docker compose -f docker-compose.prod.yml --env-file .env.production \
+                up -d --no-deps \
                 airflow-apiserver airflow-scheduler airflow-dag-processor airflow-triggerer
               echo "✅ Airflow rolled back."
             fi
