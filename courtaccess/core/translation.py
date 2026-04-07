@@ -79,12 +79,12 @@ CITATION_PATTERNS: list = [
 
 
 def _cuda_available() -> bool:
-    """Check CUDA availability without hard-requiring torch at import time."""
+    """Check CUDA availability via CTranslate2 (no torch dependency)."""
     try:
-        import torch
+        import ctranslate2
 
-        return torch.cuda.is_available()
-    except ImportError:
+        return ctranslate2.get_cuda_device_count() > 0
+    except Exception:
         return False
 
 

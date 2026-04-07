@@ -187,9 +187,23 @@ def task_load_form_entry(**context) -> dict:
         version_num = latest.version
         form_name = str(form.form_name)
         form_slug = str(form.form_slug) if form.form_slug else "form"
+        file_type = str(form.file_type or "pdf").lower()
         preprocessing_flags = list(form.preprocessing_flags or [])
 
     # ── All ORM access is done — session is now closed ───────────────────────
+
+    # Safety net: DOCX forms must be routed through docx_pipeline_dag, not here.
+    # This guard fires before any work (download, OCR, translation) begins, so
+    # the failure is immediate and the error message is actionable.
+    # It protects against any future bypass of the routing logic in
+    # form_scraper_dag.task_prepare_trigger_confs.
+    if file_type == "docx":
+        raise ValueError(
+            f"form_id '{form_id}' has file_type='{file_type}' and must be processed by "
+            "'docx_pipeline_dag', not 'form_pretranslation_dag'. "
+            "Check task_prepare_trigger_confs routing logic in form_scraper_dag."
+        )
+
     if already_has_es and already_has_pt:
         logger.info("Form '%s' already translated. Skipping.", form_id)
         context["ti"].xcom_push(key="form_meta", value={"skip": True, "form_id": form_id})
@@ -198,7 +212,7 @@ def task_load_form_entry(**context) -> dict:
     dag_run_id = context["dag_run"].run_id if context.get("dag_run") else "manual"
     work_dir = Path(f"/tmp/courtaccess/form_pretranslation/{dag_run_id}")  # noqa: S108  # nosec B108
     work_dir.mkdir(parents=True, exist_ok=True)
-    local_orig = str(work_dir / "original.pdf")
+    local_orig = str(work_dir / f"original.{file_type}")
 
     b, bl = gcs.parse_gcs_uri(orig_uri)
     gcs.download_file(b, bl, local_orig, correlation_id=form_id)
@@ -671,7 +685,7 @@ with DAG(
     default_args=DEFAULT_ARGS,
     catchup=False,
     is_paused_upon_creation=False,
-    max_active_runs=1,
+    max_active_runs=10,
     tags=["courtaccess", "forms", "translation", "ocr"],
 ) as dag:
     t1_load = PythonOperator(task_id="load_form_entry", python_callable=task_load_form_entry)
