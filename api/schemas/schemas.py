@@ -81,10 +81,11 @@ class RoomPhase(StrEnum):
     Lifecycle phase of a two-party real-time room.
 
     Mirrors the CHECK constraint in db/models.py RealtimeTranslationRequest:
-        phase IN ('waiting', 'active', 'ended')
+        phase IN ('waiting', 'joining', 'active', 'ended')
     """
 
     WAITING = "waiting"  # Room created, waiting for partner to join
+    JOINING = "joining"  # Join token issued, WebSocket not yet open
     ACTIVE = "active"  # Both parties connected, session in progress
     ENDED = "ended"  # Session ended; transcript written to GCS
 
@@ -413,7 +414,7 @@ class RoomJoinResponse(BaseModel):
 class RoomStatusResponse(BaseModel):
     """Current status of a real-time room — returned by GET /api/sessions/rooms/{session_id}."""
 
-    phase: RoomPhase = Field(description="Current lifecycle phase: 'waiting', 'active', or 'ended'.")
+    phase: RoomPhase = Field(description="Current lifecycle phase: 'waiting', 'joining', 'active', or 'ended'.")
     room_code: str = Field(description="The alphanumeric join code (empty string once phase is 'active' or 'ended').")
     room_code_expires_at: datetime = Field(description="UTC expiry of the room_code.")
     partner_joined_at: datetime | None = Field(
@@ -430,7 +431,7 @@ class RoomPreviewResponse(BaseModel):
     Does NOT expose session_id, creator identity, or audit data.
     """
 
-    phase: RoomPhase = Field(description="Current phase: 'waiting', 'active', or 'ended'.")
+    phase: RoomPhase = Field(description="Current phase: 'waiting', 'joining', 'active', or 'ended'.")
     target_language: Language = Field(description="LEP partner's spoken language (ISO 639-1).")
     court_division: str | None = Field(default=None, description="Court division name.")
     courtroom: str | None = Field(default=None, description="Courtroom identifier.")

@@ -86,14 +86,23 @@ async def trigger_form_scraper(
             detail="Airflow configuration is missing. Cannot trigger scraper DAG.",
         )
 
-    url = f"{settings.airflow_base_url}/api/v2/dags/form_scraper_dag/dagRuns"
+    token_url = f"{settings.airflow_base_url}/auth/token"
+    dag_run_url = f"{settings.airflow_base_url}/api/v2/dags/form_scraper_dag/dagRuns"
     triggered_at = datetime.now(tz=UTC)
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
+            # Airflow 3 requires a JWT exchange before calling the REST API.
+            token_resp = await client.post(
+                token_url,
+                json={"username": settings.airflow_username, "password": settings.airflow_password},
+            )
+            token_resp.raise_for_status()
+            airflow_token = token_resp.json()["access_token"]
+
             resp = await client.post(
-                url,
-                auth=(settings.airflow_username, settings.airflow_password),
+                dag_run_url,
+                headers={"Authorization": f"Bearer {airflow_token}"},
                 json={"conf": {"triggered_by_user_id": str(user.user_id)}},
             )
             resp.raise_for_status()
