@@ -479,7 +479,7 @@ class RealtimeTranslationRequest(Base):
     )
 
     __table_args__ = (
-        CheckConstraint("phase IN ('waiting', 'active', 'ended')", name="rt_requests_phase_check"),
+        CheckConstraint("phase IN ('waiting', 'joining', 'active', 'ended')", name="rt_requests_phase_check"),
         Index("idx_rt_requests_session_id", "session_id"),
         Index("idx_rt_requests_room_code", "room_code"),
         Index("idx_rt_requests_phase", "phase"),
