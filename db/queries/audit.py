@@ -82,7 +82,7 @@ def write_audit_sync(
     action_type: str,
     details: dict[str, Any],
     session_id: str | None = None,
-    request_id: str | None = None,
+    doc_request_id: str | None = None,
 ) -> None:
     """
     Sync audit writer for Airflow DAG tasks.
@@ -93,16 +93,16 @@ def write_audit_sync(
         sa.text(
             """
             INSERT INTO audit_logs
-                (audit_id, user_id, session_id, request_id, action_type, details, created_at)
+                (audit_id, user_id, session_id, doc_request_id, action_type, details, created_at)
             VALUES
-                (CAST(:audit_id AS uuid), CAST(:user_id AS uuid), CAST(:session_id AS uuid), CAST(:request_id AS uuid), :action_type, CAST(:details AS jsonb), NOW())
+                (CAST(:audit_id AS uuid), CAST(:user_id AS uuid), CAST(:session_id AS uuid), CAST(:doc_request_id AS uuid), :action_type, CAST(:details AS jsonb), NOW())
             """
         ),
         {
             "audit_id": str(uuid.uuid4()),
             "user_id": user_id,
             "session_id": session_id,
-            "request_id": request_id,
+            "doc_request_id": doc_request_id,
             "action_type": action_type,
             "details": json.dumps(details),
         },

@@ -671,7 +671,7 @@ with DAG(
     default_args=DEFAULT_ARGS,
     catchup=False,
     is_paused_upon_creation=False,
-    max_active_runs=1,
+    max_active_runs=10,
     tags=["courtaccess", "forms", "translation", "ocr"],
 ) as dag:
     t1_load = PythonOperator(task_id="load_form_entry", python_callable=task_load_form_entry)

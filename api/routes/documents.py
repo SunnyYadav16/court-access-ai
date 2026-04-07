@@ -102,7 +102,6 @@ async def upload_document(
         default="es",
         description="Language code to translate into: 'es' or 'pt'",
     ),
-    notes: str | None = Form(default=None, max_length=500),
 ) -> DocumentResponse:
     """
     Validate file, upload to GCS, insert session + translation_request rows,
@@ -299,7 +298,6 @@ async def upload_document(
         user_id=user.user_id,
         type="document",
         target_language=nllb_target,
-        input_file_gcs_path=gcs_path,
         status="processing",
         created_at=now,
     )
@@ -733,6 +731,7 @@ async def retranslate_document(
 
     # ── Insert new document_translation_request under the SAME session ────────
     request_obj = DocumentTranslationRequest(
+        doc_request_id=new_request_id,
         session_id=session_id,
         input_file_gcs_path=gcs_path,
         target_language=nllb_target,

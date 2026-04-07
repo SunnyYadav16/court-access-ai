@@ -149,6 +149,15 @@ x-airflow-common:
     - airflow-forms:/opt/airflow/forms
     - shared-models:/opt/airflow/models
 
+  # ── GPU Configuration ──
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     &airflow-common-depends-on
@@ -187,7 +196,8 @@ services:
       --artifacts-destination gs://${GCS_BUCKET_MODELS}/mlflow-artifacts/
       --host 0.0.0.0
       --port 5000
-      --allowed-hosts "mlflow,localhost,127.0.0.1,${VM_EXTERNAL_IP},${VM_EXTERNAL_IP}:5050"
+      --allowed-hosts "*"
+      --cors-allowed-origins "*"
     ports:
       - "5050:5000"
     # GCS auth — VM's attached service account handles auth via ADC.
@@ -203,13 +213,22 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+  # ── Nginx (reverse proxy) ──────────────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api
+    restart: unless-stopped
+
   # ── FastAPI ────────────────────────────────────────────────────────────────
   api:
     # VITE_* vars are baked into the bundle by build.yml at image build time —
     # they cannot be injected here at runtime.
     image: ${ARTIFACT_REGISTRY}/courtaccess-api-gpu:${APP_VERSION:-latest}
-    ports:
-      - "8000:8000"
     environment:
       # ── Application ──
       APP_ENV: ${APP_ENV}

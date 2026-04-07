@@ -114,17 +114,17 @@ def _update_session(session_id: str, status: str, **fields) -> None:
 
 
 def _update_request(request_id: str, **fields) -> None:
-    """UPDATE translation_requests — valid statuses: processing | completed | failed | rejected"""
+    """UPDATE document_translation_requests — valid statuses: processing | completed | failed | rejected"""
     try:
         import sqlalchemy as sa
 
         with _engine().begin() as c:
             # fmt: off
-            query = "UPDATE translation_requests SET " + ", ".join(f"{k} = :{k}" for k in fields) + " WHERE request_id = :request_id"  # noqa: S608
+            query = "UPDATE document_translation_requests SET " + ", ".join(f"{k} = :{k}" for k in fields) + " WHERE doc_request_id = :doc_request_id"  # noqa: S608
             # fmt: on
-            c.execute(sa.text(query), {**fields, "request_id": request_id})
+            c.execute(sa.text(query), {**fields, "doc_request_id": request_id})
     except Exception as exc:
-        logger.error("[DB] update translation_requests failed (rid=%s): %s", request_id, exc)
+        logger.error("[DB] update document_translation_requests failed (rid=%s): %s", request_id, exc)
 
 
 def _write_step(
@@ -173,7 +173,7 @@ def _write_audit(user_id: str, session_id: str, request_id: str, action: str, de
             c.execute(
                 sa.text("""
                     INSERT INTO audit_logs
-                        (audit_id, user_id, session_id, request_id,
+                        (audit_id, user_id, session_id, doc_request_id,
                          action_type, details, created_at)
                     VALUES
                         (:aid, :uid, :sid, :rid, :action, :details, :now)
@@ -193,13 +193,13 @@ def _write_audit(user_id: str, session_id: str, request_id: str, action: str, de
 
 
 def _get_request_status(request_id: str) -> str | None:
-    """Return the current status of a translation_request row, or None on error."""
+    """Return the current status of a document_translation_requests row, or None on error."""
     try:
         import sqlalchemy as sa
 
         with _engine().begin() as c:
             row = c.execute(
-                sa.text("SELECT status FROM translation_requests WHERE request_id = :rid"),
+                sa.text("SELECT status FROM document_translation_requests WHERE doc_request_id = :rid"),
                 {"rid": request_id},
             ).fetchone()
         return row[0] if row else None
