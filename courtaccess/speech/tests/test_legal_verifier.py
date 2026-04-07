@@ -6,7 +6,6 @@ testable without any network or Vertex AI credentials.
 get_legal_verifier() is tested via feature-flag paths.
 """
 
-import pytest
 
 from courtaccess.speech.legal_verifier import (
     LANG_LABELS,
@@ -14,7 +13,6 @@ from courtaccess.speech.legal_verifier import (
     VerificationResult,
     get_legal_verifier,
 )
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # LANG_LABELS
@@ -209,6 +207,7 @@ def test_parse_response_whitespace_verified_falls_back_to_raw():
 def test_get_legal_verifier_returns_none_when_disabled(monkeypatch):
     """When USE_VERTEX_LEGAL_REVIEW=false, get_legal_verifier() returns None."""
     from unittest.mock import MagicMock
+
     import courtaccess.speech.legal_verifier as lv_mod
 
     mock_settings = MagicMock()
@@ -226,6 +225,7 @@ def test_get_legal_verifier_returns_none_when_disabled(monkeypatch):
 def test_get_legal_verifier_returns_none_when_no_project_id(monkeypatch):
     """When VERTEX_PROJECT_ID is empty, returns None regardless of feature flag."""
     from unittest.mock import MagicMock, patch
+
     import courtaccess.speech.legal_verifier as lv_mod
 
     mock_settings = MagicMock()

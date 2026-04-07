@@ -6,7 +6,6 @@ TTSService.synthesize() early-return paths — all without loading
 real Piper voice models.
 """
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,7 +16,6 @@ from courtaccess.speech.tts import (
     TTSService,
     _resolve_voice_path,
 )
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # VOICE_MAP
@@ -75,7 +73,7 @@ def test_supported_languages_contains_pt():
 
 
 def test_supported_languages_matches_voice_map():
-    assert SUPPORTED_LANGUAGES == set(VOICE_MAP.keys())
+    assert set(VOICE_MAP.keys()) == SUPPORTED_LANGUAGES
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -89,16 +87,14 @@ def test_resolve_voice_path_raises_when_env_not_set():
     mock_settings.piper_tts_es_path = None
     mock_settings.piper_tts_pt_path = None
 
-    with patch("courtaccess.speech.tts._get_lang_path_overrides", return_value={"en": None, "es": None, "pt": None}):
-        with pytest.raises(RuntimeError, match="PIPER_TTS_EN_PATH"):
-            _resolve_voice_path("en")
+    with patch("courtaccess.speech.tts._get_lang_path_overrides", return_value={"en": None, "es": None, "pt": None}), pytest.raises(RuntimeError, match="PIPER_TTS_EN_PATH"):
+        _resolve_voice_path("en")
 
 
 def test_resolve_voice_path_raises_when_dir_missing(tmp_path):
     missing_dir = tmp_path / "nonexistent"
-    with patch("courtaccess.speech.tts._get_lang_path_overrides", return_value={"en": str(missing_dir), "es": "", "pt": ""}):
-        with pytest.raises(RuntimeError, match="not found"):
-            _resolve_voice_path("en")
+    with patch("courtaccess.speech.tts._get_lang_path_overrides", return_value={"en": str(missing_dir), "es": "", "pt": ""}), pytest.raises(RuntimeError, match="not found"):
+        _resolve_voice_path("en")
 
 
 def test_resolve_voice_path_raises_when_no_onnx_in_dir(tmp_path):
@@ -106,9 +102,8 @@ def test_resolve_voice_path_raises_when_no_onnx_in_dir(tmp_path):
     voice_dir = tmp_path / "voice"
     voice_dir.mkdir()
 
-    with patch("courtaccess.speech.tts._get_lang_path_overrides", return_value={"en": str(voice_dir), "es": "", "pt": ""}):
-        with pytest.raises(RuntimeError, match="No .onnx"):
-            _resolve_voice_path("en")
+    with patch("courtaccess.speech.tts._get_lang_path_overrides", return_value={"en": str(voice_dir), "es": "", "pt": ""}), pytest.raises(RuntimeError, match=r"No \.onnx"):
+        _resolve_voice_path("en")
 
 
 def test_resolve_voice_path_exact_name_match(tmp_path):
@@ -183,11 +178,9 @@ def test_synthesize_calls_voice_synthesize_wav():
         wf.setsampwidth(2)
         wf.setframerate(22050)
         wf.writeframes(b"\x00\x00" * 100)
-    wav_bytes = buf.getvalue()
 
     # Mock voice that writes wav bytes when synthesize_wav is called
     def fake_synthesize(text, wav_file, syn_config=None):
-        import wave
         wav_file.setnchannels(1)
         wav_file.setsampwidth(2)
         wav_file.setframerate(22050)

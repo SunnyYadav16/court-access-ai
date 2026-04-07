@@ -10,11 +10,9 @@ import hashlib
 import io
 import json
 import wave
-from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from datetime import UTC, datetime
 
 import numpy as np
-import pytest
 
 from courtaccess.speech.session_recorder import (
     SessionRecorder,
@@ -22,7 +20,6 @@ from courtaccess.speech.session_recorder import (
     _sha256_file,
     write_manifest,
 )
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 

@@ -8,8 +8,6 @@ required to be non-None.
 
 import time
 
-import pytest
-
 from courtaccess.speech.turn_taking import FloorState, TurnStateMachine
 
 

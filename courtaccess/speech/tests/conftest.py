@@ -8,6 +8,7 @@ are not installed in the test environment.
 
 import os
 import sys
+import tempfile
 from unittest.mock import MagicMock
 
 # ── 1. Stub piper before any speech module imports it at module level ─────────
@@ -76,7 +77,7 @@ _TEST_ENV = {
     "TURN_GRACE_A_MS": "2000",
     "TURN_GRACE_B_MS": "1000",
     "TTS_LOCKOUT_BUFFER_MS": "200",
-    "SESSION_RECORDINGS_DIR": "/tmp/courtaccess-test/sessions",
+    "SESSION_RECORDINGS_DIR": str(tempfile.gettempdir()),
     "PIPER_TTS_EN_PATH": "",
     "SILERO_VAD_MODEL_PATH": "",
     # JWT
@@ -114,4 +115,3 @@ _TEST_ENV = {
 for key, value in _TEST_ENV.items():
     os.environ.setdefault(key, value)
 
-import pytest

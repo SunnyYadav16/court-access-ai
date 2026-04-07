@@ -6,11 +6,8 @@ VADService requires torch + a real model file, so it is only tested
 at the singleton/interface level via mocks.
 """
 
-import numpy as np
-import pytest
 
 from courtaccess.speech.vad import SpeechSegmentDetector
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SpeechSegmentDetector — __init__
@@ -236,7 +233,8 @@ def test_reset_allows_new_cycle():
 
 def test_vad_service_singleton():
     """Two VADService() calls with a mocked model return the same instance."""
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock, patch
+
     from courtaccess.speech.vad import VADService
 
     mock_model = MagicMock()
@@ -247,9 +245,10 @@ def test_vad_service_singleton():
 
 
 def test_get_vad_service_returns_vad_service():
-    from unittest.mock import patch, MagicMock
-    from courtaccess.speech.vad import VADService, get_vad_service
+    from unittest.mock import MagicMock, patch
+
     import courtaccess.speech.vad as vad_mod
+    from courtaccess.speech.vad import VADService, get_vad_service
 
     mock_model = MagicMock()
     original = vad_mod._vad_service

@@ -6,20 +6,18 @@ Participant helpers, and _generate_room_id — all without loading
 real VAD/ASR models.  AudioSession is tested with a mocked VAD service.
 """
 
-import string
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 
 from courtaccess.speech.session import (
-    AudioStreamDecoder,
     AudioSession,
+    AudioStreamDecoder,
     ConversationRoom,
     Participant,
     _generate_room_id,
 )
-
 
 # ── Room code charset (copied from session.py) ────────────────────────────────
 _ROOM_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
@@ -103,13 +101,13 @@ def test_decoder_add_chunk_returns_empty_array_on_invalid_data():
 
 def test_decoder_ebml_signature_detection_resets_buffer():
     """When a fresh EBML header arrives and decoder is initialized, buffer resets."""
-    _EBML_SIGNATURE = bytes([0x1A, 0x45, 0xDF, 0xA3])
+    _ebml_signature = bytes([0x1A, 0x45, 0xDF, 0xA3])
     dec = AudioStreamDecoder()
     dec.buffer = b"old accumulated data"
     dec.initialized = True
     dec._samples_returned = 999
 
-    dec.add_chunk(_EBML_SIGNATURE + b"\x00" * 20)
+    dec.add_chunk(_ebml_signature + b"\x00" * 20)
 
     # Buffer should now only contain the new chunk (EBML data)
     assert b"old accumulated data" not in dec.buffer
@@ -118,12 +116,12 @@ def test_decoder_ebml_signature_detection_resets_buffer():
 
 def test_decoder_ebml_no_reset_when_not_initialized():
     """EBML header does NOT reset if decoder hasn't initialized yet."""
-    _EBML_SIGNATURE = bytes([0x1A, 0x45, 0xDF, 0xA3])
+    _ebml_signature = bytes([0x1A, 0x45, 0xDF, 0xA3])
     dec = AudioStreamDecoder()
     dec.buffer = b"prefix"
     dec.initialized = False
 
-    dec.add_chunk(_EBML_SIGNATURE + b"\x00" * 20)
+    dec.add_chunk(_ebml_signature + b"\x00" * 20)
 
     # Buffer should have grown (prefix + new chunk)
     assert b"prefix" in dec.buffer

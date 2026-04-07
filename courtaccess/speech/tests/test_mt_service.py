@@ -8,15 +8,12 @@ return early without loading the real NLLB model.
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from courtaccess.speech.mt_service import (
     LANG_CODE_TO_NLLB,
     NLLB_TO_LANG_CODE,
     SUPPORTED_LANGUAGES,
     MTService,
 )
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Language code constants
@@ -69,7 +66,7 @@ def test_supported_languages_is_set():
 
 
 def test_supported_languages_matches_mapping_keys():
-    assert SUPPORTED_LANGUAGES == set(LANG_CODE_TO_NLLB.keys())
+    assert set(LANG_CODE_TO_NLLB.keys()) == SUPPORTED_LANGUAGES
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -147,7 +144,7 @@ def test_translate_calls_tokenizer_for_supported_pair():
     MTService._translator = mock_translator
     MTService._tokenizer = mock_tokenizer
 
-    result = svc.translate("The defendant", "en", "es")
+    svc.translate("The defendant", "en", "es")
     assert mock_tokenizer.encode.called
     assert mock_translator.translate_batch.called
 
@@ -174,7 +171,7 @@ def test_translate_strips_special_tokens():
     MTService._translator = mock_translator
     MTService._tokenizer = mock_tokenizer
 
-    result = svc.translate("plea", "en", "es")
+    svc.translate("plea", "en", "es")
     # Verify only non-special tokens were passed to decode
     call_args = mock_tokenizer.convert_tokens_to_ids.call_args[0][0]
     assert "spa_Latn" not in call_args
