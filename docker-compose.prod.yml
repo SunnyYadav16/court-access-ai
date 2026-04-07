@@ -187,6 +187,7 @@ services:
       --artifacts-destination gs://${GCS_BUCKET_MODELS}/mlflow-artifacts/
       --host 0.0.0.0
       --port 5000
+      --allowed-hosts "mlflow,localhost,127.0.0.1,${VM_EXTERNAL_IP}"
     ports:
       - "5050:5000"
     # GCS auth — VM's attached service account handles auth via ADC.
