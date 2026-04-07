@@ -26,6 +26,7 @@ from courtaccess.core.ingest_document import classify_page, ingest_pdf, is_conte
 
 # ── Page mock builder ─────────────────────────────────────────────────────────
 
+
 def _make_page(
     span_texts: list[str] | None = None,
     images: list | None = None,
@@ -58,15 +59,12 @@ def _make_page(
     if span_texts:
         text_block: dict = {
             "type": 0,
-            "lines": [
-                {"spans": [{"text": t}]}
-                for t in span_texts
-            ],
+            "lines": [{"spans": [{"text": t}]} for t in span_texts],
         }
         blocks.append(text_block)
 
     # Add type=1 image blocks for coverage fallback-1 testing
-    for bbox in (image_blocks or []):
+    for bbox in image_blocks or []:
         blocks.append({"type": 1, "bbox": bbox})
 
     td = {"blocks": blocks}
@@ -82,8 +80,7 @@ def _make_page(
         page.get_image_rects.side_effect = Exception("xref lookup failed")
     else:
         page.get_image_rects.return_value = [
-            pymupdf.Rect(r) if isinstance(r, (tuple, list)) else r
-            for r in (image_rects or [])
+            pymupdf.Rect(r) if isinstance(r, (tuple, list)) else r for r in (image_rects or [])
         ]
 
     return page
@@ -109,8 +106,8 @@ def _make_pdf(path: Path, num_pages: int = 1, with_text: bool = True) -> None:
 # is_content_image
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestIsContentImage:
 
+class TestIsContentImage:
     def test_digital_page_always_returns_false(self):
         # is_scanned=False short-circuits immediately
         info = {
@@ -198,8 +195,8 @@ class TestIsContentImage:
 # classify_page — output contract
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestClassifyPageContract:
 
+class TestClassifyPageContract:
     def test_output_has_all_required_keys(self):
         page = _make_page()  # blank page
         result = classify_page(page)
@@ -217,8 +214,8 @@ class TestClassifyPageContract:
 # classify_page — BLANK classification
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestClassifyPageBlank:
 
+class TestClassifyPageBlank:
     def test_no_spans_no_images_is_blank(self):
         page = _make_page(span_texts=[], images=[], drawings=[])
         result = classify_page(page)
@@ -248,8 +245,8 @@ class TestClassifyPageBlank:
 # classify_page — SCANNED classification
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestClassifyPageScanned:
 
+class TestClassifyPageScanned:
     def test_image_with_no_text_is_scanned(self):
         # images exist, span_count == 0 → SCANNED even with low coverage
         img = (1, 0, 100, 100, 8, "DeviceRGB", "", "", "jpeg", 0, 0)
@@ -312,8 +309,8 @@ class TestClassifyPageScanned:
 # classify_page — DIGITAL classification
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestClassifyPageDigital:
 
+class TestClassifyPageDigital:
     def test_many_spans_low_coverage_is_digital(self):
         page = _make_page(span_texts=["word"] * 10, images=[], drawings=[])
         result = classify_page(page)
@@ -336,8 +333,8 @@ class TestClassifyPageDigital:
 # classify_page — image coverage fallback paths
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestClassifyPageImageCoverage:
 
+class TestClassifyPageImageCoverage:
     def test_primary_path_uses_get_image_rects(self):
         # Large rect returned by get_image_rects → high coverage → SCANNED
         large_rect = pymupdf.Rect(0, 0, 595, 600)
@@ -352,7 +349,7 @@ class TestClassifyPageImageCoverage:
         img = (1, 0, 595, 600, 8, "DeviceRGB", "", "", "jpeg", 0, 0)
         page = _make_page(
             images=[img],
-            image_rects=[],               # primary returns nothing
+            image_rects=[],  # primary returns nothing
             image_blocks=[(0, 0, 595, 600)],  # fallback-1 block
         )
         result = classify_page(page)
@@ -364,8 +361,8 @@ class TestClassifyPageImageCoverage:
         img = (1, 0, 600, 800, 8, "DeviceRGB", "", "", "jpeg", 0, 0)
         page = _make_page(
             images=[img],
-            image_rects_raises=True,   # primary raises
-            image_blocks=[],           # no fallback-1 blocks
+            image_rects_raises=True,  # primary raises
+            image_blocks=[],  # no fallback-1 blocks
         )
         result = classify_page(page)
         assert result["img_coverage"] == pytest.approx(85.0, abs=0.1)
@@ -391,8 +388,8 @@ class TestClassifyPageImageCoverage:
 # ingest_pdf
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestIngestPdf:
 
+class TestIngestPdf:
     def test_raises_file_not_found_for_missing_pdf(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             ingest_pdf(str(tmp_path / "ghost.pdf"))
@@ -434,8 +431,16 @@ class TestIngestPdf:
         _make_pdf(pdf, num_pages=1)
         result = ingest_pdf(str(pdf))
         page = result["pages"][0]
-        required = {"page_num", "image_path", "width_px", "height_px",
-                    "page_type", "is_scanned", "span_count", "img_coverage"}
+        required = {
+            "page_num",
+            "image_path",
+            "width_px",
+            "height_px",
+            "page_type",
+            "is_scanned",
+            "span_count",
+            "img_coverage",
+        }
         assert required == set(page.keys())
 
     def test_page_num_is_zero_indexed(self, tmp_path):

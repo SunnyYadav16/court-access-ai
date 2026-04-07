@@ -32,6 +32,7 @@ from courtaccess.core.docx_translation import (
 
 # ── Minimal DOCX factory ──────────────────────────────────────────────────────
 
+
 def _make_docx(path, paragraphs=("Hello court.", "The defendant appeared.")):
     """Create a minimal .docx with the given paragraph texts."""
     doc = Document()
@@ -69,8 +70,8 @@ def _stub_reviewer():
 # _split_fill_suffix — pure function
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestSplitFillSuffix:
 
+class TestSplitFillSuffix:
     def test_no_fill_suffix_returns_text_and_empty(self):
         label, fill = _split_fill_suffix("Date:")
         assert label == "Date:"
@@ -116,8 +117,8 @@ class TestSplitFillSuffix:
 # _is_translatable — pure function
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestIsTranslatable:
 
+class TestIsTranslatable:
     def test_empty_string_not_translatable(self):
         assert _is_translatable("") is False
 
@@ -160,8 +161,8 @@ class TestIsTranslatable:
 # _apply_translations — mutates run objects
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestApplyTranslations:
 
+class TestApplyTranslations:
     def test_raises_value_error_on_length_mismatch(self, tmp_path):
         docx_path = tmp_path / "doc.docx"
         _make_docx(docx_path, paragraphs=("Hello.", "World."))
@@ -197,8 +198,8 @@ class TestApplyTranslations:
 # translate_docx — integration (real .docx, mocked translator/reviewer)
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestTranslateDocx:
 
+class TestTranslateDocx:
     def test_output_file_created(self, tmp_path):
         src = tmp_path / "input.docx"
         out = tmp_path / "output.docx"

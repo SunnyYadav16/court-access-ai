@@ -33,6 +33,7 @@ from courtaccess.core.reconstruct_pdf import (
 
 # ── Minimal PDF factory ───────────────────────────────────────────────────────
 
+
 def _make_pdf(path, num_pages=1, with_text=True):
     """Create a minimal real PDF for reconstruct_pdf integration tests."""
     doc = pymupdf.open()
@@ -45,8 +46,7 @@ def _make_pdf(path, num_pages=1, with_text=True):
     doc.close()
 
 
-def _region(page=0, text="Hello", translated="Hola", preserve=False,
-            bbox=(50, 80, 300, 100), avail_bbox=None):
+def _region(page=0, text="Hello", translated="Hola", preserve=False, bbox=(50, 80, 300, 100), avail_bbox=None):
     """Build a minimal translated_regions entry."""
     return {
         "page": page,
@@ -67,8 +67,8 @@ def _region(page=0, text="Hello", translated="Hola", preserve=False,
 # _citation_fallback — pure function
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestCitationFallback:
 
+class TestCitationFallback:
     def test_no_citations_in_orig_returns_trans_unchanged(self):
         result = _citation_fallback("The defendant appeared.", "El acusado apareció.")
         assert result == "El acusado apareció."
@@ -111,8 +111,8 @@ class TestCitationFallback:
 # _restore_caps — pure function
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestRestoreCaps:
 
+class TestRestoreCaps:
     def test_all_caps_original_uppercases_translation(self):
         assert _restore_caps("COMMONWEALTH OF MASSACHUSETTS", "commonwealth") == "COMMONWEALTH"
 
@@ -146,8 +146,8 @@ class TestRestoreCaps:
 # _insert_unit_html — mocked page
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestInsertUnitHtml:
 
+class TestInsertUnitHtml:
     def _make_rect(self, x0=50, y0=100, x1=300, y1=120):
         return pymupdf.Rect(x0, y0, x1, y1)
 
@@ -230,8 +230,8 @@ class TestInsertUnitHtml:
 # reconstruct_pdf — orchestration
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestReconstructPdf:
 
+class TestReconstructPdf:
     def test_raises_file_not_found_for_missing_original(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             reconstruct_pdf(

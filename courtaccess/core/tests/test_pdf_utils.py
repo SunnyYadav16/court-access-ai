@@ -45,8 +45,8 @@ from courtaccess.core.pdf_utils import (
 
 # ── Span / line dict builders ─────────────────────────────────────────────────
 
-def _span(text="text", font="", flags=0, size=12.0, color=0,
-          x0=0.0, y0=0.0, x1=50.0, y1=12.0) -> dict:
+
+def _span(text="text", font="", flags=0, size=12.0, color=0, x0=0.0, y0=0.0, x1=50.0, y1=12.0) -> dict:
     """Minimal span dict matching PyMuPDF shape."""
     return {
         "text": text,
@@ -69,6 +69,7 @@ def _line(x0=0.0, y0=0.0, x1=100.0, y1=12.0, spans=None) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # get_font_code
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestGetFontCode:
     """
@@ -150,8 +151,8 @@ class TestGetFontCode:
 # get_font_size
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestGetFontSize:
 
+class TestGetFontSize:
     def test_normal_size_returned_rounded(self):
         assert get_font_size(_span(size=12.0)) == 12.0
 
@@ -177,6 +178,7 @@ class TestGetFontSize:
 # ─────────────────────────────────────────────────────────────────────────────
 # fit_fontsize
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestFitFontsize:
     """fit_fontsize uses real pymupdf.Font — tests are lightweight but real."""
@@ -209,8 +211,8 @@ class TestFitFontsize:
 # safe_color
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestSafeColor:
 
+class TestSafeColor:
     def test_integer_zero_is_black(self):
         assert safe_color(0) == (0.0, 0.0, 0.0)
 
@@ -262,8 +264,8 @@ class TestSafeColor:
 # color_to_hex
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestColorToHex:
 
+class TestColorToHex:
     def test_black(self):
         assert color_to_hex((0.0, 0.0, 0.0)) == "#000000"
 
@@ -299,8 +301,8 @@ class TestColorToHex:
 # _is_blank_fill_line
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestIsBlankFillLine:
 
+class TestIsBlankFillLine:
     def test_empty_string(self):
         assert _is_blank_fill_line("") is True
 
@@ -350,8 +352,8 @@ class TestIsBlankFillLine:
 # _should_never_translate
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestShouldNeverTranslate:
 
+class TestShouldNeverTranslate:
     def test_print_uppercase(self):
         assert _should_never_translate("PRINT") is True
 
@@ -401,8 +403,8 @@ class TestShouldNeverTranslate:
 # _is_form_field_line
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestIsFormFieldLine:
 
+class TestIsFormFieldLine:
     def test_x_matches(self):
         assert _is_form_field_line("X") is True
 
@@ -462,8 +464,8 @@ class TestIsFormFieldLine:
 # _classify
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestClassify:
 
+class TestClassify:
     def test_empty_string_returns_skip(self):
         assert _classify("", 1) == "SKIP"
 
@@ -515,7 +517,7 @@ class TestClassify:
 
     def test_all_caps_long_text_returns_prose(self):
         # len >= 80 AND n_lines > 3 → escapes both all_caps and short checks
-        long = "WORD " * 20     # 100 chars, all caps
+        long = "WORD " * 20  # 100 chars, all caps
         assert _classify(long, 4) == "PROSE"
 
     def test_short_mixed_case_single_line_returns_form_label(self):
@@ -531,8 +533,8 @@ class TestClassify:
 # _lines_are_same_row
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestLinesAreSameRow:
 
+class TestLinesAreSameRow:
     def test_identical_vertical_range_is_same_row(self):
         ln1 = _line(y0=10, y1=20)
         ln2 = _line(y0=10, y1=20)
@@ -567,8 +569,8 @@ class TestLinesAreSameRow:
 # _group_lines_into_rows
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestGroupLinesIntoRows:
 
+class TestGroupLinesIntoRows:
     def test_empty_list_returns_empty(self):
         assert _group_lines_into_rows([]) == []
 
@@ -608,8 +610,8 @@ class TestGroupLinesIntoRows:
 # _detect_alignment
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestDetectAlignment:
 
+class TestDetectAlignment:
     def test_empty_lines_returns_left(self):
         block = pymupdf.Rect(0, 0, 400, 100)
         assert _detect_alignment([], block) == "left"
@@ -644,8 +646,8 @@ class TestDetectAlignment:
 # _union_rects
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestUnionRects:
 
+class TestUnionRects:
     def test_empty_list_returns_empty_rect(self):
         result = _union_rects([])
         assert result == pymupdf.Rect()
@@ -678,8 +680,8 @@ class TestUnionRects:
 # _split_line_by_columns
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestSplitLineByColumns:
 
+class TestSplitLineByColumns:
     def test_empty_spans_returns_empty_list(self):
         line = _line(spans=[_span(text="")])
         assert _split_line_by_columns(line) == []
@@ -719,8 +721,8 @@ class TestSplitLineByColumns:
 # _find_tightest_cell
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestFindTightestCell:
 
+class TestFindTightestCell:
     def test_empty_cell_rects_returns_none(self):
         line_rect = pymupdf.Rect(10, 10, 50, 20)
         assert _find_tightest_cell(line_rect, []) is None
@@ -749,8 +751,8 @@ class TestFindTightestCell:
 # _get_available_width
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestGetAvailableWidth:
 
+class TestGetAvailableWidth:
     def test_no_cells_falls_back_to_right_margin(self):
         avail = pymupdf.Rect(50, 10, 200, 20)
         # page_width=594, right_margin=36 → (594 - 36) - 50 = 508
@@ -760,21 +762,21 @@ class TestGetAvailableWidth:
     def test_matching_cell_returns_cell_width_from_x0(self):
         # Cell covers the x and y range of the avail rect
         avail = pymupdf.Rect(50, 10, 200, 20)
-        cell = pymupdf.Rect(40, 5, 250, 25)   # contains y_mid=15, x0=40 <= 52 <= 250
+        cell = pymupdf.Rect(40, 5, 250, 25)  # contains y_mid=15, x0=40 <= 52 <= 250
         result = _get_available_width(avail, [cell])
         # cell.x1 - avail.x0 = 250 - 50 = 200
         assert result == pytest.approx(200.0)
 
     def test_cell_not_covering_y_mid_is_skipped(self):
-        avail = pymupdf.Rect(50, 100, 200, 120)   # y_mid = 110
-        cell = pymupdf.Rect(0, 0, 300, 50)         # cell y range 0-50, doesn't cover 110
+        avail = pymupdf.Rect(50, 100, 200, 120)  # y_mid = 110
+        cell = pymupdf.Rect(0, 0, 300, 50)  # cell y range 0-50, doesn't cover 110
         result = _get_available_width(avail, [cell], page_width=594.0)
         # Falls back to margin calculation
         assert result == pytest.approx(558.0 - 50.0)
 
     def test_narrowest_matching_cell_used(self):
         avail = pymupdf.Rect(50, 10, 200, 20)
-        wide = pymupdf.Rect(40, 5, 400, 25)   # width from x0: 400-50 = 350
-        narrow = pymupdf.Rect(40, 5, 200, 25) # width from x0: 200-50 = 150
+        wide = pymupdf.Rect(40, 5, 400, 25)  # width from x0: 400-50 = 350
+        narrow = pymupdf.Rect(40, 5, 200, 25)  # width from x0: 200-50 = 150
         result = _get_available_width(avail, [wide, narrow])
         assert result == pytest.approx(150.0)

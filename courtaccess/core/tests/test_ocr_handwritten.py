@@ -23,6 +23,7 @@ from courtaccess.core.ocr_handwritten import _stub_extract, extract_handwritten
 
 # ── Region factory ────────────────────────────────────────────────────────────
 
+
 def _region(bbox=(10, 20, 100, 40), confidence=0.3, page=0):
     return {"bbox": list(bbox), "confidence": confidence, "page": page}
 
@@ -31,8 +32,8 @@ def _region(bbox=(10, 20, 100, 40), confidence=0.3, page=0):
 # extract_handwritten — empty input guard
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestExtractHandwrittenEmptyInput:
 
+class TestExtractHandwrittenEmptyInput:
     def test_empty_regions_returns_empty_list(self):
         result = extract_handwritten("any/path.png", [], page_num=0)
         assert result == []
@@ -52,8 +53,8 @@ class TestExtractHandwrittenEmptyInput:
 # extract_handwritten — stub mode routing
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestExtractHandwrittenStubMode:
 
+class TestExtractHandwrittenStubMode:
     def test_stub_mode_returns_empty_list(self):
         with patch.object(ocr_hw_mod, "_USE_REAL", False):
             result = extract_handwritten("path.png", [_region()], page_num=0)
@@ -80,8 +81,8 @@ class TestExtractHandwrittenStubMode:
 # extract_handwritten — real mode routing
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestExtractHandwrittenRealMode:
 
+class TestExtractHandwrittenRealMode:
     def test_real_mode_calls_real_extract(self):
         fake_result = [{"text": "John", "bbox": [0, 0, 100, 20], "confidence": 0.85, "page": 0, "source": "qwen2.5-vl"}]
         with (
@@ -106,8 +107,8 @@ class TestExtractHandwrittenRealMode:
 # _stub_extract — always returns []
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestStubExtract:
 
+class TestStubExtract:
     def test_returns_empty_list_for_single_region(self):
         assert _stub_extract([_region()], page_num=0) == []
 
@@ -125,11 +126,12 @@ class TestStubExtract:
 # _real_extract — exception handling (no GPU/model in CI)
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestRealExtractExceptionHandling:
 
+class TestRealExtractExceptionHandling:
     def test_returns_empty_list_when_torch_import_fails(self):
         # Simulate environment without torch installed
         from courtaccess.core.ocr_handwritten import _real_extract
+
         with patch("builtins.__import__", side_effect=ImportError("No module named 'torch'")):
             result = _real_extract("path.png", [_region()], page_num=0)
         assert result == []
@@ -137,6 +139,7 @@ class TestRealExtractExceptionHandling:
     def test_returns_empty_list_when_model_path_missing(self):
         # QWEN_VL_MODEL_PATH not set → from_pretrained(None) raises
         from courtaccess.core.ocr_handwritten import _real_extract
+
         with (
             patch.dict("os.environ", {"QWEN_VL_MODEL_PATH": ""}),
             patch("torch.no_grad", MagicMock()),

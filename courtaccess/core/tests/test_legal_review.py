@@ -33,6 +33,7 @@ from courtaccess.languages.base import LanguageConfig
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
+
 @pytest.fixture()
 def lang_config():
     return LanguageConfig(
@@ -74,8 +75,8 @@ def reviewer_with_glossary(lang_config, monkeypatch):
 # Constructor — env var handling
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestConstructor:
 
+class TestConstructor:
     def test_vertex_max_retries_defaults_to_3_when_not_set(self, lang_config, monkeypatch):
         monkeypatch.delenv("VERTEX_MAX_RETRIES", raising=False)
         monkeypatch.setenv("USE_VERTEX_LEGAL_REVIEW", "false")
@@ -122,8 +123,8 @@ class TestConstructor:
 # _cache_key — deterministic hash
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestCacheKey:
 
+class TestCacheKey:
     def test_same_inputs_produce_same_key(self, reviewer):
         k1 = reviewer._cache_key("defendant appeared", "acusado apareció")
         k2 = reviewer._cache_key("defendant appeared", "acusado apareció")
@@ -157,8 +158,8 @@ class TestCacheKey:
 # _redis_key — key formatting
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestRedisKey:
 
+class TestRedisKey:
     def test_key_contains_cache_version(self, reviewer):
         rk = reviewer._redis_key("abc123")
         assert f":{_CACHE_VERSION}:" in rk
@@ -186,8 +187,8 @@ class TestRedisKey:
 # _build_glossary_snippet
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestBuildGlossarySnippet:
 
+class TestBuildGlossarySnippet:
     def test_matching_term_included_in_snippet(self, reviewer_with_glossary):
         snippet = reviewer_with_glossary._build_glossary_snippet(["The defendant was present."])
         assert "defendant" in snippet
@@ -202,9 +203,7 @@ class TestBuildGlossarySnippet:
         assert "defendant" in snippet
 
     def test_multiple_matching_terms(self, reviewer_with_glossary):
-        snippet = reviewer_with_glossary._build_glossary_snippet(
-            ["The plaintiff requested a hearing on the motion."]
-        )
+        snippet = reviewer_with_glossary._build_glossary_snippet(["The plaintiff requested a hearing on the motion."])
         assert "plaintiff" in snippet or "hearing" in snippet or "motion" in snippet
 
     def test_empty_texts_returns_empty_snippet(self, reviewer_with_glossary):
@@ -234,8 +233,8 @@ class TestBuildGlossarySnippet:
 # _strip_fences — @staticmethod
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestStripFences:
 
+class TestStripFences:
     def test_json_fence_stripped(self):
         fenced = '```json\n["hello", "world"]\n```'
         assert LegalReviewer._strip_fences(fenced) == '["hello", "world"]'
@@ -263,8 +262,8 @@ class TestStripFences:
 # _validate_results — hallucination guard
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestValidateResults:
 
+class TestValidateResults:
     def test_normal_ratio_uses_correction(self, reviewer):
         # ratio 1.0 → within [0.2, 5.0]
         result = reviewer._validate_results(["original"], ["translation"], ["corrected"])
@@ -306,8 +305,8 @@ class TestValidateResults:
 # review_legal_terms — routing
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestReviewLegalTerms:
 
+class TestReviewLegalTerms:
     def test_stub_mode_returns_ok_status(self, reviewer):
         result = reviewer.review_legal_terms("Some translated legal text.")
         assert result["status"] == "ok"
@@ -332,8 +331,8 @@ class TestReviewLegalTerms:
 # verify_batch — routing and edge cases
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestVerifyBatch:
 
+class TestVerifyBatch:
     def test_empty_original_returns_translated_unchanged(self, reviewer):
         translated = ["hola", "mundo"]
         result = reviewer.verify_batch([], translated)
@@ -365,8 +364,8 @@ class TestVerifyBatch:
 # _build_verification_prompt
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestBuildVerificationPrompt:
 
+class TestBuildVerificationPrompt:
     def test_prompt_contains_language_label(self, reviewer):
         prompt = reviewer._build_verification_prompt(["original"], ["translated"], "")
         assert "Spanish" in prompt
@@ -403,8 +402,8 @@ class TestBuildVerificationPrompt:
 # _get_redis — lazy connection and graceful degradation
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestGetRedis:
 
+class TestGetRedis:
     def test_no_redis_url_returns_none(self, reviewer):
         reviewer._redis_url = None
         assert reviewer._get_redis() is None
@@ -435,8 +434,8 @@ class TestGetRedis:
 # _call_llama_cached — cache hit / miss logic (mocked Redis + _call_vertex)
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestCallLlamaCached:
 
+class TestCallLlamaCached:
     def _make_reviewer_with_mock_vertex(self, lang_config, monkeypatch):
         """Reviewer with Vertex enabled, real Redis bypassed, _call_vertex mocked."""
         monkeypatch.setenv("USE_VERTEX_LEGAL_REVIEW", "true")

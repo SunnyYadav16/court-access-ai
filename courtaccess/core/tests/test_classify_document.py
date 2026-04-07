@@ -33,6 +33,7 @@ from courtaccess.core.classify_document import (
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _make_vertex_response(payload: dict) -> MagicMock:
     """
     Build a mock that mimics the shape of an OpenAI chat completion response:
@@ -67,6 +68,7 @@ def _make_mock_pdf(num_pages: int, page_text: str = "Legal document text."):
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture()
 def pdf_file(tmp_path):
@@ -105,8 +107,8 @@ def real_classify_patches(pdf_file):
 # _stub_classify
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestStubClassify:
 
+class TestStubClassify:
     def test_returns_legal_classification(self, tmp_path):
         f = tmp_path / "any.pdf"
         f.write_bytes(b"content")
@@ -146,8 +148,8 @@ class TestStubClassify:
 # classify_document — routing
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestClassifyDocumentRouting:
 
+class TestClassifyDocumentRouting:
     def test_raises_file_not_found_for_missing_pdf(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             classify_document(str(tmp_path / "ghost.pdf"))
@@ -233,8 +235,8 @@ class TestClassifyDocumentRouting:
 # _real_classify — output contract
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestRealClassifyContract:
 
+class TestRealClassifyContract:
     def test_returns_all_required_keys(self, real_classify_patches):
         patches = real_classify_patches
         patches["client"].chat.completions.create.return_value = _make_vertex_response(
@@ -300,8 +302,8 @@ class TestRealClassifyContract:
 # _real_classify — fail-closed guards
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestRealClassifyFailClosed:
 
+class TestRealClassifyFailClosed:
     def test_non_json_response_raises_classification_error(self, real_classify_patches):
         # A plain-text response must raise ClassificationError, not be silently
         # accepted or fall back to stub — fail closed is non-negotiable here

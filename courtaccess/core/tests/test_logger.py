@@ -22,8 +22,8 @@ from courtaccess.core.logger import get_logger
 # get_logger — return type and naming
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestGetLoggerReturnType:
 
+class TestGetLoggerReturnType:
     def test_returns_logging_logger_instance(self):
         logger = get_logger("test.return_type.a")
         assert isinstance(logger, logging.Logger)
@@ -49,8 +49,8 @@ class TestGetLoggerReturnType:
 # get_logger — handler configuration
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestGetLoggerHandlers:
 
+class TestGetLoggerHandlers:
     def test_handler_is_added_on_first_call(self):
         logger = get_logger("test.handlers.first")
         assert len(logger.handlers) >= 1
@@ -78,8 +78,8 @@ class TestGetLoggerHandlers:
 # get_logger — log level and propagation
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestGetLoggerLevel:
 
+class TestGetLoggerLevel:
     def test_log_level_is_info(self):
         logger = get_logger("test.level.info")
         assert logger.level == logging.INFO
@@ -95,8 +95,8 @@ class TestGetLoggerLevel:
 # get_logger — formatter
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestGetLoggerFormatter:
 
+class TestGetLoggerFormatter:
     def test_handler_has_formatter(self):
         logger = get_logger("test.fmt.has_formatter")
         stream_handlers = [h for h in logger.handlers if isinstance(h, logging.StreamHandler)]

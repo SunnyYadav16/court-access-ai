@@ -329,7 +329,12 @@ def test_handle_new_form_adds_to_catalog(tmp_path):
 
     with patch.object(scraper_mod, "FORMS_DIR", tmp_path):
         _handle_new_form(
-            catalog, "Test Form", url, raw, None, None,
+            catalog,
+            "Test Form",
+            url,
+            raw,
+            None,
+            None,
             [{"division": "District Court", "section_heading": "General"}],
             queue,
         )
@@ -357,9 +362,12 @@ def test_handle_new_form_saves_translations(tmp_path):
 
     with patch.object(scraper_mod, "FORMS_DIR", tmp_path):
         _handle_new_form(
-            catalog, "Test Form",
+            catalog,
+            "Test Form",
             "https://www.mass.gov/doc/test-form/download",
-            raw, es_bytes, pt_bytes,
+            raw,
+            es_bytes,
+            pt_bytes,
             [],
             queue,
         )
@@ -379,9 +387,14 @@ def test_handle_new_form_no_translations_saves_none(tmp_path):
 
     with patch.object(scraper_mod, "FORMS_DIR", tmp_path):
         _handle_new_form(
-            catalog, "No Trans Form",
+            catalog,
+            "No Trans Form",
             "https://www.mass.gov/doc/no-trans/download",
-            raw, None, None, [], queue,
+            raw,
+            None,
+            None,
+            [],
+            queue,
         )
 
     version = catalog[0]["versions"][0]
@@ -425,10 +438,14 @@ def test_handle_updated_form_inserts_version_at_front(tmp_path):
     from courtaccess.forms import scraper as scraper_mod
 
     existing_version = {
-        "version": 1, "content_hash": "oldhash", "file_type": "pdf",
+        "version": 1,
+        "content_hash": "oldhash",
+        "file_type": "pdf",
         "file_path_original": "/old/path.pdf",
-        "file_path_es": None, "file_path_pt": None,
-        "file_type_es": None, "file_type_pt": None,
+        "file_path_es": None,
+        "file_path_pt": None,
+        "file_type_es": None,
+        "file_type_pt": None,
         "created_at": "2024-01-01T00:00:00+00:00",
     }
     entry = {

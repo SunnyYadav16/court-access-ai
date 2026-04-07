@@ -107,8 +107,8 @@ _BASE: dict = {
 # Settings — database_url computed field
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestDatabaseUrl:
 
+class TestDatabaseUrl:
     def test_url_uses_asyncpg_driver(self):
         s = Settings(**_BASE)
         assert s.database_url.startswith("postgresql+asyncpg://")
@@ -126,14 +126,16 @@ class TestDatabaseUrl:
         assert s.database_url.endswith("/courtdb")
 
     def test_url_full_format(self):
-        s = Settings(**{
-            **_BASE,
-            "postgres_user": "user",
-            "postgres_password": "pass",
-            "postgres_host": "host",
-            "postgres_port": 5432,
-            "postgres_db": "db",
-        })
+        s = Settings(
+            **{
+                **_BASE,
+                "postgres_user": "user",
+                "postgres_password": "pass",
+                "postgres_host": "host",
+                "postgres_port": 5432,
+                "postgres_db": "db",
+            }
+        )
         assert s.database_url == "postgresql+asyncpg://user:pass@host:5432/db"
 
     def test_url_changes_when_host_changes(self):
@@ -146,8 +148,8 @@ class TestDatabaseUrl:
 # Settings — field types
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestSettingsFieldTypes:
 
+class TestSettingsFieldTypes:
     def test_debug_is_bool(self):
         s = Settings(**_BASE)
         assert isinstance(s.debug, bool)
@@ -170,12 +172,14 @@ class TestSettingsFieldTypes:
         assert isinstance(s.legal_verify_timeout, float)
 
     def test_optional_fields_accept_none(self):
-        s = Settings(**{
-            **_BASE,
-            "airflow_base_url": None,
-            "nllb_model_path": None,
-            "whisper_model_path": None,
-        })
+        s = Settings(
+            **{
+                **_BASE,
+                "airflow_base_url": None,
+                "nllb_model_path": None,
+                "whisper_model_path": None,
+            }
+        )
         assert s.airflow_base_url is None
         assert s.nllb_model_path is None
         assert s.whisper_model_path is None
@@ -191,8 +195,8 @@ class TestSettingsFieldTypes:
 # get_settings — singleton contract
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestGetSettings:
 
+class TestGetSettings:
     def test_returns_settings_instance(self):
         result = get_settings()
         assert isinstance(result, Settings)

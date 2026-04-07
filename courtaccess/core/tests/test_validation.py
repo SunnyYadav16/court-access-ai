@@ -39,6 +39,7 @@ BOM_HTML = b"\xef\xbb\xbf<html>"
 
 # ── File-writing helpers ───────────────────────────────────────────────────────
 
+
 def _write_valid_pdf(path: Path) -> None:
     """Minimal valid PDF: has magic bytes, exceeds size threshold, ends with %%EOF."""
     path.write_bytes(PDF_MAGIC + b"x" * MIN_VALID_PDF_SIZE + b"\n%%EOF")
@@ -55,6 +56,7 @@ def _write_html_file(path: Path) -> None:
 
 
 # ── Catalog entry helpers ──────────────────────────────────────────────────────
+
 
 def _make_entry(
     form_id: str,
@@ -92,8 +94,8 @@ def _make_version(
 # _detect_file_type
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestDetectFileType:
 
+class TestDetectFileType:
     def test_nonexistent_file_returns_none(self, tmp_path):
         result = _detect_file_type(str(tmp_path / "ghost.pdf"))
         assert result is None
@@ -149,8 +151,8 @@ class TestDetectFileType:
 # _normalize_form_name
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestNormalizeFormName:
 
+class TestNormalizeFormName:
     def test_empty_string_returned_unchanged(self):
         assert _normalize_form_name("") == ""
 
@@ -205,8 +207,8 @@ class TestNormalizeFormName:
 # _normalize_slug
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestNormalizeSlug:
 
+class TestNormalizeSlug:
     def test_empty_string_returned_unchanged(self):
         assert _normalize_slug("") == ""
 
@@ -259,8 +261,8 @@ class TestNormalizeSlug:
 # run_preprocessing — Pass 1 (per-entry checks)
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestRunPreprocessingPass1:
 
+class TestRunPreprocessingPass1:
     def test_empty_catalog_returns_all_zero_report(self, tmp_path):
         report = run_preprocessing([], str(tmp_path))
         assert report["total_processed"] == 0
@@ -475,7 +477,7 @@ class TestRunPreprocessingPass1:
         catalog = [_make_entry("form-1", versions=versions)]
         side_effects = [
             PDF_MAGIC + b"x" * MIN_VALID_PDF_SIZE,  # _detect_file_type read
-            OSError("disk error"),                   # integrity check read
+            OSError("disk error"),  # integrity check read
         ]
         with patch.object(Path, "read_bytes", side_effect=side_effects):
             report = run_preprocessing(catalog, str(tmp_path))
@@ -520,9 +522,9 @@ class TestRunPreprocessingPass1:
         en = tmp_path / "en.pdf"
         _write_valid_pdf(en)
         es = tmp_path / "es.pdf"
-        es.write_bytes(b"")                  # empty → empty_file:ES
+        es.write_bytes(b"")  # empty → empty_file:ES
         pt = tmp_path / "pt.pdf"
-        _write_html_file(pt)                  # HTML content → mislabeled:PT:html
+        _write_html_file(pt)  # HTML content → mislabeled:PT:html
 
         versions = [_make_version(path=str(en), es=str(es), pt=str(pt))]
         catalog = [_make_entry("form-1", versions=versions)]
@@ -554,8 +556,8 @@ class TestRunPreprocessingPass1:
 # run_preprocessing — Pass 2 (cross-entry duplicate detection)
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestRunPreprocessingPass2:
 
+class TestRunPreprocessingPass2:
     def test_unique_hashes_produce_no_duplicates(self, tmp_path):
         catalog = [
             _make_entry("form-1", content_hash="aaa"),

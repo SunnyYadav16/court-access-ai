@@ -35,6 +35,7 @@ from courtaccess.core.gcs import gcs_uri, parse_gcs_uri
 
 # ── Mock builder ──────────────────────────────────────────────────────────────
 
+
 def _make_gcs_mock():
     """Build a mock storage client chain: client → bucket → blob."""
     mock_blob = MagicMock()
@@ -49,8 +50,8 @@ def _make_gcs_mock():
 # parse_gcs_uri — pure function
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestParseGcsUri:
 
+class TestParseGcsUri:
     def test_valid_uri_returns_bucket_and_blob(self):
         bucket, blob = parse_gcs_uri("gs://my-bucket/forms/abc/form.pdf")
         assert bucket == "my-bucket"
@@ -86,8 +87,8 @@ class TestParseGcsUri:
 # gcs_uri — pure function
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestGcsUri:
 
+class TestGcsUri:
     def test_returns_gs_scheme_uri(self):
         assert gcs_uri("my-bucket", "folder/file.pdf") == "gs://my-bucket/folder/file.pdf"
 
@@ -104,8 +105,8 @@ class TestGcsUri:
 # _ctx — pure log prefix helper
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestCtx:
 
+class TestCtx:
     def test_with_correlation_id_returns_prefix(self):
         assert gcs_mod._ctx("abc-123") == "[corr=abc-123] "
 
@@ -120,8 +121,8 @@ class TestCtx:
 # upload_bytes
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestUploadBytes:
 
+class TestUploadBytes:
     def test_calls_upload_from_string_with_data(self):
         mock_client, _, mock_blob = _make_gcs_mock()
         with patch("courtaccess.core.gcs._get_storage_client", return_value=mock_client):
@@ -155,8 +156,8 @@ class TestUploadBytes:
 # upload_file
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestUploadFile:
 
+class TestUploadFile:
     def test_calls_upload_from_filename_with_path(self):
         mock_client, _, mock_blob = _make_gcs_mock()
         with patch("courtaccess.core.gcs._get_storage_client", return_value=mock_client):
@@ -176,8 +177,8 @@ class TestUploadFile:
 # download_file
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestDownloadFile:
 
+class TestDownloadFile:
     def test_creates_parent_directories(self, tmp_path):
         dest = tmp_path / "nested" / "dir" / "file.pdf"
         mock_client, _, mock_blob = _make_gcs_mock()
@@ -198,28 +199,40 @@ class TestDownloadFile:
         dest = tmp_path / "file.pdf"
         mock_client, _, mock_blob = _make_gcs_mock()
         mock_blob.exists.return_value = False
-        with patch("courtaccess.core.gcs._get_storage_client", return_value=mock_client), pytest.raises(FileNotFoundError):
+        with (
+            patch("courtaccess.core.gcs._get_storage_client", return_value=mock_client),
+            pytest.raises(FileNotFoundError),
+        ):
             gcs_mod.download_file("b", "f", str(dest))
 
     def test_not_found_exception_raises_file_not_found(self, tmp_path):
         dest = tmp_path / "file.pdf"
         mock_client, _, mock_blob = _make_gcs_mock()
         mock_blob.exists.side_effect = NotFound("gs://b/f")
-        with patch("courtaccess.core.gcs._get_storage_client", return_value=mock_client), pytest.raises(FileNotFoundError):
+        with (
+            patch("courtaccess.core.gcs._get_storage_client", return_value=mock_client),
+            pytest.raises(FileNotFoundError),
+        ):
             gcs_mod.download_file("b", "f", str(dest))
 
     def test_forbidden_exception_raises_permission_error(self, tmp_path):
         dest = tmp_path / "file.pdf"
         mock_client, _, mock_blob = _make_gcs_mock()
         mock_blob.exists.side_effect = Forbidden("gs://b/f")
-        with patch("courtaccess.core.gcs._get_storage_client", return_value=mock_client), pytest.raises(PermissionError):
+        with (
+            patch("courtaccess.core.gcs._get_storage_client", return_value=mock_client),
+            pytest.raises(PermissionError),
+        ):
             gcs_mod.download_file("b", "f", str(dest))
 
     def test_file_not_found_error_contains_bucket_and_blob(self, tmp_path):
         dest = tmp_path / "file.pdf"
         mock_client, _, mock_blob = _make_gcs_mock()
         mock_blob.exists.return_value = False
-        with patch("courtaccess.core.gcs._get_storage_client", return_value=mock_client), pytest.raises(FileNotFoundError, match="gs://my-bucket/my-blob"):
+        with (
+            patch("courtaccess.core.gcs._get_storage_client", return_value=mock_client),
+            pytest.raises(FileNotFoundError, match="gs://my-bucket/my-blob"),
+        ):
             gcs_mod.download_file("my-bucket", "my-blob", str(dest))
 
 
@@ -227,8 +240,8 @@ class TestDownloadFile:
 # delete_blob
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestDeleteBlob:
 
+class TestDeleteBlob:
     def test_calls_delete_on_blob(self):
         mock_client, _, mock_blob = _make_gcs_mock()
         with patch("courtaccess.core.gcs._get_storage_client", return_value=mock_client):
@@ -260,8 +273,8 @@ class TestDeleteBlob:
 # blob_exists
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestBlobExists:
 
+class TestBlobExists:
     def test_returns_true_when_blob_exists(self):
         mock_client, _, mock_blob = _make_gcs_mock()
         mock_blob.exists.return_value = True
@@ -279,8 +292,8 @@ class TestBlobExists:
 # get_blob_size
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestGetBlobSize:
 
+class TestGetBlobSize:
     def test_returns_size_on_success(self):
         mock_client, _, mock_blob = _make_gcs_mock()
         mock_blob.size = 12345
@@ -314,8 +327,8 @@ class TestGetBlobSize:
 # generate_signed_url
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestGenerateSignedUrl:
 
+class TestGenerateSignedUrl:
     _FAKE_SA = '{"type": "service_account", "project_id": "test"}'
 
     def test_returns_signed_url_string(self):

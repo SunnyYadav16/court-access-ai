@@ -42,6 +42,7 @@ from courtaccess.languages.base import LanguageConfig  # noqa: E402
 
 # ── Shared fixtures ───────────────────────────────────────────────────────────
 
+
 @pytest.fixture()
 def lang_config():
     """Minimal LanguageConfig for Spanish — inline, no file I/O."""
@@ -82,8 +83,8 @@ def translator(lang_config, monkeypatch):
 # _is_blank_fill_line — @staticmethod, pure predicate
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestIsBlankFillLine:
 
+class TestIsBlankFillLine:
     def test_empty_string_is_blank(self):
         assert Translator._is_blank_fill_line("") is True
 
@@ -123,6 +124,7 @@ class TestIsBlankFillLine:
     def test_module_alias_matches_static_method(self):
         # The module-level `is_blank_fill_line` alias should be the same function
         from courtaccess.core.translation import is_blank_fill_line
+
         assert is_blank_fill_line is Translator._is_blank_fill_line
 
 
@@ -130,8 +132,8 @@ class TestIsBlankFillLine:
 # _extract_citations — @staticmethod
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestExtractCitations:
 
+class TestExtractCitations:
     def test_no_citations_returns_text_unchanged(self):
         text = "The defendant failed to appear."
         protected, cite_map = Translator._extract_citations(text)
@@ -190,8 +192,8 @@ class TestExtractCitations:
 # _restore_placeholders — @staticmethod
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestRestorePlaceholders:
 
+class TestRestorePlaceholders:
     def test_exact_placeholder_replaced(self):
         result = Translator._restore_placeholders(
             "Call RFCT0RF for info.",
@@ -243,8 +245,8 @@ class TestRestorePlaceholders:
 # _is_preserve_only — @staticmethod
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestIsPreserveOnly:
 
+class TestIsPreserveOnly:
     def test_empty_string_is_preserve_only(self):
         assert Translator._is_preserve_only("") is True
 
@@ -282,8 +284,8 @@ class TestIsPreserveOnly:
 # Translator — stub mode lifecycle
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestTranslatorStubMode:
 
+class TestTranslatorStubMode:
     def test_load_returns_self(self, translator):
         # Chaining: Translator(config).load() returns the same instance
         assert isinstance(translator, Translator)
@@ -302,8 +304,8 @@ class TestTranslatorStubMode:
 # translate_text — output contract (stub mode)
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestTranslateTextContract:
 
+class TestTranslateTextContract:
     def test_returns_dict_with_three_keys(self, translator):
         result = translator.translate_text("Hello court.", "spa_Latn")
         assert set(result.keys()) == {"original", "translated", "confidence"}
@@ -348,8 +350,8 @@ class TestTranslateTextContract:
 # translate_one — step 0 and step 0.5 (stub mode)
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestTranslateOneProtectionSteps:
 
+class TestTranslateOneProtectionSteps:
     def test_empty_text_returned_unchanged(self, translator):
         assert translator.translate_one("", "spa_Latn") == ""
 
@@ -386,8 +388,8 @@ class TestTranslateOneProtectionSteps:
 # batch_translate
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestBatchTranslate:
 
+class TestBatchTranslate:
     def test_returns_list_of_same_length(self, translator):
         texts = ["Hello.", "Court order.", "Sign here."]
         results = translator.batch_translate(texts, "spa_Latn")
@@ -413,8 +415,8 @@ class TestBatchTranslate:
 # _extract_court_names — instance method
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestExtractCourtNames:
 
+class TestExtractCourtNames:
     def test_known_court_name_replaced_with_rfcn_placeholder(self, translator):
         text = "File at Boston Municipal Court next week."
         protected, court_map = translator._extract_court_names(text)
@@ -450,8 +452,8 @@ class TestExtractCourtNames:
 # _apply_court_name_safety_net — instance method
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestApplyCourtNameSafetyNet:
 
+class TestApplyCourtNameSafetyNet:
     def test_english_court_name_replaced(self, translator):
         text = "Resolved by District Court yesterday."
         result = translator._apply_court_name_safety_net(text)
@@ -473,8 +475,8 @@ class TestApplyCourtNameSafetyNet:
 # unload — memory cleanup
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestUnload:
 
+class TestUnload:
     def test_unload_clears_nlp(self, translator):
         translator.unload()
         assert translator._nlp is None
@@ -498,8 +500,8 @@ class TestUnload:
 # _ensure_loaded — real mode guard
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestEnsureLoaded:
 
+class TestEnsureLoaded:
     def test_stub_mode_ensure_loaded_does_not_raise(self, translator):
         # _use_real is False — models being None is expected and fine
         translator._ensure_loaded()  # must not raise

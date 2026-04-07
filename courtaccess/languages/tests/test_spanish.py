@@ -67,7 +67,9 @@ def test_court_name_translations_is_not_empty():
 
 def test_massachusetts_trial_court_translated():
     assert "Massachusetts Trial Court" in SPANISH_CONFIG.court_name_translations
-    assert SPANISH_CONFIG.court_name_translations["Massachusetts Trial Court"] == "Tribunal de Justicia de Massachusetts"
+    assert (
+        SPANISH_CONFIG.court_name_translations["Massachusetts Trial Court"] == "Tribunal de Justicia de Massachusetts"
+    )
 
 
 def test_district_court_translated():
