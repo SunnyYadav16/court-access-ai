@@ -66,7 +66,7 @@ def _resolve_voice_path(lang: str) -> Path:
     """Resolve the local .onnx path for *lang* from GCS-pulled model directory.
 
     Reads PIPER_TTS_{EN,ES,PT}_PATH from settings (set via env vars in
-    docker-compose / GKE).  The directory must already exist on disk —
+    docker-compose / GCP VM).  The directory must already exist on disk —
     populated by `dvc pull` before container startup.
 
     Resolution order:

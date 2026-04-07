@@ -19,10 +19,7 @@
 
 x-airflow-common:
   &airflow-common
-  build:
-    context: .
-    dockerfile: Dockerfile
-    target: airflow
+  image: ${ARTIFACT_REGISTRY}/courtaccess-airflow:${APP_VERSION:-latest}
   environment:
     &airflow-common-env
     # ── Core ──
@@ -207,18 +204,9 @@ services:
 
   # ── FastAPI ────────────────────────────────────────────────────────────────
   api:
-    build:
-      context: .
-      dockerfile: gpu.Dockerfile
-      args:
-        # VITE_* vars are baked into the frontend bundle at build time.
-        VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY}
-        VITE_FIREBASE_AUTH_DOMAIN: ${VITE_FIREBASE_AUTH_DOMAIN}
-        VITE_FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID}
-        VITE_FIREBASE_STORAGE_BUCKET: ${VITE_FIREBASE_STORAGE_BUCKET}
-        VITE_FIREBASE_MESSAGING_SENDER_ID: ${VITE_FIREBASE_MESSAGING_SENDER_ID}
-        VITE_FIREBASE_APP_ID: ${VITE_FIREBASE_APP_ID}
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+    # VITE_* vars are baked into the bundle by build.yml at image build time —
+    # they cannot be injected here at runtime.
+    image: ${ARTIFACT_REGISTRY}/courtaccess-api-gpu:${APP_VERSION:-latest}
     ports:
       - "8000:8000"
     environment:

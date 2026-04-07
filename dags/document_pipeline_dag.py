@@ -33,10 +33,9 @@ keeping Airflow's metadata DB lean.
 
 WORKER NOTE:
     All tasks share /tmp/courtaccess/{dag_run_id}/ on the same worker.
-    Works with LocalExecutor (Docker Compose). For KubernetesExecutor (GKE /
-    Cloud Composer) replace with GCS-backed intermediates — each task downloads
+    Works with LocalExecutor (Docker Compose on GCE VM). If migrating to
+    Cloud Composer, replace with GCS-backed intermediates — each task downloads
     what it needs at the start and uploads its output before exiting.
-    Tag: TODO-GKE-WORKDIR
 """
 
 from __future__ import annotations
@@ -306,7 +305,7 @@ def task_validate_upload(**context) -> dict:
     _update_session(session_id, "processing")
     _write_step(session_id, "validate_upload", "running", "Downloading from GCS")
 
-    # TODO-GKE-WORKDIR: replace with GCS-backed tmp for KubernetesExecutor
+    # LocalExecutor on GCE VM: shared /tmp is fine. Switch to GCS-backed tmp if moving to Cloud Composer.
     work_dir = f"/tmp/courtaccess/{context['dag_run'].run_id}"  # noqa: S108 # nosec B108
     Path(work_dir).mkdir(parents=True, exist_ok=True)
     local_pdf = str(Path(work_dir) / filename)

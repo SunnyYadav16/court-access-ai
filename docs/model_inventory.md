@@ -15,7 +15,7 @@
 │    tfdv-.../        │                            │
 └─────────────────────┘                            ▼
                                         ┌──────────────────────────┐
-                                        │  GKE Pod                 │
+                                        │  GCE VM (Docker Compose) │
                                         │                          │
                                         │  /opt/models/            │
                                         │    whisper-large-v3/     │

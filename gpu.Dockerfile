@@ -8,7 +8,6 @@
 # #   - Qwen2.5-VL         (Handwritten text OCR)
 # #
 # # The API and Airflow services use the CPU Dockerfile instead.
-# # In GKE, GPU pods are scheduled on the gpu-node-pool only.
 # # ══════════════════════════════════════════════════════════════════════════════
 
 # FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
@@ -59,7 +58,7 @@
 # RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # # Model weights are pulled at startup via DVC (see entrypoint).
-# # In GKE, an init container runs gsutil cp instead.
+# # On the GCE VM, model-loader service runs gsutil cp instead (see docker-compose.prod.yml).
 # ENTRYPOINT ["docker-entrypoint.sh"]
 # CMD ["echo", "GPU inference container ready. Start the appropriate inference server."]
 

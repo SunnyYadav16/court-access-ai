@@ -32,11 +32,11 @@ const driftReport = [
 ]
 
 const infrastructure = [
-  { resource: "API Pod (FastAPI)", cpu: "23%", mem: "41%", gpu: "—" },
-  { resource: "Whisper Pod", cpu: "45%", mem: "62%", gpu: "71%" },
-  { resource: "NLLB Pod", cpu: "38%", mem: "55%", gpu: "58%" },
-  { resource: "OCR Pod", cpu: "12%", mem: "34%", gpu: "22%" },
-  { resource: "TTS Pod", cpu: "8%", mem: "18%", gpu: "—" },
+  { resource: "API (FastAPI)", cpu: "23%", mem: "41%", gpu: "—" },
+  { resource: "Whisper", cpu: "45%", mem: "62%", gpu: "71%" },
+  { resource: "NLLB", cpu: "38%", mem: "55%", gpu: "58%" },
+  { resource: "OCR", cpu: "12%", mem: "34%", gpu: "22%" },
+  { resource: "TTS", cpu: "8%", mem: "18%", gpu: "—" },
   { resource: "Airflow Worker", cpu: "15%", mem: "28%", gpu: "—" },
 ]
 
@@ -134,7 +134,7 @@ export default function AdminDashboard({ onNav }: Props) {
           <Card>
             <CardContent className="p-4">
               <div className="text-sm font-semibold mb-3" style={{ color: "#1A2332" }}>
-                GKE Infrastructure
+                GCE VM Infrastructure
               </div>
               {infrastructure.map((r, i) => (
                 <div key={i} className="grid grid-cols-4 py-1.5 text-[11px]"
