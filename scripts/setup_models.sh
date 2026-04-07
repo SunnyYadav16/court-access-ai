@@ -19,6 +19,18 @@
 #   git commit -m "feat: real DVC pointers for all model weights"
 #   git push
 #
+# ── Production model update (no full-stack downtime) ─────────────────────────
+# After pushing new .dvc files and rebuilding the image in CI:
+#
+#   git pull                                                  # get new .dvc pointer
+#   docker compose -f docker-compose.prod.yml pull model-loader   # pull new image
+#   docker compose -f docker-compose.prod.yml up model-loader --force-recreate
+#   # ↑ copies new hashes from image layer, dvc pull downloads only the changed blob
+#   docker compose -f docker-compose.prod.yml restart api
+#   # ↑ brief restart — model already in shared-models volume, no download needed
+#
+# All other services (postgres, redis, airflow-*) keep running throughout.
+#
 # ── Models managed by this script (stored in GCS) ────────────────────────────
 #   1. Whisper Large V3       ~3 GB    courtaccess/speech/transcribe.py
 #   2. NLLB-200 1.3B ct2      ~600 MB  courtaccess/core/translation.py

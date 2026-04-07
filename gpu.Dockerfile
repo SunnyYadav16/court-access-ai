@@ -144,18 +144,25 @@ RUN uv pip install "dvc[gs]>=3.50.0"
 COPY api/ ./api/
 COPY db/ ./db/
 COPY models/*.dvc ./models/
+# dvc-pointers/ is never a volume mount — lives purely in the image layer.
+# Mirrors the pattern in the airflow target so this image can also serve as a
+# model-loader source if the deployment topology ever changes.
+COPY models/*.dvc ./dvc-pointers/
 
 # Copy compiled frontend
 COPY --from=frontend-build /frontend/dist ./frontend/dist
 
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+COPY scripts/model-loader.sh /usr/local/bin/model-loader.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/model-loader.sh
 
 # Run as non-root for container hardening.
+# UID/GID 50000 matches AIRFLOW_UID used throughout the project so that the
+# shared-models volume (chowned to 50000 by model-loader) is readable here.
 # HOME=/tmp gives DVC and git a writable directory for caches/config
 # without needing a real home directory.
-RUN groupadd --system appuser && useradd --system --gid appuser --no-create-home --home-dir /tmp appuser \
-    && chown -R appuser:appuser /app /usr/local/bin/docker-entrypoint.sh
+RUN groupadd --gid 50000 appuser && useradd --uid 50000 --gid 50000 --no-create-home --home-dir /tmp appuser \
+    && chown -R appuser:appuser /app /usr/local/bin/docker-entrypoint.sh /usr/local/bin/model-loader.sh
 
 ENV HOME=/tmp
 

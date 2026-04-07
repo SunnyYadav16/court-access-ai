@@ -53,6 +53,9 @@ x-airflow-common:
     # ── Redis ──
     REDIS_URL: ${REDIS_URL}
 
+    # ── MLflow ──
+    MLFLOW_TRACKING_URI: http://mlflow:5000
+
     # ── Application ──
     APP_ENV: ${APP_ENV}
 
@@ -170,6 +173,38 @@ services:
       start_period: 5s
     restart: always
 
+  # ── MLflow Tracking Server ─────────────────────────────────────────────────
+  # NOTE: The mlflow database on Cloud SQL must be created once manually before
+  # the first deploy — Cloud SQL ignores docker-entrypoint-initdb.d/:
+  #   psql -h ${POSTGRES_HOST} -U ${POSTGRES_USER} -c "CREATE DATABASE mlflow;"
+  # No depends_on for postgres — Cloud SQL is external to this Compose stack.
+  # api and Airflow services do NOT hard-depend on this service; all callers
+  # handle MLflow unavailability gracefully.
+  mlflow:
+    build:
+      context: .
+      dockerfile: mlflow.Dockerfile
+    command: >
+      mlflow server
+      --backend-store-uri postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/mlflow
+      --artifacts-destination gs://${GCS_BUCKET_MODELS}/mlflow-artifacts/
+      --host 0.0.0.0
+      --port 5000
+    ports:
+      - "5050:5000"
+    # GCS auth — VM's attached service account handles auth via ADC.
+    # No GOOGLE_APPLICATION_CREDENTIALS needed; its absence lets the
+    # google-cloud-storage SDK discover credentials automatically.
+    volumes:
+      - mlflow-state:/mlflow
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
   # ── FastAPI ────────────────────────────────────────────────────────────────
   api:
     build:
@@ -222,8 +257,9 @@ services:
       VERTEX_LOCATION: ${VERTEX_LOCATION}
       VERTEX_LEGAL_LLM_MODEL: ${VERTEX_LEGAL_LLM_MODEL}
       LEGAL_VERIFY_TIMEOUT: ${LEGAL_VERIFY_TIMEOUT}
-      # ── Redis ──
+      # ── Redis & MLflow ──
       REDIS_URL: ${REDIS_URL}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
       # ── Feature Flags & Model Paths ──
       USE_REAL_CLASSIFICATION: ${USE_REAL_CLASSIFICATION}
       USE_REAL_TRANSLATION: ${USE_REAL_TRANSLATION}
@@ -298,6 +334,8 @@ services:
         condition: service_healthy
       airflow-init:
         condition: service_completed_successfully
+      model-loader:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   # ── Airflow: API Server ────────────────────────────────────────────────────
@@ -317,6 +355,8 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+      model-loader:
+        condition: service_completed_successfully
 
   # ── Airflow: Scheduler ─────────────────────────────────────────────────────
   airflow-scheduler:
@@ -332,6 +372,8 @@ services:
     depends_on:
       <<: *airflow-common-depends-on
       airflow-init:
+        condition: service_completed_successfully
+      model-loader:
         condition: service_completed_successfully
 
   # ── Airflow: DAG Processor ─────────────────────────────────────────────────
@@ -349,6 +391,8 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+      model-loader:
+        condition: service_completed_successfully
 
   # ── Airflow: Triggerer ─────────────────────────────────────────────────────
   airflow-triggerer:
@@ -365,8 +409,13 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+      model-loader:
+        condition: service_completed_successfully
 
   # ── Airflow: Init (one-shot) ───────────────────────────────────────────────
+  # Responsibility: DB migrate + admin user creation ONLY.
+  # Model loading is handled by the separate model-loader service so that a
+  # model update never forces a full-stack restart.
   airflow-init:
     <<: *airflow-common
     entrypoint: /bin/bash
@@ -375,23 +424,6 @@ services:
       - |
         mkdir -p /opt/airflow/data/forms /opt/airflow/forms /opt/airflow/models /opt/airflow/logs
         chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/data /opt/airflow/forms /opt/airflow/models /opt/airflow/logs
-
-        # In prod, DVC authenticates via the VM's attached service account (ADC).
-        # No key file needed — just pull models directly from GCS.
-        cd /opt/airflow
-        if [ ! -d ".dvc" ]; then
-          dvc init --no-scm
-          echo "DVC initialized."
-        fi
-
-        # Configure GCS remote explicitly (no .dvc/config mounted in prod)
-        dvc remote add -d gcs_remote gs://$${GCS_BUCKET_MODELS} 2>/dev/null || \
-          dvc remote modify gcs_remote url gs://$${GCS_BUCKET_MODELS}
-
-        dvc pull --allow-missing 2>&1 || \
-          echo "[airflow-init] DVC pull failed — models must be pre-loaded into the models volume."
-        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/models 2>/dev/null || true
-
         exec /entrypoint airflow version
     environment:
       <<: *airflow-common-env
@@ -402,9 +434,34 @@ services:
     user: "0:0"
     volumes: *airflow-common-volumes
 
+  # ── Model Loader (one-shot) ────────────────────────────────────────────────
+  # Runs in parallel with airflow-init (no shared dependency between them).
+  # Copies authoritative .dvc pointer files from the image layer into the
+  # shared-models volume (overwriting any stale hashes from a previous image),
+  # then pulls model blobs from GCS via ADC.
+  #
+  # To update a single model without full-stack downtime:
+  #   docker compose -f docker-compose.prod.yml pull model-loader
+  #   docker compose -f docker-compose.prod.yml up model-loader --force-recreate
+  #   docker compose -f docker-compose.prod.yml restart api
+  model-loader:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command: ["-c", "/usr/local/bin/model-loader.sh"]
+    environment:
+      <<: *airflow-common-env
+      MODEL_LOADER_MODE: prod
+    volumes:
+      - shared-models:/opt/airflow/models
+    user: "0:0"
+    restart: "no"
+    # No depends_on — only needs the shared-models named volume (mounted before
+    # container start) and GCS network access via ADC, both available immediately.
+
 volumes:
   redis-data:
   airflow-logs:
   airflow-data:
   airflow-forms:
   shared-models:
+  mlflow-state:
