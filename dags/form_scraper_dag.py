@@ -915,8 +915,20 @@ def task_prepare_trigger_confs(**context) -> list[dict]:
     Without this, ``TriggerDagRunOperator.expand()`` silently drops runs whose
     auto-generated ``run_id`` collides with an earlier mapped instance's.
 
+    Routing:
+      - DOCX forms  → ``docx_pipeline_dag``  (triggered twice: once per language,
+        because that DAG processes one target language per run).
+      - PDF / other → ``form_pretranslation_dag`` (handles both languages in one run).
+
     Returns a list of dicts shaped for ``expand_kwargs()``:
-        [{"conf": {"form_id": ...}, "trigger_run_id": "pretranslation__<uuid>__<dag_run>"}, ...]
+        [
+            {
+                "trigger_dag_id": "form_pretranslation_dag" | "docx_pipeline_dag",
+                "conf": {...},
+                "trigger_run_id": "<prefix>__<uuid>__<dag_run>",
+            },
+            ...
+        ]
     """
     ti = context["ti"]
     result = ti.xcom_pull(task_ids="scrape_and_classify", key="scrape_result")
@@ -929,16 +941,74 @@ def task_prepare_trigger_confs(**context) -> list[dict]:
         logger.info("No forms need pre-translation this cycle.")
         return []
 
+    # ── Build form_id → catalog entry lookup from XCom (avoids a DB round-trip) ──
+    # Prefer the GCS-resolved list from upload_forms_to_gcs; fall back to the
+    # raw scrape output if the upload task was skipped.
+    forms: list[dict] = (
+        ti.xcom_pull(task_ids="upload_forms_to_gcs", key="forms")
+        or ti.xcom_pull(task_ids="scrape_and_classify", key="forms")
+        or []
+    )
+    form_lookup: dict[str, dict] = {str(f["form_id"]): f for f in forms if f.get("form_id")}
+
     dag_run_id = context["dag_run"].run_id if context.get("dag_run") else "manual"
+    start_time = datetime.utcnow().isoformat() + "Z"
     logger.info("Preparing trigger confs for %d form(s): %s", len(queue), queue)
 
-    return [
-        {
-            "conf": {"form_id": form_id},
-            "trigger_run_id": f"pretranslation__{form_id}__{dag_run_id}",
-        }
-        for form_id in queue
-    ]
+    confs: list[dict] = []
+    for form_id in queue:
+        entry = form_lookup.get(str(form_id)) or {}
+        file_type = (entry.get("file_type") or "pdf").lower()
+
+        if file_type == "docx":
+            # docx_pipeline_dag translates one language per run — emit one entry
+            # for ES and one for PT so both translations are produced.
+            versions = entry.get("versions") or []
+            latest_ver = versions[0] if versions else {}
+            gcs_input_path = latest_ver.get("file_path_original") or ""
+            slug = entry.get("form_slug") or "form"
+            filename = f"{slug}.docx"
+
+            for target_lang, nllb_target in (("es", "spa_Latn"), ("pt", "por_Latn")):
+                # Each triggered run is fully independent (one language per run),
+                # so session_id and request_id must both be fresh UUIDs — never
+                # shared across languages — to avoid cross-run collisions in the
+                # sessions / pipeline_steps / document_translation_requests tables.
+                confs.append(
+                    {
+                        "trigger_dag_id": "docx_pipeline_dag",
+                        "conf": {
+                            "form_id": form_id,
+                            "session_id": str(uuid.uuid4()),
+                            "request_id": str(uuid.uuid4()),
+                            "user_id": AIRFLOW_SYSTEM_USER_ID,
+                            "gcs_input_path": gcs_input_path,
+                            "target_lang": target_lang,
+                            "nllb_target": nllb_target,
+                            "filename": filename,
+                            "start_time": start_time,
+                            "original_format": "docx",
+                        },
+                        "trigger_run_id": (f"docx_pretranslation__{form_id}__{target_lang}__{dag_run_id}"),
+                    }
+                )
+            logger.info(
+                "DOCX form '%s' → docx_pipeline_dag (ES + PT, gcs=%s)",
+                form_id,
+                gcs_input_path,
+            )
+        else:
+            # PDF (or unknown) — existing two-language pipeline.
+            confs.append(
+                {
+                    "trigger_dag_id": "form_pretranslation_dag",
+                    "conf": {"form_id": form_id},
+                    "trigger_run_id": f"pretranslation__{form_id}__{dag_run_id}",
+                }
+            )
+            logger.info("PDF form '%s' → form_pretranslation_dag", form_id)
+
+    return confs
 
 
 def task_log_summary(**context) -> None:
@@ -1125,7 +1195,10 @@ with DAG(
     t6_prepare = PythonOperator(task_id="prepare_trigger_confs", python_callable=task_prepare_trigger_confs)
     t6_trigger = TriggerDagRunOperator.partial(
         task_id="trigger_pretranslation",
-        trigger_dag_id="form_pretranslation_dag",
+        # trigger_dag_id is NOT hardcoded here — it is supplied per-entry by
+        # task_prepare_trigger_confs via the expand_kwargs dict key
+        # "trigger_dag_id", routing PDFs to form_pretranslation_dag and
+        # DOCX forms to docx_pipeline_dag.
     ).expand_kwargs(t6_prepare.output)
     t7_summary = PythonOperator(
         task_id="log_summary",

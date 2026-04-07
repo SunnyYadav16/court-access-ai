@@ -49,8 +49,11 @@ from pathlib import Path
 from airflow import DAG
 from airflow.exceptions import AirflowFailException
 from airflow.providers.standard.operators.python import PythonOperator
+from sqlalchemy.orm import Session
 
 from courtaccess.core import gcs
+from db.database import get_sync_engine
+from db.queries import forms as form_queries
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +61,7 @@ logger = logging.getLogger(__name__)
 
 _GCS_BUCKET_UPLOADS = os.getenv("GCS_BUCKET_UPLOADS")
 _GCS_BUCKET_TRANSLATED = os.getenv("GCS_BUCKET_TRANSLATED")
+_GCS_BUCKET_FORMS = os.getenv("GCS_BUCKET_FORMS")  # catalog bucket (pretranslation path)
 _SIGNED_URL_EXPIRY = int(os.getenv("SIGNED_URL_EXPIRY_SECONDS"))
 _GCP_SA_JSON = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
 
@@ -386,13 +390,22 @@ def task_translate_docx(**context) -> dict:
 
 def task_upload_to_gcs(**context) -> dict:
     """
-    Upload translated DOCX to GCS and generate a signed URL.
-    GCS path: gs://courtaccess-ai-translated/{session_id}/output_{lang}.docx
+    Upload translated DOCX to GCS and push ``gcs_result`` XCom.
 
-    Writes output_file_gcs_path, signed_url, signed_url_expires_at to
-    translation_requests immediately.
+    Two paths, selected by whether ``form_id`` is in the trigger conf:
 
-    XCom → gcs_result
+    **User-upload path** (no form_id):
+        Uploads to ``GCS_BUCKET_TRANSLATED/{session_id}/output_{lang}.docx``.
+        Generates a signed URL and writes it to ``document_translation_requests``
+        so the frontend can poll for a download link.
+
+    **Pretranslation path** (form_id present):
+        Uploads to ``GCS_BUCKET_FORMS/forms/{slug}/v{version}/{slug}_{lang}.docx``
+        — the same canonical path used by all catalog forms.
+        Signed URL and ``_update_request`` are skipped (no user-facing request row
+        exists for a catalog form; ``task_finalize`` handles the DB catalog update).
+
+    XCom → gcs_result (always pushed, same key in both paths)
     """
     ti = context["ti"]
     meta = ti.xcom_pull(task_ids="validate_upload", key="upload_meta")
@@ -401,35 +414,76 @@ def task_upload_to_gcs(**context) -> dict:
     request_id = meta["request_id"]
     target_lang = meta["target_lang"]
 
-    gcs_uri_str = f"gs://{_GCS_BUCKET_TRANSLATED}/{session_id}/output_{target_lang}.docx"
+    conf = context["dag_run"].conf or {}
+    form_id = conf.get("form_id")
 
-    _write_step(session_id, "upload_to_gcs", "running", f"Uploading to {gcs_uri_str}")
-    b, bl = gcs.parse_gcs_uri(gcs_uri_str)
-    gcs.upload_file(output_path, b, bl)
+    if form_id:
+        # ── Pretranslation path: upload to the catalog bucket ───────────────────
+        # Resolve slug + version from DB to build the canonical GCS path.
+        try:
+            form_uuid = uuid.UUID(str(form_id))
+            engine = get_sync_engine()
+            with Session(engine) as orm_session:
+                form = form_queries.get_form_by_id_sync(orm_session, form_uuid)
+                if form is None:
+                    raise ValueError(f"form_id '{form_id}' not found in DB.")
+                versions = sorted(list(form.versions), key=lambda v: v.version, reverse=True)
+                if not versions:
+                    raise ValueError(f"form_id '{form_id}' has no version records.")
+                slug = str(form.form_slug or "form")
+                vnum = versions[0].version
+        except Exception as exc:
+            raise RuntimeError(
+                f"task_upload_to_gcs: could not resolve slug/version for form_id='{form_id}': {exc}"
+            ) from exc
 
-    signed_url = gcs.generate_signed_url(b, bl, _SIGNED_URL_EXPIRY, _GCP_SA_JSON)
-    expires_at = datetime.now(tz=UTC) + timedelta(seconds=_SIGNED_URL_EXPIRY)
+        blob = f"forms/{slug}/v{vnum}/{slug}_{target_lang}.docx"
+        gcs_uri_str = f"gs://{_GCS_BUCKET_FORMS}/{blob}"
 
-    # Write URL immediately — don't wait for finalize
-    _update_request(
-        request_id,
-        output_file_gcs_path=gcs_uri_str,
-        signed_url=signed_url,
-        signed_url_expires_at=expires_at,
-    )
-    _write_step(
-        session_id,
-        "upload_to_gcs",
-        "success",
-        f"Uploaded · signed URL expires in {_SIGNED_URL_EXPIRY // 60} min",
-        {"gcs_uri": gcs_uri_str},
-    )
+        _write_step(session_id, "upload_to_gcs", "running", f"Uploading to {gcs_uri_str}")
+        b, bl = gcs.parse_gcs_uri(gcs_uri_str)
+        gcs.upload_file(output_path, b, bl)
+        _write_step(
+            session_id,
+            "upload_to_gcs",
+            "success",
+            f"Catalog DOCX uploaded · {target_lang.upper()}",
+            {"gcs_uri": gcs_uri_str},
+        )
 
-    result = {
-        "gcs_uri": gcs_uri_str,
-        "signed_url": signed_url,
-        "signed_url_expires_at": expires_at.isoformat(),
-    }
+        result = {"gcs_uri": gcs_uri_str, "signed_url": None, "signed_url_expires_at": None}
+    else:
+        # ── User-upload path: existing logic ────────────────────────────────────
+        gcs_uri_str = f"gs://{_GCS_BUCKET_TRANSLATED}/{session_id}/output_{target_lang}.docx"
+
+        _write_step(session_id, "upload_to_gcs", "running", f"Uploading to {gcs_uri_str}")
+        b, bl = gcs.parse_gcs_uri(gcs_uri_str)
+        gcs.upload_file(output_path, b, bl)
+
+        signed_url = gcs.generate_signed_url(b, bl, _SIGNED_URL_EXPIRY, _GCP_SA_JSON)
+        expires_at = datetime.now(tz=UTC) + timedelta(seconds=_SIGNED_URL_EXPIRY)
+
+        # Write URL immediately — don`t wait for finalize
+        _update_request(
+            request_id,
+            output_file_gcs_path=gcs_uri_str,
+            signed_url=signed_url,
+            signed_url_expires_at=expires_at,
+        )
+        _write_step(
+            session_id,
+            "upload_to_gcs",
+            "success",
+            f"Uploaded · signed URL expires in {_SIGNED_URL_EXPIRY // 60} min",
+            {"gcs_uri": gcs_uri_str},
+        )
+
+        result = {
+            "gcs_uri": gcs_uri_str,
+            "signed_url": signed_url,
+            "signed_url_expires_at": expires_at.isoformat(),
+        }
+
     ti.xcom_push(key="gcs_result", value=result)
     return result
 
@@ -452,12 +506,22 @@ def task_finalize(**context) -> dict:
         llama_corrections_count → from translate_docx summary
         processing_time_seconds → wall clock from start_time in conf
         completed_at            → now()
+
+    If the trigger conf contains a ``form_id`` key (pretranslation path,
+    triggered by form_scraper_dag), also update the form_versions catalog
+    row with the translated DOCX URI so the catalog reflects both languages.
+    The regular user-upload path has no form_id and is completely unaffected.
     """
     ti = context["ti"]
     meta = ti.xcom_pull(task_ids="validate_upload", key="upload_meta")
     translate_summary = ti.xcom_pull(task_ids="translate_docx", key="translate_summary") or {}
     session_id = meta["session_id"]
     request_id = meta["request_id"]
+    target_lang = meta.get("target_lang", "es")
+
+    # form_id is only present when triggered from form_scraper_dag (pretranslation path).
+    conf = context["dag_run"].conf or {}
+    form_id = conf.get("form_id")
 
     now = datetime.now(tz=UTC)
     try:
@@ -466,19 +530,85 @@ def task_finalize(**context) -> dict:
     except (ValueError, TypeError):
         processing_secs = None
 
-    _update_session(session_id, "completed", completed_at=now)
-    _update_request(
-        request_id,
-        status="completed",
-        llama_corrections_count=translate_summary.get("llama_corrections_count", 0),
-        processing_time_seconds=processing_secs,
-        completed_at=now,
-    )
+    # Skip user-session / translation-request DB updates on the pretranslation
+    # path — no sessions or document_translation_requests row was ever inserted
+    # for a catalog form trigger, so running these UPDATEs would silently match
+    # 0 rows and generate FK violation noise in the logs.
+    if not form_id:
+        _update_session(session_id, "completed", completed_at=now)
+        _update_request(
+            request_id,
+            status="completed",
+            llama_corrections_count=translate_summary.get("llama_corrections_count", 0),
+            processing_time_seconds=processing_secs,
+            completed_at=now,
+        )
+
+    # ── Optional catalog update (pretranslation path only) ──────────────────────
+    # When form_id is set, record the translated DOCX URI in form_versions so
+    # the catalog reflects the output (same role as task_store_and_update_catalog
+    # in form_pretranslation_dag, but adapted for single-language DOCX runs).
+    if form_id:
+        gcs_result = ti.xcom_pull(task_ids="upload_to_gcs", key="gcs_result") or {}
+        gcs_uri = gcs_result.get("gcs_uri", "")
+        if gcs_uri:
+            try:
+                form_uuid = uuid.UUID(str(form_id))
+                engine = get_sync_engine()
+                with Session(engine) as orm_session:
+                    form = form_queries.get_form_by_id_sync(orm_session, form_uuid)
+                    if form is None:
+                        logger.warning("Catalog update skipped: form_id='%s' not found in DB.", form_id)
+                    else:
+                        versions = sorted(list(form.versions), key=lambda v: v.version, reverse=True)
+                        if not versions:
+                            logger.warning(
+                                "Catalog update skipped: form_id='%s' has no version records.",
+                                form_id,
+                            )
+                        else:
+                            latest_ver = versions[0]
+                            vnum = latest_ver.version
+                            # Read existing paths so we only overwrite the field
+                            # for the language being produced in this run.
+                            existing_es = str(latest_ver.file_path_es) if latest_ver.file_path_es else None
+                            existing_pt = str(latest_ver.file_path_pt) if latest_ver.file_path_pt else None
+                            existing_type_es = latest_ver.file_type_es
+                            existing_type_pt = latest_ver.file_type_pt
+
+                            form_queries.update_form_version_translations_sync(
+                                orm_session,
+                                form_id=form_uuid,
+                                version=vnum,
+                                file_path_es=gcs_uri if target_lang == "es" else existing_es,
+                                file_path_pt=gcs_uri if target_lang == "pt" else existing_pt,
+                                file_type_es="docx" if target_lang == "es" else existing_type_es,
+                                file_type_pt="docx" if target_lang == "pt" else existing_type_pt,
+                            )
+                            orm_session.commit()
+                            logger.info(
+                                "Catalog updated: form_id=%s v%d lang=%s uri=%s",
+                                form_id,
+                                vnum,
+                                target_lang,
+                                gcs_uri,
+                            )
+            except Exception as exc:
+                # Never let a catalog update failure abort pipeline finalization.
+                logger.warning(
+                    "Catalog update failed for form_id=%s lang=%s: %s",
+                    form_id,
+                    target_lang,
+                    exc,
+                    exc_info=True,
+                )
+        else:
+            logger.warning("Catalog update skipped: no GCS URI in gcs_result for form_id=%s.", form_id)
 
     logger.info(
         "Finalized: session=%s lang=%s corrections=%d time=%.1fs",
         session_id,
-        meta.get("target_lang"),
+        target_lang,
         translate_summary.get("llama_corrections_count", 0),
         processing_secs or 0,
     )
