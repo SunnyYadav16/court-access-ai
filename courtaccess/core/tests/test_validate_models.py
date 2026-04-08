@@ -57,7 +57,6 @@ from courtaccess.core.validate_models import (
 
 
 class TestRunName:
-
     def test_stub_mode_contains_stub(self):
         assert "stub" in _run_name(False)
 
@@ -82,7 +81,6 @@ class TestRunName:
 
 
 class TestValidationSet:
-
     def test_has_exactly_20_entries(self):
         assert len(VALIDATION_SET) == 20
 
@@ -177,7 +175,6 @@ def validated():
 
 
 class TestValidateOutputContract:
-
     def test_returns_dict_with_params_key(self, validated):
         assert "params" in validated
 
@@ -213,7 +210,6 @@ class TestValidateOutputContract:
 
 
 class TestValidateMetrics:
-
     def test_nllb_non_empty_rate_is_one_for_all_non_empty(self, validated):
         assert validated["metrics"]["nllb_non_empty_rate"] == pytest.approx(1.0)
 
@@ -238,9 +234,7 @@ class TestValidateMetrics:
         assert result["metrics"]["nllb_non_empty_rate"] == pytest.approx(0.0)
 
     def test_llama_correction_rate_one_when_reviewer_changes_all(self):
-        reviewer_cls, _ = _make_reviewer_mock(
-            verify_side_effect=lambda orig, trans: ["CHANGED"] * len(trans)
-        )
+        reviewer_cls, _ = _make_reviewer_mock(verify_side_effect=lambda orig, trans: ["CHANGED"] * len(trans))
         result = _run_validate(reviewer_cls=reviewer_cls)
         assert result["metrics"]["llama_correction_rate"] == pytest.approx(1.0)
 
@@ -279,7 +273,6 @@ class TestValidateMetrics:
 
 
 class TestValidateIntegration:
-
     def test_mlflow_unavailable_does_not_crash(self):
         # Already covered by all tests above (mlflow=None), but explicit check
         result = _run_validate()

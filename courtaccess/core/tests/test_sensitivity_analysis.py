@@ -48,7 +48,6 @@ from courtaccess.core.sensitivity_analysis import (
 
 
 class TestStdev:
-
     def test_empty_list_returns_zero(self):
         assert _stdev([]) == 0.0
 
@@ -87,7 +86,6 @@ class TestStdev:
 
 
 class TestPearson:
-
     def test_empty_lists_returns_none(self):
         assert _pearson([], []) is None
 
@@ -146,7 +144,6 @@ class TestPearson:
 
 
 class TestLoadCatalog:
-
     def test_missing_file_returns_empty_list(self, tmp_path):
         result = _load_catalog(tmp_path / "nonexistent.json")
         assert result == []
@@ -200,7 +197,6 @@ def _make_mock_drift(bias_count=0, bias_flags=None):
 
 
 class TestRunThresholdSweep:
-
     def test_grid_has_correct_number_of_entries(self):
         mock_drift = _make_mock_drift()
         with patch.dict("sys.modules", {"courtaccess.monitoring.drift": mock_drift}):
@@ -320,7 +316,6 @@ class TestRunThresholdSweep:
 
 
 class TestRunInputCharacteristics:
-
     def test_no_database_url_returns_none(self, monkeypatch):
         monkeypatch.delenv("DATABASE_URL", raising=False)
         monkeypatch.delenv("POSTGRES_URL", raising=False)
@@ -458,7 +453,6 @@ class TestRunInputCharacteristics:
 
 
 class TestRunSensitivityAnalysis:
-
     def _make_sweep_result(self):
         return {"grid": [], "threshold_sensitivity_score": 0.0}
 
@@ -572,7 +566,6 @@ class TestRunSensitivityAnalysis:
 
 
 class TestModuleConstants:
-
     def test_underserved_sweep_has_nine_values(self):
         assert len(UNDERSERVED_SWEEP) == 9
 

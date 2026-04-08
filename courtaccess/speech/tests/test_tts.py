@@ -87,13 +87,21 @@ def test_resolve_voice_path_raises_when_env_not_set():
     mock_settings.piper_tts_es_path = None
     mock_settings.piper_tts_pt_path = None
 
-    with patch("courtaccess.speech.tts._get_lang_path_overrides", return_value={"en": None, "es": None, "pt": None}), pytest.raises(RuntimeError, match="PIPER_TTS_EN_PATH"):
+    with (
+        patch("courtaccess.speech.tts._get_lang_path_overrides", return_value={"en": None, "es": None, "pt": None}),
+        pytest.raises(RuntimeError, match="PIPER_TTS_EN_PATH"),
+    ):
         _resolve_voice_path("en")
 
 
 def test_resolve_voice_path_raises_when_dir_missing(tmp_path):
     missing_dir = tmp_path / "nonexistent"
-    with patch("courtaccess.speech.tts._get_lang_path_overrides", return_value={"en": str(missing_dir), "es": "", "pt": ""}), pytest.raises(RuntimeError, match="not found"):
+    with (
+        patch(
+            "courtaccess.speech.tts._get_lang_path_overrides", return_value={"en": str(missing_dir), "es": "", "pt": ""}
+        ),
+        pytest.raises(RuntimeError, match="not found"),
+    ):
         _resolve_voice_path("en")
 
 
@@ -102,7 +110,12 @@ def test_resolve_voice_path_raises_when_no_onnx_in_dir(tmp_path):
     voice_dir = tmp_path / "voice"
     voice_dir.mkdir()
 
-    with patch("courtaccess.speech.tts._get_lang_path_overrides", return_value={"en": str(voice_dir), "es": "", "pt": ""}), pytest.raises(RuntimeError, match=r"No \.onnx"):
+    with (
+        patch(
+            "courtaccess.speech.tts._get_lang_path_overrides", return_value={"en": str(voice_dir), "es": "", "pt": ""}
+        ),
+        pytest.raises(RuntimeError, match=r"No \.onnx"),
+    ):
         _resolve_voice_path("en")
 
 
@@ -113,7 +126,9 @@ def test_resolve_voice_path_exact_name_match(tmp_path):
     onnx_file = voice_dir / f"{expected_name}.onnx"
     onnx_file.write_bytes(b"fake onnx")
 
-    with patch("courtaccess.speech.tts._get_lang_path_overrides", return_value={"en": str(voice_dir), "es": "", "pt": ""}):
+    with patch(
+        "courtaccess.speech.tts._get_lang_path_overrides", return_value={"en": str(voice_dir), "es": "", "pt": ""}
+    ):
         result = _resolve_voice_path("en")
 
     assert result == onnx_file
@@ -126,7 +141,9 @@ def test_resolve_voice_path_glob_fallback(tmp_path):
     onnx_file = voice_dir / "alternate_voice.onnx"
     onnx_file.write_bytes(b"fake onnx")
 
-    with patch("courtaccess.speech.tts._get_lang_path_overrides", return_value={"en": str(voice_dir), "es": "", "pt": ""}):
+    with patch(
+        "courtaccess.speech.tts._get_lang_path_overrides", return_value={"en": str(voice_dir), "es": "", "pt": ""}
+    ):
         result = _resolve_voice_path("en")
 
     assert result == onnx_file

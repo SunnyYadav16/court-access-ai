@@ -6,7 +6,6 @@ testable without any network or Vertex AI credentials.
 get_legal_verifier() is tested via feature-flag paths.
 """
 
-
 from courtaccess.speech.legal_verifier import (
     LANG_LABELS,
     LegalVerifierService,
@@ -57,8 +56,11 @@ def test_verification_result_fields():
 
 def test_verification_result_used_fallback_true():
     result = VerificationResult(
-        verified_translation="x", accuracy_score=1.0,
-        accuracy_note="n/a", raw_translation="x", used_fallback=True,
+        verified_translation="x",
+        accuracy_score=1.0,
+        accuracy_note="n/a",
+        raw_translation="x",
+        used_fallback=True,
     )
     assert result.used_fallback is True
 

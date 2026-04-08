@@ -6,7 +6,6 @@ VADService requires torch + a real model file, so it is only tested
 at the singleton/interface level via mocks.
 """
 
-
 from courtaccess.speech.vad import SpeechSegmentDetector
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -101,7 +100,7 @@ def test_update_silence_resets_silent_chunks_count_when_not_speaking():
 
 def test_update_silence_increments_silent_chunks_while_speaking():
     detector = SpeechSegmentDetector(silence_threshold_ms=1000, sample_rate=16000, chunk_size=512)
-    detector.update(is_speech=True)   # start
+    detector.update(is_speech=True)  # start
     detector.update(is_speech=False)  # first silent chunk
     assert detector.silent_chunks == 1
 
@@ -109,7 +108,7 @@ def test_update_silence_increments_silent_chunks_while_speaking():
 def test_update_speech_end_event_after_silence_threshold():
     # Use very short silence threshold (1 chunk)
     detector = SpeechSegmentDetector(silence_threshold_ms=32, sample_rate=16000, chunk_size=512)
-    detector.update(is_speech=True)   # start (1 chunk = 32 ms)
+    detector.update(is_speech=True)  # start (1 chunk = 32 ms)
     event = detector.update(is_speech=False)  # 1 silent chunk = threshold
     assert event["type"] == "speech_end"
 
@@ -139,33 +138,33 @@ def test_update_speech_end_resets_silent_chunks():
 def test_update_silence_before_threshold_no_end_event():
     # threshold = 2 chunks; only 1 silent chunk → no end event
     detector = SpeechSegmentDetector(silence_threshold_ms=64, sample_rate=16000, chunk_size=512)
-    detector.update(is_speech=True)   # start
+    detector.update(is_speech=True)  # start
     event = detector.update(is_speech=False)  # 1 silent chunk — threshold is 2
     assert event["type"] is None
 
 
 def test_update_speech_resumes_after_brief_silence():
     detector = SpeechSegmentDetector(silence_threshold_ms=64, sample_rate=16000, chunk_size=512)
-    detector.update(is_speech=True)   # start
+    detector.update(is_speech=True)  # start
     detector.update(is_speech=False)  # 1 silent chunk (< threshold of 2)
-    event = detector.update(is_speech=True)   # resume speaking
+    event = detector.update(is_speech=True)  # resume speaking
     # Should NOT re-fire speech_start (already speaking)
     assert event["type"] is None
 
 
 def test_update_speech_start_resets_silent_chunks():
     detector = SpeechSegmentDetector(silence_threshold_ms=64, sample_rate=16000, chunk_size=512)
-    detector.update(is_speech=True)   # start
+    detector.update(is_speech=True)  # start
     detector.update(is_speech=False)  # 1 silent chunk
-    detector.update(is_speech=True)   # resume — should reset silent_chunks
+    detector.update(is_speech=True)  # resume — should reset silent_chunks
     assert detector.silent_chunks == 0
 
 
 def test_full_cycle_start_then_end():
     detector = SpeechSegmentDetector(silence_threshold_ms=32, sample_rate=16000, chunk_size=512)
     events = []
-    events.append(detector.update(is_speech=True))   # speech_start
-    events.append(detector.update(is_speech=True))   # continuing
+    events.append(detector.update(is_speech=True))  # speech_start
+    events.append(detector.update(is_speech=True))  # continuing
     events.append(detector.update(is_speech=False))  # speech_end (1 chunk = threshold)
 
     types = [e["type"] for e in events]
@@ -176,7 +175,7 @@ def test_full_cycle_start_then_end():
 
 def test_second_utterance_fires_speech_start_again():
     detector = SpeechSegmentDetector(silence_threshold_ms=32, sample_rate=16000, chunk_size=512)
-    detector.update(is_speech=True)   # 1st utterance starts
+    detector.update(is_speech=True)  # 1st utterance starts
     detector.update(is_speech=False)  # 1st utterance ends
     event = detector.update(is_speech=True)  # 2nd utterance
     assert event["type"] == "speech_start"

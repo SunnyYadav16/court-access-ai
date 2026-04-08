@@ -57,7 +57,6 @@ def _setup_models_dir(tmp_path: Path) -> Path:
 
 
 class TestParseDvcFile:
-
     def test_missing_file_returns_none(self, tmp_path):
         assert _parse_dvc_file(tmp_path / "nonexistent.dvc") is None
 
@@ -123,7 +122,6 @@ class TestParseDvcFile:
 
 
 class TestRegisterModels:
-
     def test_returns_list(self, tmp_path):
         with patch.dict("sys.modules", {"mlflow": None}):
             result = register_models(project_root=str(tmp_path))

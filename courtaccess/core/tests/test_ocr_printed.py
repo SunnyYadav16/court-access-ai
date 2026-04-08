@@ -85,13 +85,23 @@ def engine():
 
 
 class TestScannedRegion:
-
     def test_returns_dict_with_all_contract_keys(self):
         r = OCREngine._scanned_region("Hello", 0, 0, 100, 20, 0.9, 0)
         required = {
-            "text", "bbox", "avail_bbox", "confidence", "page",
-            "font_size", "is_bold", "fontname", "color_rgb",
-            "is_centered", "is_right", "unit_type", "is_caps", "preserve",
+            "text",
+            "bbox",
+            "avail_bbox",
+            "confidence",
+            "page",
+            "font_size",
+            "is_bold",
+            "fontname",
+            "color_rgb",
+            "is_centered",
+            "is_right",
+            "unit_type",
+            "is_caps",
+            "preserve",
         }
         assert required.issubset(r.keys())
 
@@ -134,7 +144,6 @@ class TestScannedRegion:
 
 
 class TestOCREngineInit:
-
     def test_use_real_false_when_env_is_false(self, monkeypatch):
         monkeypatch.setenv("USE_REAL_OCR", "false")
         eng = OCREngine()
@@ -162,7 +171,6 @@ class TestOCREngineInit:
 
 
 class TestLoad:
-
     def test_returns_self_for_chaining(self):
         eng = OCREngine()
         result = eng.load()
@@ -201,7 +209,6 @@ class TestLoad:
 
 
 class TestExtractTextFromPdf:
-
     def test_raises_file_not_found_for_missing_pdf(self, engine, tmp_path):
         with pytest.raises(FileNotFoundError):
             engine.extract_text_from_pdf(str(tmp_path / "ghost.pdf"))
@@ -261,7 +268,6 @@ class TestExtractTextFromPdf:
 
 
 class TestExtractScannedPaddle:
-
     @pytest.fixture()
     def paddle_engine(self):
         eng = OCREngine()
@@ -322,7 +328,6 @@ class TestExtractScannedPaddle:
 
 
 class TestExtractScannedTesseract:
-
     def test_pytesseract_unavailable_returns_empty_list(self):
         eng = OCREngine()
         page, _ = _mock_page()

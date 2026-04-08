@@ -114,4 +114,3 @@ _TEST_ENV = {
 
 for key, value in _TEST_ENV.items():
     os.environ.setdefault(key, value)
-

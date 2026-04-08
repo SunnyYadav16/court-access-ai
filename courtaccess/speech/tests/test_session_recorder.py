@@ -366,7 +366,10 @@ def test_format_text_empty_log_no_crash():
 def test_format_text_shows_asr_confidence():
     log = TranscriptLogger("s1", "en", "es")
     log.add_entry(
-        speaker_role="a", original_text="Test", source_lang="en", target_lang="es",
+        speaker_role="a",
+        original_text="Test",
+        source_lang="en",
+        target_lang="es",
         asr_confidence=0.92,
     )
     text = log.format_text()
@@ -376,7 +379,10 @@ def test_format_text_shows_asr_confidence():
 def test_format_text_shows_legal_verified_flag():
     log = TranscriptLogger("s1", "en", "es")
     log.add_entry(
-        speaker_role="a", original_text="Test", source_lang="en", target_lang="es",
+        speaker_role="a",
+        original_text="Test",
+        source_lang="en",
+        target_lang="es",
         legal_verified=True,
     )
     text = log.format_text()
@@ -425,7 +431,10 @@ def test_serialize_spoken_at_is_iso_string():
     log = TranscriptLogger("s1", "en", "es")
     ts = datetime(2024, 6, 15, 10, 30, 0, tzinfo=UTC)
     log.add_entry(
-        speaker_role="a", original_text="Test", source_lang="en", target_lang="es",
+        speaker_role="a",
+        original_text="Test",
+        source_lang="en",
+        target_lang="es",
         spoken_at=ts,
     )
     result = log.serialize(session_id="u1")
@@ -506,10 +515,14 @@ def test_write_manifest_creates_json_file(tmp_path):
     start = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
     end = datetime(2024, 1, 1, 12, 5, 0, tzinfo=UTC)
     path = write_manifest(
-        tmp_path, "sess1",
-        start_time=start, end_time=end,
-        language_a="en", language_b="es",
-        name_a="Alice", name_b="Bob",
+        tmp_path,
+        "sess1",
+        start_time=start,
+        end_time=end,
+        language_a="en",
+        language_b="es",
+        name_a="Alice",
+        name_b="Bob",
         room_id="ABCDEF",
     )
     assert path.exists()
@@ -520,10 +533,14 @@ def test_write_manifest_valid_json(tmp_path):
     start = datetime(2024, 1, 1, 12, 0, tzinfo=UTC)
     end = datetime(2024, 1, 1, 12, 1, tzinfo=UTC)
     path = write_manifest(
-        tmp_path, "sess1",
-        start_time=start, end_time=end,
-        language_a="en", language_b="es",
-        name_a="A", name_b="B",
+        tmp_path,
+        "sess1",
+        start_time=start,
+        end_time=end,
+        language_a="en",
+        language_b="es",
+        name_a="A",
+        name_b="B",
         room_id="ABCDEF",
     )
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -540,10 +557,14 @@ def test_write_manifest_includes_file_hashes(tmp_path):
     start = datetime(2024, 1, 1, tzinfo=UTC)
     end = datetime(2024, 1, 1, 0, 1, tzinfo=UTC)
     path = write_manifest(
-        tmp_path, "sess1",
-        start_time=start, end_time=end,
-        language_a="en", language_b="es",
-        name_a="A", name_b="B",
+        tmp_path,
+        "sess1",
+        start_time=start,
+        end_time=end,
+        language_a="en",
+        language_b="es",
+        name_a="A",
+        name_b="B",
         room_id="XYZ",
     )
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -556,10 +577,14 @@ def test_write_manifest_participants_metadata(tmp_path):
     start = datetime(2024, 1, 1, tzinfo=UTC)
     end = datetime(2024, 1, 1, 0, 1, tzinfo=UTC)
     path = write_manifest(
-        tmp_path, "sess1",
-        start_time=start, end_time=end,
-        language_a="en", language_b="pt",
-        name_a="Judge", name_b="Respondent",
+        tmp_path,
+        "sess1",
+        start_time=start,
+        end_time=end,
+        language_a="en",
+        language_b="pt",
+        name_a="Judge",
+        name_b="Respondent",
         room_id="ROOM1",
     )
     data = json.loads(path.read_text(encoding="utf-8"))

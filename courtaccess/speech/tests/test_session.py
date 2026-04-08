@@ -142,8 +142,10 @@ def _make_audio_session(session_id="test-session", language="en") -> AudioSessio
     mock_detector = MagicMock()
     mock_detector.is_speaking = False
 
-    with patch("courtaccess.speech.vad.get_vad_service", return_value=mock_vad), \
-         patch("courtaccess.speech.vad.SpeechSegmentDetector", return_value=mock_detector):
+    with (
+        patch("courtaccess.speech.vad.get_vad_service", return_value=mock_vad),
+        patch("courtaccess.speech.vad.SpeechSegmentDetector", return_value=mock_detector),
+    ):
         session = AudioSession(session_id, language)
     return session
 
