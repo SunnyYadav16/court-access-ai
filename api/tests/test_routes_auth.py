@@ -97,16 +97,12 @@ async def test_select_role_public_returns_200(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_select_role_public_assigns_public(client: AsyncClient) -> None:
-    data = (
-        await client.post("/api/auth/select-role", json={"selected_role": "public"})
-    ).json()
+    data = (await client.post("/api/auth/select-role", json={"selected_role": "public"})).json()
     assert data["role"] == "public"
 
 
 @pytest.mark.asyncio
-async def test_select_role_public_does_not_create_role_request(
-    client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_select_role_public_does_not_create_role_request(client: AsyncClient, mock_db: AsyncMock) -> None:
     """Selecting 'public' must NOT insert a pending RoleRequest into the DB."""
     await client.post("/api/auth/select-role", json={"selected_role": "public"})
     # No db.add() call means no RoleRequest row was created
@@ -114,9 +110,7 @@ async def test_select_role_public_does_not_create_role_request(
 
 
 @pytest.mark.asyncio
-async def test_select_role_public_commits_db(
-    client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_select_role_public_commits_db(client: AsyncClient, mock_db: AsyncMock) -> None:
     """Role change must be persisted to the database."""
     await client.post("/api/auth/select-role", json={"selected_role": "public"})
     mock_db.commit.assert_awaited_once()
@@ -132,11 +126,7 @@ async def test_select_role_court_official_non_saml_stays_public(
     client: AsyncClient,
 ) -> None:
     """Non-SAML user requesting court_official → role in response stays public."""
-    data = (
-        await client.post(
-            "/api/auth/select-role", json={"selected_role": "court_official"}
-        )
-    ).json()
+    data = (await client.post("/api/auth/select-role", json={"selected_role": "court_official"})).json()
     assert data["role"] == "public"
 
 
@@ -151,9 +141,7 @@ async def test_select_role_court_official_non_saml_creates_pending_role_request(
     from db.models import RoleRequest
 
     added_obj = mock_db.add.call_args[0][0]
-    assert isinstance(added_obj, RoleRequest), (
-        f"Expected a RoleRequest to be added, got {type(added_obj)}"
-    )
+    assert isinstance(added_obj, RoleRequest), f"Expected a RoleRequest to be added, got {type(added_obj)}"
     assert added_obj.status == "pending"
     assert added_obj.requested_role_id == 2  # court_official
 
@@ -173,9 +161,7 @@ async def test_select_role_court_official_non_saml_role_request_has_user_id(
 
 
 @pytest.mark.asyncio
-async def test_select_role_court_official_non_saml_commits_db(
-    client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_select_role_court_official_non_saml_commits_db(client: AsyncClient, mock_db: AsyncMock) -> None:
     await client.post("/api/auth/select-role", json={"selected_role": "court_official"})
     mock_db.commit.assert_awaited_once()
 
@@ -206,11 +192,7 @@ async def test_select_role_court_official_saml_auto_approves(
     saml_client: AsyncClient,
 ) -> None:
     """SAML user requesting court_official → auto-approved immediately."""
-    data = (
-        await saml_client.post(
-            "/api/auth/select-role", json={"selected_role": "court_official"}
-        )
-    ).json()
+    data = (await saml_client.post("/api/auth/select-role", json={"selected_role": "court_official"})).json()
     assert data["role"] == "court_official"
 
 
@@ -222,9 +204,7 @@ async def test_select_role_court_official_saml_sets_role_approved_at(
     from datetime import UTC, datetime
 
     before = datetime.now(tz=UTC)
-    await saml_client.post(
-        "/api/auth/select-role", json={"selected_role": "court_official"}
-    )
+    await saml_client.post("/api/auth/select-role", json={"selected_role": "court_official"})
     after = datetime.now(tz=UTC)
 
     # role_approved_at must have been set to a recent time by the route
@@ -234,13 +214,9 @@ async def test_select_role_court_official_saml_sets_role_approved_at(
 
 
 @pytest.mark.asyncio
-async def test_select_role_court_official_saml_no_pending_request(
-    saml_client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_select_role_court_official_saml_no_pending_request(saml_client: AsyncClient, mock_db: AsyncMock) -> None:
     """SAML auto-approval must NOT create a pending RoleRequest row."""
-    await saml_client.post(
-        "/api/auth/select-role", json={"selected_role": "court_official"}
-    )
+    await saml_client.post("/api/auth/select-role", json={"selected_role": "court_official"})
     mock_db.add.assert_not_called()
 
 
@@ -248,11 +224,7 @@ async def test_select_role_court_official_saml_no_pending_request(
 async def test_select_role_interpreter_saml_auto_approves(
     saml_client: AsyncClient,
 ) -> None:
-    data = (
-        await saml_client.post(
-            "/api/auth/select-role", json={"selected_role": "interpreter"}
-        )
-    ).json()
+    data = (await saml_client.post("/api/auth/select-role", json={"selected_role": "interpreter"})).json()
     assert data["role"] == "interpreter"
 
 
@@ -263,9 +235,7 @@ async def test_select_role_interpreter_saml_sets_role_approved_at(
     from datetime import UTC, datetime
 
     before = datetime.now(tz=UTC)
-    await saml_client.post(
-        "/api/auth/select-role", json={"selected_role": "interpreter"}
-    )
+    await saml_client.post("/api/auth/select-role", json={"selected_role": "interpreter"})
     after = datetime.now(tz=UTC)
     approved_at = mock_court_official_user.role_approved_at
     assert approved_at is not None
@@ -279,9 +249,7 @@ async def test_select_role_interpreter_saml_sets_role_approved_at(
 
 @pytest.mark.asyncio
 async def test_select_role_invalid_role_returns_422(client: AsyncClient) -> None:
-    response = await client.post(
-        "/api/auth/select-role", json={"selected_role": "superuser"}
-    )
+    response = await client.post("/api/auth/select-role", json={"selected_role": "superuser"})
     assert response.status_code == 422
 
 
@@ -297,13 +265,9 @@ async def test_select_role_admin_role_rejected_by_validation(
 ) -> None:
     """Clients cannot self-select 'admin' — it is not in the allowed UserRole enum values
     accepted by select-role (or if it is, it must go through pending approval)."""
-    response = await client.post(
-        "/api/auth/select-role", json={"selected_role": "admin"}
-    )
+    response = await client.post("/api/auth/select-role", json={"selected_role": "admin"})
     # admin is a valid UserRole enum value, so the route accepts it but creates a
     # pending RoleRequest (non-SAML path). It must NOT grant admin immediately.
     if response.status_code == 200:
         data = response.json()
-        assert data["role"] != "admin", (
-            "Self-selecting 'admin' must never grant admin role immediately"
-        )
+        assert data["role"] != "admin", "Self-selecting 'admin' must never grant admin role immediately"

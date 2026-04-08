@@ -99,9 +99,7 @@ async def test_list_forms_query_param_forwarded_to_db(client: AsyncClient) -> No
         await client.get("/api/forms/?q=complaint")
 
     call_kwargs = mock_fn.call_args.kwargs
-    assert call_kwargs.get("q") == "complaint", (
-        f"Expected q='complaint' forwarded to list_forms(), got: {call_kwargs}"
-    )
+    assert call_kwargs.get("q") == "complaint", f"Expected q='complaint' forwarded to list_forms(), got: {call_kwargs}"
 
 
 @pytest.mark.asyncio
@@ -198,9 +196,7 @@ async def test_list_divisions_content_matches_db_return(client: AsyncClient) -> 
     ):
         data = (await client.get("/api/forms/divisions")).json()
 
-    assert data == divisions, (
-        f"Response divisions {data} do not match what the DB layer returned {divisions}"
-    )
+    assert data == divisions, f"Response divisions {data} do not match what the DB layer returned {divisions}"
 
 
 # ---------------------------------------------------------------------------
@@ -297,9 +293,7 @@ async def test_submit_review_admin_returns_200(admin_client: AsyncClient) -> Non
 
 
 @pytest.mark.asyncio
-async def test_submit_review_calls_db_with_correct_args(
-    admin_client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_submit_review_calls_db_with_correct_args(admin_client: AsyncClient, mock_db: AsyncMock) -> None:
     """Route must forward form_id, approved flag, reviewer user_id, and notes to DB."""
     form = _make_form()
     target_id = form.form_id
@@ -328,9 +322,7 @@ async def test_submit_review_calls_db_with_correct_args(
 
 
 @pytest.mark.asyncio
-async def test_submit_review_commits_db(
-    admin_client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_submit_review_commits_db(admin_client: AsyncClient, mock_db: AsyncMock) -> None:
     """Review decision must be committed to the database."""
     form = _make_form()
     with (
@@ -424,9 +416,7 @@ async def test_trigger_scraper_admin_returns_200(admin_client: AsyncClient) -> N
         patch("api.routes.forms.httpx.AsyncClient", return_value=mock_http),
         patch("api.routes.forms.write_audit", new_callable=AsyncMock),
     ):
-        response = await admin_client.post(
-            "/api/forms/scraper/trigger", json={"force": False}
-        )
+        response = await admin_client.post("/api/forms/scraper/trigger", json={"force": False})
     assert response.status_code == 200
 
 
@@ -437,9 +427,7 @@ async def test_trigger_scraper_returns_dag_run_id(admin_client: AsyncClient) -> 
         patch("api.routes.forms.httpx.AsyncClient", return_value=mock_http),
         patch("api.routes.forms.write_audit", new_callable=AsyncMock),
     ):
-        data = (
-            await admin_client.post("/api/forms/scraper/trigger", json={"force": False})
-        ).json()
+        data = (await admin_client.post("/api/forms/scraper/trigger", json={"force": False})).json()
     assert data["dag_run_id"] == "manual__test_run"
 
 
@@ -453,9 +441,7 @@ async def test_trigger_scraper_response_has_triggered_at_datetime(
         patch("api.routes.forms.httpx.AsyncClient", return_value=mock_http),
         patch("api.routes.forms.write_audit", new_callable=AsyncMock),
     ):
-        data = (
-            await admin_client.post("/api/forms/scraper/trigger", json={"force": False})
-        ).json()
+        data = (await admin_client.post("/api/forms/scraper/trigger", json={"force": False})).json()
 
     assert "triggered_at" in data
     from datetime import datetime
@@ -493,13 +479,9 @@ async def test_trigger_scraper_airflow_unreachable_returns_502(
     mock_client = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
-    mock_client.post = AsyncMock(
-        side_effect=_httpx.RequestError("connection refused", request=MagicMock())
-    )
+    mock_client.post = AsyncMock(side_effect=_httpx.RequestError("connection refused", request=MagicMock()))
     with patch("api.routes.forms.httpx.AsyncClient", return_value=mock_client):
-        response = await admin_client.post(
-            "/api/forms/scraper/trigger", json={"force": False}
-        )
+        response = await admin_client.post("/api/forms/scraper/trigger", json={"force": False})
     assert response.status_code == 502
     assert "airflow" in response.json()["detail"].lower()
 
@@ -518,13 +500,7 @@ async def test_trigger_scraper_airflow_http_error_returns_502(
     mock_client = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
-    mock_client.post = AsyncMock(
-        side_effect=_httpx.HTTPStatusError(
-            "403", request=MagicMock(), response=mock_resp
-        )
-    )
+    mock_client.post = AsyncMock(side_effect=_httpx.HTTPStatusError("403", request=MagicMock(), response=mock_resp))
     with patch("api.routes.forms.httpx.AsyncClient", return_value=mock_client):
-        response = await admin_client.post(
-            "/api/forms/scraper/trigger", json={"force": False}
-        )
+        response = await admin_client.post("/api/forms/scraper/trigger", json={"force": False})
     assert response.status_code == 502

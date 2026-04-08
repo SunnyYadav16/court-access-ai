@@ -179,9 +179,7 @@ async def test_upload_pdf_returns_201(client: AsyncClient, mock_db: AsyncMock) -
 
 
 @pytest.mark.asyncio
-async def test_upload_pdf_response_body_complete(
-    client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_upload_pdf_response_body_complete(client: AsyncClient, mock_db: AsyncMock) -> None:
     """Response must include all fields a polling client needs."""
     mock_http = _mock_airflow_client()
     p = _upload_patches(airflow_client=mock_http)
@@ -206,9 +204,7 @@ async def test_upload_pdf_response_body_complete(
 
 
 @pytest.mark.asyncio
-async def test_upload_pdf_db_rows_added_and_committed(
-    client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_upload_pdf_db_rows_added_and_committed(client: AsyncClient, mock_db: AsyncMock) -> None:
     """Route must insert both a Session row and a DocumentTranslationRequest row."""
     mock_http = _mock_airflow_client()
     p = _upload_patches(airflow_client=mock_http)
@@ -236,9 +232,7 @@ async def test_upload_pdf_db_rows_added_and_committed(
 
 
 @pytest.mark.asyncio
-async def test_upload_pdf_triggers_document_pipeline_dag(
-    client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_upload_pdf_triggers_document_pipeline_dag(client: AsyncClient, mock_db: AsyncMock) -> None:
     """PDF uploads must trigger document_pipeline_dag, not docx_pipeline_dag."""
     mock_http = _mock_airflow_client()
     p = _upload_patches(airflow_client=mock_http)
@@ -255,9 +249,7 @@ async def test_upload_pdf_triggers_document_pipeline_dag(
 
 
 @pytest.mark.asyncio
-async def test_upload_pdf_dag_conf_contains_session_and_language(
-    client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_upload_pdf_dag_conf_contains_session_and_language(client: AsyncClient, mock_db: AsyncMock) -> None:
     """Airflow DAG conf must include session_id and target language for the pipeline."""
     mock_http = _mock_airflow_client()
     p = _upload_patches(airflow_client=mock_http)
@@ -297,9 +289,7 @@ async def test_upload_docx_returns_201(client: AsyncClient, mock_db: AsyncMock) 
 
 
 @pytest.mark.asyncio
-async def test_upload_docx_response_has_correct_target_language(
-    client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_upload_docx_response_has_correct_target_language(client: AsyncClient, mock_db: AsyncMock) -> None:
     docx_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     mock_http = _mock_airflow_client()
     p = _upload_patches(airflow_client=mock_http)
@@ -315,9 +305,7 @@ async def test_upload_docx_response_has_correct_target_language(
 
 
 @pytest.mark.asyncio
-async def test_upload_docx_triggers_docx_pipeline_dag(
-    client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_upload_docx_triggers_docx_pipeline_dag(client: AsyncClient, mock_db: AsyncMock) -> None:
     """DOCX uploads must trigger docx_pipeline_dag, not document_pipeline_dag."""
     docx_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     mock_http = _mock_airflow_client()
@@ -340,9 +328,7 @@ async def test_upload_docx_triggers_docx_pipeline_dag(
 
 
 @pytest.mark.asyncio
-async def test_upload_airflow_failure_returns_502(
-    client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_upload_airflow_failure_returns_502(client: AsyncClient, mock_db: AsyncMock) -> None:
     mock_http = _failing_airflow_client()
     p = _upload_patches(airflow_client=mock_http)
     with p[0], p[1], p[2], p[3]:
@@ -358,9 +344,7 @@ async def test_upload_airflow_failure_returns_502(
 
 
 @pytest.mark.asyncio
-async def test_upload_gcs_failure_returns_502(
-    client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_upload_gcs_failure_returns_502(client: AsyncClient, mock_db: AsyncMock) -> None:
     with patch(
         "api.routes.documents.asyncio.to_thread",
         new=AsyncMock(side_effect=Exception("GCS unavailable")),
@@ -401,9 +385,7 @@ def _make_session_and_request(status: str = "processing"):
 
 
 @pytest.mark.asyncio
-async def test_get_document_status_found_returns_200(
-    client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_get_document_status_found_returns_200(client: AsyncClient, mock_db: AsyncMock) -> None:
     session, req = _make_session_and_request("processing")
     r = MagicMock()
     r.first = MagicMock(return_value=(session, req))
@@ -414,9 +396,7 @@ async def test_get_document_status_found_returns_200(
 
 
 @pytest.mark.asyncio
-async def test_get_document_status_body_fields(
-    client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_get_document_status_body_fields(client: AsyncClient, mock_db: AsyncMock) -> None:
     """All fields a frontend polling loop depends on must be present and correct."""
     session, req = _make_session_and_request("processing")
     r = MagicMock()
@@ -431,9 +411,7 @@ async def test_get_document_status_body_fields(
 
 
 @pytest.mark.asyncio
-async def test_get_document_status_completed_maps_to_translated(
-    client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_get_document_status_completed_maps_to_translated(client: AsyncClient, mock_db: AsyncMock) -> None:
     """DB status 'completed' must appear as 'translated' in the API response."""
     session, req = _make_session_and_request("completed")
     req.status = "completed"
@@ -442,15 +420,11 @@ async def test_get_document_status_completed_maps_to_translated(
     mock_db.execute = AsyncMock(return_value=r)
 
     data = (await client.get(f"/api/documents/{_SESSION_ID}")).json()
-    assert data["status"] == "translated", (
-        "DB status 'completed' must map to API status 'translated'"
-    )
+    assert data["status"] == "translated", "DB status 'completed' must map to API status 'translated'"
 
 
 @pytest.mark.asyncio
-async def test_get_document_status_failed_maps_to_error(
-    client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_get_document_status_failed_maps_to_error(client: AsyncClient, mock_db: AsyncMock) -> None:
     session, req = _make_session_and_request("failed")
     req.status = "failed"
     r = MagicMock()
@@ -462,9 +436,7 @@ async def test_get_document_status_failed_maps_to_error(
 
 
 @pytest.mark.asyncio
-async def test_get_document_status_not_found_returns_404(
-    client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_get_document_status_not_found_returns_404(client: AsyncClient, mock_db: AsyncMock) -> None:
     r = MagicMock()
     r.first = MagicMock(return_value=None)
     mock_db.execute = AsyncMock(return_value=r)
@@ -474,9 +446,7 @@ async def test_get_document_status_not_found_returns_404(
 
 
 @pytest.mark.asyncio
-async def test_get_document_status_wrong_user_returns_403(
-    client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_get_document_status_wrong_user_returns_403(client: AsyncClient, mock_db: AsyncMock) -> None:
     """A public user must not be able to view another user's document."""
     session, req = _make_session_and_request("processing")
     session.user_id = uuid.uuid4()  # different user — not the test client's user
@@ -489,9 +459,7 @@ async def test_get_document_status_wrong_user_returns_403(
 
 
 @pytest.mark.asyncio
-async def test_get_document_status_elevated_role_can_view_any(
-    admin_client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_get_document_status_elevated_role_can_view_any(admin_client: AsyncClient, mock_db: AsyncMock) -> None:
     """Admin (elevated role) must be able to view any user's document."""
     session, req = _make_session_and_request("processing")
     session.user_id = uuid.uuid4()  # NOT the admin user's own session
@@ -543,9 +511,7 @@ async def test_list_documents_invalid_page_size_returns_422(
 
 
 @pytest.mark.asyncio
-async def test_delete_document_not_found_returns_404(
-    client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_delete_document_not_found_returns_404(client: AsyncClient, mock_db: AsyncMock) -> None:
     r = MagicMock()
     r.scalar_one_or_none = MagicMock(return_value=None)
     mock_db.execute = AsyncMock(return_value=r)
@@ -555,9 +521,7 @@ async def test_delete_document_not_found_returns_404(
 
 
 @pytest.mark.asyncio
-async def test_delete_document_while_processing_returns_409(
-    client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_delete_document_while_processing_returns_409(client: AsyncClient, mock_db: AsyncMock) -> None:
     session = MagicMock()
     session.session_id = _SESSION_ID
     session.user_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
@@ -572,9 +536,7 @@ async def test_delete_document_while_processing_returns_409(
 
 
 @pytest.mark.asyncio
-async def test_delete_document_foreign_user_returns_403(
-    client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_delete_document_foreign_user_returns_403(client: AsyncClient, mock_db: AsyncMock) -> None:
     session = MagicMock()
     session.session_id = _SESSION_ID
     session.user_id = uuid.uuid4()  # different user
@@ -588,9 +550,7 @@ async def test_delete_document_foreign_user_returns_403(
 
 
 @pytest.mark.asyncio
-async def test_delete_document_success_returns_204(
-    client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_delete_document_success_returns_204(client: AsyncClient, mock_db: AsyncMock) -> None:
     session = MagicMock()
     session.session_id = _SESSION_ID
     session.user_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
@@ -613,9 +573,7 @@ async def test_delete_document_success_returns_204(
 
 
 @pytest.mark.asyncio
-async def test_delete_document_deletes_db_rows_and_commits(
-    client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_delete_document_deletes_db_rows_and_commits(client: AsyncClient, mock_db: AsyncMock) -> None:
     """Route must delete the translation request AND the session, then commit."""
     session = MagicMock()
     session.session_id = _SESSION_ID
@@ -645,9 +603,7 @@ async def test_delete_document_deletes_db_rows_and_commits(
 
 
 @pytest.mark.asyncio
-async def test_delete_document_with_gcs_objects_deletes_storage(
-    client: AsyncClient, mock_db: AsyncMock
-) -> None:
+async def test_delete_document_with_gcs_objects_deletes_storage(client: AsyncClient, mock_db: AsyncMock) -> None:
     """When GCS paths are present, route must attempt to delete storage objects."""
     session = MagicMock()
     session.session_id = _SESSION_ID
