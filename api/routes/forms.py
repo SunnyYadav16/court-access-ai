@@ -103,7 +103,10 @@ async def trigger_form_scraper(
             resp = await client.post(
                 dag_run_url,
                 headers={"Authorization": f"Bearer {airflow_token}"},
-                json={"conf": {"triggered_by_user_id": str(user.user_id)}},
+                json={
+                    "logical_date": triggered_at.isoformat(),
+                    "conf": {"triggered_by_user_id": str(user.user_id)},
+                },
             )
             resp.raise_for_status()
     except httpx.RequestError as exc:

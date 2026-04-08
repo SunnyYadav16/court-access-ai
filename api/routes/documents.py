@@ -343,6 +343,7 @@ async def upload_document(
                 f"{settings.airflow_base_url}/api/v2/dags/{dag_id}/dagRuns",
                 auth=(settings.airflow_username, settings.airflow_password),
                 json={
+                    "logical_date": start_time,
                     "conf": {
                         "session_id": str(session_id),
                         "request_id": str(request_id),
@@ -353,7 +354,7 @@ async def upload_document(
                         "filename": safe_name,
                         "start_time": start_time,
                         "original_format": original_format,
-                    }
+                    },
                 },
             )
             resp.raise_for_status()
@@ -583,7 +584,7 @@ async def list_documents(
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DELETE /documents/{session_id}
-# ══════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════���══════════════════���══════════
 
 
 @router.delete(
@@ -758,6 +759,7 @@ async def retranslate_document(
                 f"{settings.airflow_base_url}/api/v2/dags/document_pipeline_dag/dagRuns",
                 auth=(settings.airflow_username, settings.airflow_password),
                 json={
+                    "logical_date": now.isoformat(),
                     "conf": {
                         "session_id": str(session_id),
                         "request_id": str(new_request_id),
@@ -767,7 +769,7 @@ async def retranslate_document(
                         "nllb_target": nllb_target,
                         "filename": gcs_path.split("/")[-1],
                         "start_time": now.isoformat(),
-                    }
+                    },
                 },
             )
             resp.raise_for_status()
