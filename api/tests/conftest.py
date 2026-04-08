@@ -8,7 +8,8 @@ Design:
     could trigger Settings() instantiation.
   - Builds a minimal FastAPI test app (no lifespan) with all routes
     mounted and get_current_user / get_db overridden via dependency_overrides.
-  - Exposes client / admin_client / unverified_client / saml_client fixtures.
+  - Exposes client / admin_client / unverified_client / saml_client /
+    interpreter_client / court_official_client_b fixtures.
 """
 
 import os
@@ -36,6 +37,7 @@ from httpx import ASGITransport, AsyncClient
 # ---------------------------------------------------------------------------
 
 _FIXED_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+_FIXED_USER_ID_B = uuid.UUID("00000000-0000-0000-0000-000000000002")
 _FIXED_TS = datetime(2024, 1, 1, tzinfo=UTC)
 
 
@@ -43,10 +45,11 @@ def _make_user(
     role_id: int = 1,
     email_verified: bool = True,
     auth_provider: str = "google.com",
+    user_id: uuid.UUID | None = None,
 ) -> MagicMock:
     """Return a mock User ORM object with all fields FastAPI routes need."""
     user = MagicMock()
-    user.user_id = _FIXED_USER_ID
+    user.user_id = user_id if user_id is not None else _FIXED_USER_ID
     user.email = "test@example.com"
     user.name = "Test User"
     user.role_id = role_id
@@ -82,6 +85,18 @@ def mock_admin_user() -> MagicMock:
 def mock_court_official_user() -> MagicMock:
     """Court official via SAML (role_id=2)."""
     return _make_user(role_id=2, email_verified=True, auth_provider="saml.massgov")
+
+
+@pytest.fixture
+def mock_interpreter_user() -> MagicMock:
+    """Interpreter user (role_id=3)."""
+    return _make_user(role_id=3, email_verified=True)
+
+
+@pytest.fixture
+def mock_court_official_user_b() -> MagicMock:
+    """Second court official with a different user_id — for ownership tests."""
+    return _make_user(role_id=2, email_verified=True, user_id=_FIXED_USER_ID_B)
 
 
 # ---------------------------------------------------------------------------
@@ -129,18 +144,24 @@ def mock_db() -> AsyncMock:
 def _build_app(user_fn, db: AsyncMock) -> FastAPI:
     """
     Minimal FastAPI app without lifespan.
-    Includes auth / documents / forms routers and health + root meta-endpoints.
+    Includes all route modules and health + root meta-endpoints.
     """
     from api.dependencies import get_current_user, get_db
+    from api.routes import admin as admin_router
     from api.routes import auth as auth_router
     from api.routes import documents as documents_router
     from api.routes import forms as forms_router
+    from api.routes import interpreter as interpreter_router
+    from api.routes import realtime as realtime_router
     from api.schemas.schemas import HealthResponse
 
     app = FastAPI()
     app.include_router(auth_router.router, prefix="/api")
     app.include_router(documents_router.router, prefix="/api")
     app.include_router(forms_router.router, prefix="/api")
+    app.include_router(admin_router.router, prefix="/api")
+    app.include_router(interpreter_router.router, prefix="/api")
+    app.include_router(realtime_router.router, prefix="/api")
 
     @app.get("/health", response_model=HealthResponse)
     async def health_check() -> HealthResponse:
@@ -185,6 +206,22 @@ async def admin_client(mock_admin_user: MagicMock, mock_db: AsyncMock) -> AsyncC
 async def saml_client(mock_court_official_user: MagicMock, mock_db: AsyncMock) -> AsyncClient:
     """AsyncClient authenticated as a SAML court official."""
     app = _build_app(user_fn=lambda: mock_court_official_user, db=mock_db)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        yield ac
+
+
+@pytest_asyncio.fixture
+async def interpreter_client(mock_interpreter_user: MagicMock, mock_db: AsyncMock) -> AsyncClient:
+    """AsyncClient authenticated as an interpreter user."""
+    app = _build_app(user_fn=lambda: mock_interpreter_user, db=mock_db)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        yield ac
+
+
+@pytest_asyncio.fixture
+async def court_official_client_b(mock_court_official_user_b: MagicMock, mock_db: AsyncMock) -> AsyncClient:
+    """AsyncClient as a second court official (different user_id) — for ownership tests."""
+    app = _build_app(user_fn=lambda: mock_court_official_user_b, db=mock_db)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
 
