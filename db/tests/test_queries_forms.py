@@ -862,9 +862,9 @@ class TestGetAllFormsSync:
 
         stack = ExitStack()
         stack.enter_context(patch("db.database.get_sync_engine", return_value=MagicMock()))
-        mock_session = stack.enter_context(patch("sqlalchemy.orm.Session"))
-        mock_session.return_value.__enter__.return_value = mock_session
-        mock_session.return_value.__exit__.return_value = False
+        patched_session_cls = stack.enter_context(patch("sqlalchemy.orm.Session"))
+        patched_session_cls.return_value.__enter__.return_value = mock_session
+        patched_session_cls.return_value.__exit__.return_value = False
         return stack
 
     def test_returns_list(self):

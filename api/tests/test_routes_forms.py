@@ -44,16 +44,30 @@ def _make_form(form_id: uuid.UUID | None = None) -> MagicMock:
     form.versions = []
     form.appearances = []
     return form
-
+# commented out to check for errors 
+# def _mock_airflow_client(dag_run_id: str = "manual__2024-01-01") -> MagicMock:
+#     resp = MagicMock()
+#     resp.raise_for_status = MagicMock()
+#     resp.json = MagicMock(return_value={"dag_run_id": dag_run_id})
+#     c = AsyncMock()
+#     c.__aenter__ = AsyncMock(return_value=c)
+#     c.__aexit__ = AsyncMock(return_value=False)
+#     c.post = AsyncMock(return_value=resp)
+#     return c
 
 def _mock_airflow_client(dag_run_id: str = "manual__2024-01-01") -> MagicMock:
-    resp = MagicMock()
-    resp.raise_for_status = MagicMock()
-    resp.json = MagicMock(return_value={"dag_run_id": dag_run_id})
+    token_resp = MagicMock()
+    token_resp.raise_for_status = MagicMock()
+    token_resp.json = MagicMock(return_value={"access_token": "mock-token"})
+
+    dag_resp = MagicMock()
+    dag_resp.raise_for_status = MagicMock()
+    dag_resp.json = MagicMock(return_value={"dag_run_id": dag_run_id})
+
     c = AsyncMock()
     c.__aenter__ = AsyncMock(return_value=c)
     c.__aexit__ = AsyncMock(return_value=False)
-    c.post = AsyncMock(return_value=resp)
+    c.post = AsyncMock(side_effect=[token_resp, dag_resp])
     return c
 
 
