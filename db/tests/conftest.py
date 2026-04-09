@@ -55,7 +55,9 @@ def mock_sync_session() -> MagicMock:
     """Mock synchronous SQLAlchemy Session for Airflow-style sync query tests."""
     session = MagicMock()
     session.execute.return_value = MagicMock(
-        scalars=MagicMock(return_value=MagicMock(one_or_none=MagicMock(return_value=None), all=MagicMock(return_value=[])))
+        scalars=MagicMock(
+            return_value=MagicMock(one_or_none=MagicMock(return_value=None), all=MagicMock(return_value=[]))
+        )
     )
     session.flush = MagicMock()
     session.commit = MagicMock()

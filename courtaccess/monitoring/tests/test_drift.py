@@ -20,6 +20,7 @@ Coverage:
       - Forms with no versions yield 0 ES/PT credit
       - thresholds reflected in output report
 """
+
 from __future__ import annotations
 
 import math
@@ -299,7 +300,9 @@ class TestUnderservedDivisionFlag:
             _form("F001", appearances=[_app("A")]),
             _form("F002", appearances=[_app("B")]),
         ]
-        result = run_bias_detection(catalog, underserved_threshold=0.5, translation_coverage_min=0.0, language_gap_max=100.0)
+        result = run_bias_detection(
+            catalog, underserved_threshold=0.5, translation_coverage_min=0.0, language_gap_max=100.0
+        )
         types = [f["type"] for f in result["bias_flags"]]
         assert "underserved_division" not in types
 
@@ -310,16 +313,19 @@ class TestUnderservedDivisionFlag:
             + [_form(f"B{i}", appearances=[_app("DivB")]) for i in range(10)]
             + [_form("C1", appearances=[_app("DivC")])]
         )
-        result = run_bias_detection(catalog, underserved_threshold=0.5, translation_coverage_min=0.0, language_gap_max=100.0)
+        result = run_bias_detection(
+            catalog, underserved_threshold=0.5, translation_coverage_min=0.0, language_gap_max=100.0
+        )
         underserved = [f for f in result["bias_flags"] if f["type"] == "underserved_division"]
         assert any(f["slice"] == "DivC" for f in underserved)
 
     def test_underserved_flag_is_warning_severity(self):
-        catalog = (
-            [_form(f"A{i}", appearances=[_app("BigDiv")]) for i in range(20)]
-            + [_form("S1", appearances=[_app("SmallDiv")])]
+        catalog = [_form(f"A{i}", appearances=[_app("BigDiv")]) for i in range(20)] + [
+            _form("S1", appearances=[_app("SmallDiv")])
+        ]
+        result = run_bias_detection(
+            catalog, underserved_threshold=0.5, translation_coverage_min=0.0, language_gap_max=100.0
         )
-        result = run_bias_detection(catalog, underserved_threshold=0.5, translation_coverage_min=0.0, language_gap_max=100.0)
         flags = [f for f in result["bias_flags"] if f["type"] == "underserved_division"]
         assert all(f["severity"] == "WARNING" for f in flags)
 
@@ -396,38 +402,50 @@ class TestLanguageCoverageGap:
     def test_no_gap_within_threshold_no_flag(self):
         # ES=50%, PT=40% → gap=10% < 30%
         catalog = self._catalog_with_coverage(10, es_count=5, pt_count=4)
-        result = run_bias_detection(catalog, underserved_threshold=0.0, translation_coverage_min=0.0, language_gap_max=30.0)
+        result = run_bias_detection(
+            catalog, underserved_threshold=0.0, translation_coverage_min=0.0, language_gap_max=30.0
+        )
         gap_flags = [f for f in result["bias_flags"] if f["type"] == "language_coverage_gap"]
         assert len(gap_flags) == 0
 
     def test_gap_above_threshold_flagged(self):
         # ES=80%, PT=10% → gap=70% > 30%
         catalog = self._catalog_with_coverage(10, es_count=8, pt_count=1)
-        result = run_bias_detection(catalog, underserved_threshold=0.0, translation_coverage_min=0.0, language_gap_max=30.0)
+        result = run_bias_detection(
+            catalog, underserved_threshold=0.0, translation_coverage_min=0.0, language_gap_max=30.0
+        )
         gap_flags = [f for f in result["bias_flags"] if f["type"] == "language_coverage_gap"]
         assert len(gap_flags) == 1
 
     def test_es_higher_identifies_spanish_as_higher(self):
         catalog = self._catalog_with_coverage(10, es_count=8, pt_count=1)
-        result = run_bias_detection(catalog, underserved_threshold=0.0, translation_coverage_min=0.0, language_gap_max=30.0)
+        result = run_bias_detection(
+            catalog, underserved_threshold=0.0, translation_coverage_min=0.0, language_gap_max=30.0
+        )
         gap_flags = [f for f in result["bias_flags"] if f["type"] == "language_coverage_gap"]
         assert "Spanish" in gap_flags[0]["slice"]
 
     def test_pt_higher_identifies_portuguese_as_higher(self):
         catalog = self._catalog_with_coverage(10, es_count=1, pt_count=8)
-        result = run_bias_detection(catalog, underserved_threshold=0.0, translation_coverage_min=0.0, language_gap_max=30.0)
+        result = run_bias_detection(
+            catalog, underserved_threshold=0.0, translation_coverage_min=0.0, language_gap_max=30.0
+        )
         gap_flags = [f for f in result["bias_flags"] if f["type"] == "language_coverage_gap"]
         assert "Portuguese" in gap_flags[0]["slice"]
 
     def test_equal_coverage_no_gap_flag(self):
         catalog = self._catalog_with_coverage(10, es_count=5, pt_count=5)
-        result = run_bias_detection(catalog, underserved_threshold=0.0, translation_coverage_min=0.0, language_gap_max=30.0)
+        result = run_bias_detection(
+            catalog, underserved_threshold=0.0, translation_coverage_min=0.0, language_gap_max=30.0
+        )
         gap_flags = [f for f in result["bias_flags"] if f["type"] == "language_coverage_gap"]
         assert len(gap_flags) == 0
 
     def test_gap_flag_is_warning_severity(self):
         catalog = self._catalog_with_coverage(10, es_count=9, pt_count=0)
-        result = run_bias_detection(catalog, underserved_threshold=0.0, translation_coverage_min=0.0, language_gap_max=30.0)
+        result = run_bias_detection(
+            catalog, underserved_threshold=0.0, translation_coverage_min=0.0, language_gap_max=30.0
+        )
         gap_flags = [f for f in result["bias_flags"] if f["type"] == "language_coverage_gap"]
         assert gap_flags[0]["severity"] == "WARNING"
 

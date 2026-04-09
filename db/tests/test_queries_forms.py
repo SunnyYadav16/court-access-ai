@@ -284,9 +284,13 @@ class TestUpdateFormVersionTranslations:
         from db.queries.forms import update_form_version_translations
 
         await update_form_version_translations(
-            mock_db, form_id=_UID, version=1,
-            file_path_es=None, file_path_pt=None,
-            file_type_es=None, file_type_pt=None,
+            mock_db,
+            form_id=_UID,
+            version=1,
+            file_path_es=None,
+            file_path_pt=None,
+            file_type_es=None,
+            file_type_pt=None,
         )
         mock_db.commit.assert_not_called()
 
@@ -295,9 +299,13 @@ class TestUpdateFormVersionTranslations:
         from db.queries.forms import update_form_version_translations
 
         result = await update_form_version_translations(
-            mock_db, form_id=_UID, version=1,
-            file_path_es=None, file_path_pt=None,
-            file_type_es=None, file_type_pt=None,
+            mock_db,
+            form_id=_UID,
+            version=1,
+            file_path_es=None,
+            file_path_pt=None,
+            file_type_es=None,
+            file_type_pt=None,
         )
         assert result is None
 
@@ -335,7 +343,8 @@ class TestUpdateFormCatalogFields:
         from db.queries.forms import update_form_catalog_fields
 
         await update_form_catalog_fields(
-            mock_db, _UID,
+            mock_db,
+            _UID,
             needs_human_review=True,
             preprocessing_flags=["mislabeled_file"],
         )
@@ -794,9 +803,12 @@ class TestUpdateFormVersionTranslationsSync:
 
         update_form_version_translations_sync(
             mock_sync_session,
-            form_id=_UID, version=1,
-            file_path_es=None, file_path_pt=None,
-            file_type_es=None, file_type_pt=None,
+            form_id=_UID,
+            version=1,
+            file_path_es=None,
+            file_path_pt=None,
+            file_type_es=None,
+            file_type_pt=None,
         )
         mock_sync_session.commit.assert_not_called()
 
@@ -847,6 +859,7 @@ class TestGetAllFormsSync:
         db.database inside the function) and sqlalchemy.orm.Session.
         """
         from contextlib import ExitStack
+
         stack = ExitStack()
         stack.enter_context(patch("db.database.get_sync_engine", return_value=MagicMock()))
         mock_session = stack.enter_context(patch("sqlalchemy.orm.Session"))
@@ -887,9 +900,18 @@ class TestGetAllFormsSync:
             result = get_all_forms_sync()
 
         required_keys = {
-            "form_id", "form_name", "form_slug", "source_url",
-            "file_type", "status", "content_hash", "current_version",
-            "needs_human_review", "created_at", "appearances", "versions",
+            "form_id",
+            "form_name",
+            "form_slug",
+            "source_url",
+            "file_type",
+            "status",
+            "content_hash",
+            "current_version",
+            "needs_human_review",
+            "created_at",
+            "appearances",
+            "versions",
         }
         for key in required_keys:
             assert key in result[0], f"Missing key: {key}"

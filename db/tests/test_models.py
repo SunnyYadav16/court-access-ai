@@ -33,46 +33,57 @@ _NOW = datetime(2024, 1, 1, tzinfo=UTC)
 class TestTableNames:
     def test_role_tablename(self):
         from db.models import Role
+
         assert Role.__tablename__ == "roles"
 
     def test_user_tablename(self):
         from db.models import User
+
         assert User.__tablename__ == "users"
 
     def test_role_request_tablename(self):
         from db.models import RoleRequest
+
         assert RoleRequest.__tablename__ == "role_requests"
 
     def test_session_tablename(self):
         from db.models import Session
+
         assert Session.__tablename__ == "sessions"
 
     def test_document_translation_request_tablename(self):
         from db.models import DocumentTranslationRequest
+
         assert DocumentTranslationRequest.__tablename__ == "document_translation_requests"
 
     def test_realtime_translation_request_tablename(self):
         from db.models import RealtimeTranslationRequest
+
         assert RealtimeTranslationRequest.__tablename__ == "realtime_translation_requests"
 
     def test_audit_log_tablename(self):
         from db.models import AuditLog
+
         assert AuditLog.__tablename__ == "audit_logs"
 
     def test_form_catalog_tablename(self):
         from db.models import FormCatalog
+
         assert FormCatalog.__tablename__ == "form_catalog"
 
     def test_form_version_tablename(self):
         from db.models import FormVersion
+
         assert FormVersion.__tablename__ == "form_versions"
 
     def test_form_appearance_tablename(self):
         from db.models import FormAppearance
+
         assert FormAppearance.__tablename__ == "form_appearances"
 
     def test_pipeline_step_tablename(self):
         from db.models import PipelineStep
+
         assert PipelineStep.__tablename__ == "pipeline_steps"
 
 
@@ -84,6 +95,7 @@ class TestTableNames:
 class TestRepresentations:
     def test_role_repr(self):
         from db.models import Role
+
         r = Role()
         r.role_id = 1
         r.role_name = "public"
@@ -93,6 +105,7 @@ class TestRepresentations:
 
     def test_user_repr(self):
         from db.models import User
+
         u = User()
         u.user_id = _UID
         u.email = "test@example.com"
@@ -101,6 +114,7 @@ class TestRepresentations:
 
     def test_role_request_repr(self):
         from db.models import RoleRequest
+
         rr = RoleRequest()
         rr.request_id = _UID
         rr.user_id = _UID
@@ -110,6 +124,7 @@ class TestRepresentations:
 
     def test_session_repr(self):
         from db.models import Session
+
         s = Session()
         s.session_id = _UID
         s.type = "document"
@@ -120,6 +135,7 @@ class TestRepresentations:
 
     def test_document_translation_request_repr(self):
         from db.models import DocumentTranslationRequest
+
         d = DocumentTranslationRequest()
         d.doc_request_id = _UID
         d.status = "processing"
@@ -128,6 +144,7 @@ class TestRepresentations:
 
     def test_realtime_translation_request_repr(self):
         from db.models import RealtimeTranslationRequest
+
         rt = RealtimeTranslationRequest()
         rt.rt_request_id = _UID
         rt.phase = "waiting"
@@ -136,6 +153,7 @@ class TestRepresentations:
 
     def test_audit_log_repr(self):
         from db.models import AuditLog
+
         a = AuditLog()
         a.audit_id = _UID
         a.action_type = "document_upload"
@@ -144,6 +162,7 @@ class TestRepresentations:
 
     def test_form_catalog_repr(self):
         from db.models import FormCatalog
+
         f = FormCatalog()
         f.form_id = _UID
         f.form_name = "Complaint Form"
@@ -152,6 +171,7 @@ class TestRepresentations:
 
     def test_form_version_repr(self):
         from db.models import FormVersion
+
         v = FormVersion()
         v.version_id = _UID
         v.form_id = _UID
@@ -161,6 +181,7 @@ class TestRepresentations:
 
     def test_form_appearance_repr(self):
         from db.models import FormAppearance
+
         a = FormAppearance()
         a.appearance_id = _UID
         a.division = "Housing Court"
@@ -176,6 +197,7 @@ class TestRepresentations:
 class TestModelInstantiation:
     def test_role_instantiation(self):
         from db.models import Role
+
         r = Role(role_id=2, role_name="court_official", description="Court staff")
         assert r.role_id == 2
         assert r.role_name == "court_official"
@@ -183,6 +205,7 @@ class TestModelInstantiation:
 
     def test_user_instantiation(self):
         from db.models import User
+
         u = User(user_id=_UID, email="a@b.com", name="Alice", role_id=1)
         assert u.user_id == _UID
         assert u.email == "a@b.com"
@@ -191,12 +214,14 @@ class TestModelInstantiation:
 
     def test_role_request_instantiation(self):
         from db.models import RoleRequest
+
         rr = RoleRequest(request_id=_UID, user_id=_UID, requested_role_id=2, status="pending")
         assert rr.status == "pending"
         assert rr.requested_role_id == 2
 
     def test_session_instantiation(self):
         from db.models import Session
+
         s = Session(session_id=_UID, user_id=_UID, type="document", target_language="spa_Latn", status="active")
         assert s.type == "document"
         assert s.target_language == "spa_Latn"
@@ -204,6 +229,7 @@ class TestModelInstantiation:
 
     def test_document_translation_request_instantiation(self):
         from db.models import DocumentTranslationRequest
+
         d = DocumentTranslationRequest(
             doc_request_id=_UID,
             session_id=_UID,
@@ -216,6 +242,7 @@ class TestModelInstantiation:
 
     def test_realtime_translation_request_instantiation(self):
         from db.models import RealtimeTranslationRequest
+
         rt = RealtimeTranslationRequest(
             rt_request_id=_UID,
             session_id=_UID,
@@ -229,6 +256,7 @@ class TestModelInstantiation:
 
     def test_audit_log_instantiation(self):
         from db.models import AuditLog
+
         a = AuditLog(
             audit_id=_UID,
             user_id=_UID,
@@ -240,6 +268,7 @@ class TestModelInstantiation:
 
     def test_form_catalog_instantiation(self):
         from db.models import FormCatalog
+
         f = FormCatalog(
             form_id=_UID,
             form_name="Divorce Petition",
@@ -256,6 +285,7 @@ class TestModelInstantiation:
 
     def test_form_version_instantiation(self):
         from db.models import FormVersion
+
         v = FormVersion(
             version_id=_UID,
             form_id=_UID,
@@ -271,6 +301,7 @@ class TestModelInstantiation:
 
     def test_form_appearance_instantiation(self):
         from db.models import FormAppearance
+
         a = FormAppearance(
             appearance_id=_UID,
             form_id=_UID,
@@ -282,6 +313,7 @@ class TestModelInstantiation:
 
     def test_pipeline_step_instantiation(self):
         from db.models import PipelineStep
+
         ps = PipelineStep(
             session_id=_UID,
             step_name="ocr",
@@ -300,58 +332,72 @@ class TestModelInstantiation:
 class TestRelationships:
     def test_role_has_users_relationship(self):
         from db.models import Role
+
         assert hasattr(Role, "users")
 
     def test_user_has_sessions_relationship(self):
         from db.models import User
+
         assert hasattr(User, "sessions")
 
     def test_user_has_audit_logs_relationship(self):
         from db.models import User
+
         assert hasattr(User, "audit_logs")
 
     def test_session_has_document_request_relationship(self):
         from db.models import Session
+
         assert hasattr(Session, "document_request")
 
     def test_session_has_realtime_request_relationship(self):
         from db.models import Session
+
         assert hasattr(Session, "realtime_request")
 
     def test_session_has_pipeline_steps_relationship(self):
         from db.models import Session
+
         assert hasattr(Session, "pipeline_steps")
 
     def test_form_catalog_has_versions_relationship(self):
         from db.models import FormCatalog
+
         assert hasattr(FormCatalog, "versions")
 
     def test_form_catalog_has_appearances_relationship(self):
         from db.models import FormCatalog
+
         assert hasattr(FormCatalog, "appearances")
 
     def test_form_version_has_form_relationship(self):
         from db.models import FormVersion
+
         assert hasattr(FormVersion, "form")
 
     def test_form_appearance_has_form_relationship(self):
         from db.models import FormAppearance
+
         assert hasattr(FormAppearance, "form")
 
     def test_audit_log_has_user_relationship(self):
         from db.models import AuditLog
+
         assert hasattr(AuditLog, "user")
 
     def test_audit_log_has_session_relationship(self):
         from db.models import AuditLog
+
         assert hasattr(AuditLog, "session")
 
     def test_audit_log_has_document_request_relationship(self):
         from db.models import AuditLog
+
         assert hasattr(AuditLog, "document_request")
 
     def test_audit_log_has_realtime_request_relationship(self):
         from db.models import AuditLog
+
         assert hasattr(AuditLog, "realtime_request")
 
 
@@ -363,52 +409,65 @@ class TestRelationships:
 class TestColumnAttributes:
     def test_form_catalog_has_needs_human_review(self):
         from db.models import FormCatalog
+
         assert hasattr(FormCatalog, "needs_human_review")
 
     def test_form_catalog_has_preprocessing_flags(self):
         from db.models import FormCatalog
+
         assert hasattr(FormCatalog, "preprocessing_flags")
 
     def test_form_version_has_file_path_es(self):
         from db.models import FormVersion
+
         assert hasattr(FormVersion, "file_path_es")
 
     def test_form_version_has_file_path_pt(self):
         from db.models import FormVersion
+
         assert hasattr(FormVersion, "file_path_pt")
 
     def test_user_has_firebase_uid(self):
         from db.models import User
+
         assert hasattr(User, "firebase_uid")
 
     def test_user_has_mfa_enabled(self):
         from db.models import User
+
         assert hasattr(User, "mfa_enabled")
 
     def test_realtime_request_has_room_code(self):
         from db.models import RealtimeTranslationRequest
+
         assert hasattr(RealtimeTranslationRequest, "room_code")
 
     def test_realtime_request_has_consent_acknowledged(self):
         from db.models import RealtimeTranslationRequest
+
         assert hasattr(RealtimeTranslationRequest, "consent_acknowledged")
 
     def test_pipeline_step_has_step_metadata(self):
         from db.models import PipelineStep
+
         assert hasattr(PipelineStep, "step_metadata")
 
     def test_document_request_has_pii_findings_count(self):
         from db.models import DocumentTranslationRequest
+
         assert hasattr(DocumentTranslationRequest, "pii_findings_count")
 
     def test_document_request_has_signed_url(self):
         from db.models import DocumentTranslationRequest
+
         assert hasattr(DocumentTranslationRequest, "signed_url")
 
     def test_audit_log_has_doc_request_id(self):
         from db.models import AuditLog
+
         assert hasattr(AuditLog, "doc_request_id")
 
     def test_audit_log_has_rt_request_id(self):
         from db.models import AuditLog
+
         assert hasattr(AuditLog, "rt_request_id")

@@ -14,6 +14,7 @@ Coverage:
   - has_critical logic
   - Multiple simultaneous anomalies
 """
+
 from __future__ import annotations
 
 import pytest
@@ -496,7 +497,7 @@ class TestMultipleAnomalies:
     def test_all_six_checks_can_fire(self, thresholds, monkeypatch, tmp_path):
         """Exercise a worst-case scenario where all checks fire at once."""
         monkeypatch.setenv("ANOMALY_FORM_DROP_PCT", "0.0")  # any drop triggers
-        monkeypatch.setenv("ANOMALY_MASS_NEW_FORMS", "0")   # any new form triggers
+        monkeypatch.setenv("ANOMALY_MASS_NEW_FORMS", "0")  # any new form triggers
         monkeypatch.setenv("ANOMALY_DOWNLOAD_FAIL_PCT", "0.0")  # any failure triggers
 
         missing = str(tmp_path / "gone.pdf")

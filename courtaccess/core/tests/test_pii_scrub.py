@@ -12,6 +12,7 @@ Coverage:
   - _get_analyzer: singleton caching (second call returns same object)
   - _get_analyzer: initialised lazily (None → populated after first call)
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch

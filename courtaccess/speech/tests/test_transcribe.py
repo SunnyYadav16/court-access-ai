@@ -10,6 +10,7 @@ Coverage:
                 segment joining, language resolution
   - get_asr_service factory + caching
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -176,8 +177,10 @@ def _patched_load_model(svc, *, cuda: bool, model_path=None, model_size="small")
 
     settings = _mock_settings(model_path=model_path, model=model_size)
 
-    with patch.dict("sys.modules", {"torch": mock_torch, "faster_whisper": mock_fw_module}), \
-         patch("courtaccess.speech.transcribe.get_settings", return_value=settings):
+    with (
+        patch.dict("sys.modules", {"torch": mock_torch, "faster_whisper": mock_fw_module}),
+        patch("courtaccess.speech.transcribe.get_settings", return_value=settings),
+    ):
         svc._load_model()
 
     return mock_whisper_cls, mock_whisper_instance
