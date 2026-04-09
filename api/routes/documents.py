@@ -52,6 +52,31 @@ from db.queries.audit import write_audit
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+
+async def _get_airflow_token(client: httpx.AsyncClient) -> str:
+    """Exchange Airflow credentials for a JWT (required by Airflow 3.x REST API)."""
+    token_resp = await client.post(
+        f"{settings.airflow_base_url}/auth/token",
+        json={"username": settings.airflow_username, "password": settings.airflow_password},
+    )
+    token_resp.raise_for_status()
+    return token_resp.json()["access_token"]
+
+
+async def _unpause_dag(client: httpx.AsyncClient, dag_id: str, token: str) -> None:
+    """Unpause a DAG so the scheduler will execute triggered runs.
+
+    DAGs start paused (AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=true).
+    A dag run triggered against a paused DAG stays in 'queued' forever.
+    """
+    resp = await client.patch(
+        f"{settings.airflow_base_url}/api/v2/dags/{dag_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"is_paused": False},
+    )
+    resp.raise_for_status()
+
+
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -339,9 +364,11 @@ async def upload_document(
     # or a re-trigger endpoint. We log the error but don't fail the upload.
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
+            airflow_token = await _get_airflow_token(client)
+            await _unpause_dag(client, dag_id, airflow_token)
             resp = await client.post(
                 f"{settings.airflow_base_url}/api/v2/dags/{dag_id}/dagRuns",
-                auth=(settings.airflow_username, settings.airflow_password),
+                headers={"Authorization": f"Bearer {airflow_token}"},
                 json={
                     "logical_date": start_time,
                     "conf": {
@@ -755,9 +782,11 @@ async def retranslate_document(
     # ── Trigger Airflow DAG ────────────────────────────────────────────────
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
+            airflow_token = await _get_airflow_token(client)
+            await _unpause_dag(client, "document_pipeline_dag", airflow_token)
             resp = await client.post(
                 f"{settings.airflow_base_url}/api/v2/dags/document_pipeline_dag/dagRuns",
-                auth=(settings.airflow_username, settings.airflow_password),
+                headers={"Authorization": f"Bearer {airflow_token}"},
                 json={
                     "logical_date": now.isoformat(),
                     "conf": {

@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import QRCode from "react-qr-code"
 import { ScreenId, SCREENS } from "@/lib/constants"
+import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import TopBar from "@/components/shared/TopBar"
 import ScreenLabel from "@/components/shared/ScreenLabel"
@@ -58,12 +59,13 @@ export default function RealtimeLobby({ onNav }: Props) {
   const caseDocket        = useRealtimeStore((s) => s.caseDocket)
 
   // UI state
-  const [copied, setCopied]           = useState(false)
-  const [partnerJoined, setPartnerJoined] = useState(false)
-  const [countdown, setCountdown]     = useState<number>(
+  const [copied, setCopied]               = useState(false)
+  const [partnerPhase, setPartnerPhase]   = useState<"waiting" | "joining" | "active">("waiting")
+  const [countdown, setCountdown]         = useState<number>(
     roomCodeExpiresAt ? secondsUntil(roomCodeExpiresAt) : 0,
   )
-  const [pollError, setPollError]     = useState<string | null>(null)
+  const [pollError, setPollError]         = useState<string | null>(null)
+
 
   // Prevent navigation from firing twice
   const navigatedRef = useRef(false)
@@ -89,7 +91,7 @@ export default function RealtimeLobby({ onNav }: Props) {
   // ── Status polling ─────────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (!roomCode || partnerJoined) return
+    if (!roomCode || partnerPhase === "active") return
 
     let pollId: number
 
@@ -98,12 +100,14 @@ export default function RealtimeLobby({ onNav }: Props) {
         const status = await realtimeApi.getRoomStatus(roomCode)
         setPollError(null)
 
-        if (status.phase === "active") {
-          setPartnerJoined(true)
+        if (status.phase === "joining" && partnerPhase === "waiting") {
+          // Partner hit join and got a JWT — show "joining" state immediately
+          setPartnerPhase("joining")
+        } else if (status.phase === "active") {
+          setPartnerPhase("active")
           // Brief pause so the user reads the confirmation, then navigate
           setTimeout(goToSession, JOIN_CONFIRM_DELAY_MS)
         } else if (status.phase === "ended") {
-          // Room expired or was closed externally — stop polling immediately
           clearInterval(pollId)
           setPollError("This room has ended. Please create a new session.")
         }
@@ -118,7 +122,7 @@ export default function RealtimeLobby({ onNav }: Props) {
     void poll()
     pollId = window.setInterval(() => { void poll() }, POLL_INTERVAL_MS)
     return () => clearInterval(pollId)
-  }, [roomCode, partnerJoined, goToSession])
+  }, [roomCode, partnerPhase, goToSession])
 
   // ── Copy handlers ──────────────────────────────────────────────────────────
 
@@ -157,8 +161,35 @@ export default function RealtimeLobby({ onNav }: Props) {
           Share the room code or link below with {partnerName}.
         </p>
 
-        {/* ── Partner joined banner ────────────────────────────────────────── */}
-        {partnerJoined && (
+        {/* ── Partner joining banner (JWT issued, WS not yet open) ──────────── */}
+        {partnerPhase === "joining" && (
+          <div
+            className="rounded-md p-4 mb-4 flex items-center justify-between gap-3"
+            style={{ background: "#EFF6FF", border: "1.5px solid #93C5FD" }}
+          >
+            <div className="flex items-center gap-3">
+              <span className="text-xl">🔗</span>
+              <div>
+                <p className="text-sm font-semibold" style={{ color: "#1D4ED8" }}>
+                  {partnerName} is connecting…
+                </p>
+                <p className="text-xs" style={{ color: "#2563EB" }}>
+                  They have the code — waiting for their connection to open.
+                </p>
+              </div>
+            </div>
+            <Button
+              onClick={goToSession}
+              className="shrink-0 cursor-pointer"
+              style={{ background: "#0B1D3A" }}
+            >
+              Start Session
+            </Button>
+          </div>
+        )}
+
+        {/* ── Partner fully connected banner ───────────────────────────────── */}
+        {partnerPhase === "active" && (
           <div
             className="rounded-md p-4 mb-4 flex items-center gap-3"
             style={{ background: "#F0FDF4", border: "1.5px solid #86EFAC" }}
@@ -176,7 +207,7 @@ export default function RealtimeLobby({ onNav }: Props) {
         )}
 
         {/* ── Poll error ──────────────────────────────────────────────────── */}
-        {pollError && !partnerJoined && (
+        {pollError && partnerPhase === "waiting" && (
           <div
             className="rounded-md p-3 mb-4 text-xs"
             style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#991B1B" }}
@@ -297,9 +328,8 @@ export default function RealtimeLobby({ onNav }: Props) {
         </Card>
 
         {/* ── Status indicator ─────────────────────────────────────────────── */}
-        {!partnerJoined && (
+        {partnerPhase === "waiting" && (
           <div className="flex items-center gap-3 justify-center py-2">
-            {/* Pulsing dot */}
             <span className="relative flex h-2.5 w-2.5">
               <span
                 className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
