@@ -63,11 +63,12 @@ async def _get_airflow_token(client: httpx.AsyncClient) -> str:
     return token_resp.json()["access_token"]
 
 
-async def _unpause_dag(client: httpx.AsyncClient, dag_id: str, token: str) -> None:
-    """Unpause a DAG so the scheduler will execute triggered runs.
+async def _unpause_for_trigger(client: httpx.AsyncClient, dag_id: str, token: str) -> None:
+    """Unpause a DAG so a triggered run will be picked up by the scheduler.
 
     DAGs start paused (AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=true).
     A dag run triggered against a paused DAG stays in 'queued' forever.
+    Call this before POSTing the dagRun, then call _repause_dag after.
     """
     resp = await client.patch(
         f"{settings.airflow_base_url}/api/v2/dags/{dag_id}",
@@ -75,6 +76,19 @@ async def _unpause_dag(client: httpx.AsyncClient, dag_id: str, token: str) -> No
         json={"is_paused": False},
     )
     resp.raise_for_status()
+
+
+async def _repause_dag(client: httpx.AsyncClient, dag_id: str, token: str) -> None:
+    """Re-pause a DAG after triggering so the scheduler won't fire it on schedule.
+
+    Best-effort — callers should catch and log exceptions rather than failing
+    the request, since the dag run has already been queued successfully.
+    """
+    await client.patch(
+        f"{settings.airflow_base_url}/api/v2/dags/{dag_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"is_paused": True},
+    )
 
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -365,7 +379,7 @@ async def upload_document(
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             airflow_token = await _get_airflow_token(client)
-            await _unpause_dag(client, dag_id, airflow_token)
+            await _unpause_for_trigger(client, dag_id, airflow_token)
             resp = await client.post(
                 f"{settings.airflow_base_url}/api/v2/dags/{dag_id}/dagRuns",
                 headers={"Authorization": f"Bearer {airflow_token}"},
@@ -392,6 +406,10 @@ async def upload_document(
                 lang,
                 resp.json().get("dag_run_id"),
             )
+            try:
+                await _repause_dag(client, dag_id, airflow_token)
+            except Exception as repause_exc:
+                logger.warning("Could not re-pause %s after trigger: %s", dag_id, repause_exc)
     except Exception as exc:
         # Airflow is unreachable or rejected the trigger.  Mark both the
         # TranslationRequest and Session as 'failed' so the row is never
@@ -783,7 +801,7 @@ async def retranslate_document(
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             airflow_token = await _get_airflow_token(client)
-            await _unpause_dag(client, "document_pipeline_dag", airflow_token)
+            await _unpause_for_trigger(client, "document_pipeline_dag", airflow_token)
             resp = await client.post(
                 f"{settings.airflow_base_url}/api/v2/dags/document_pipeline_dag/dagRuns",
                 headers={"Authorization": f"Bearer {airflow_token}"},
@@ -808,6 +826,10 @@ async def retranslate_document(
                 lang,
                 resp.json().get("dag_run_id"),
             )
+            try:
+                await _repause_dag(client, "document_pipeline_dag", airflow_token)
+            except Exception as repause_exc:
+                logger.warning("Could not re-pause document_pipeline_dag after trigger: %s", repause_exc)
     except Exception as exc:
         # Same pattern as upload_document: mark failed so the row is never
         # left permanently stuck as 'processing'.
