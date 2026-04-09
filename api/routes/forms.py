@@ -100,23 +100,32 @@ async def trigger_form_scraper(
             token_resp.raise_for_status()
             airflow_token = token_resp.json()["access_token"]
 
-            # Unpause the DAG — DAGs start paused (DAGS_ARE_PAUSED_AT_CREATION=true)
-            # and a triggered run on a paused DAG stays queued forever.
-            await client.patch(
-                f"{settings.airflow_base_url}/api/v2/dags/form_scraper_dag",
-                headers={"Authorization": f"Bearer {airflow_token}"},
-                json={"is_paused": False},
-            )
+            # Unpause → trigger → re-pause.
+            # A paused DAG leaves triggered runs queued forever, so we must
+            # unpause first. We re-pause immediately after queuing the run so
+            # the weekly scheduler does NOT fire automatically — only API
+            # calls should start this DAG.
+            dag_url = f"{settings.airflow_base_url}/api/v2/dags/form_scraper_dag"
+            auth_headers = {"Authorization": f"Bearer {airflow_token}"}
+
+            await client.patch(dag_url, headers=auth_headers, json={"is_paused": False})
 
             resp = await client.post(
                 dag_run_url,
-                headers={"Authorization": f"Bearer {airflow_token}"},
+                headers=auth_headers,
                 json={
                     "logical_date": triggered_at.isoformat(),
                     "conf": {"triggered_by_user_id": str(user.user_id)},
                 },
             )
             resp.raise_for_status()
+
+            # Re-pause so the scheduler won't fire the weekly schedule.
+            # Best-effort — if this fails the run still executes correctly.
+            try:
+                await client.patch(dag_url, headers=auth_headers, json={"is_paused": True})
+            except Exception as repause_exc:
+                logger.warning("Could not re-pause form_scraper_dag after trigger: %s", repause_exc)
     except httpx.RequestError as exc:
         logger.error("Airflow unreachable while triggering form_scraper_dag: %s", exc)
         raise HTTPException(
