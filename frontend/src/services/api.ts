@@ -311,7 +311,7 @@ export interface RoomCreateResponse {
 }
 
 export interface RoomPreviewResponse {
-  phase: "waiting" | "active" | "ended";
+  phase: "waiting" | "joining" | "active" | "ended";
   target_language: string;
   court_division: string | null;
   courtroom: string | null;
@@ -320,7 +320,7 @@ export interface RoomPreviewResponse {
 }
 
 export interface RoomStatusResponse {
-  phase: "waiting" | "active" | "ended";
+  phase: "waiting" | "joining" | "active" | "ended";
   room_code: string;
   room_code_expires_at: string;
   partner_joined_at: string | null;

@@ -35,8 +35,6 @@ export function useRoomStatus({
   onStatusUpdate,
   onError,
 }: UseRoomStatusOptions): void {
-  // Track the last seen phase so we can detect the waiting → active edge.
-  const lastPhaseRef = useRef<RoomStatusResponse["phase"] | null>(null);
   // Guard against firing onPartnerJoined more than once.
   const firedRef = useRef(false);
 
@@ -44,7 +42,6 @@ export function useRoomStatus({
     if (!roomCode) return;
 
     // Reset per-effect state in case the room code changes.
-    lastPhaseRef.current = null;
     firedRef.current = false;
 
     let active = true; // set to false when the effect cleans up
@@ -56,16 +53,12 @@ export function useRoomStatus({
 
         onStatusUpdate?.(status);
 
-        if (
-          !firedRef.current &&
-          lastPhaseRef.current === "waiting" &&
-          status.phase === "active"
-        ) {
+        // Fire once when the partner has joined (joining = JWT issued,
+        // active = WebSocket connected). Both mean the partner arrived.
+        if (!firedRef.current && (status.phase === "joining" || status.phase === "active")) {
           firedRef.current = true;
           onPartnerJoined();
         }
-
-        lastPhaseRef.current = status.phase;
 
         // Stop polling once the session is active or has ended.
         if (status.phase === "active" || status.phase === "ended") {
