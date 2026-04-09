@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest db/tests/test_queries_forms.py::TestGetAllFormsSync -x -q)",
+      "Bash(python3 -m pytest db/tests/test_queries_forms.py::TestGetAllFormsSync -x -q)",
+      "Bash(.venv/bin/pytest db/tests/test_queries_forms.py::TestGetAllFormsSync -x -q)",
+      "Bash(.venv/bin/pytest db/tests/ courtaccess/monitoring/tests/ -q)"
+    ]
+  }
+}
