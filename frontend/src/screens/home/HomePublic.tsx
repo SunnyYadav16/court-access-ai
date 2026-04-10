@@ -63,6 +63,9 @@ export default function HomePublic({ onNav }: Props) {
           <FeatureCard icon="🏛" title="Government Forms"
             desc="Browse pre-translated Massachusetts court forms"
             onClick={() => onNav(SCREENS.FORMS_LIBRARY)} />
+          <FeatureCard icon="📜" title="My Translations"
+            desc="View your document translation history"
+            onClick={() => onNav(SCREENS.DOC_HISTORY)} />
         </div>
 
         <Card className="mt-6" style={{ background: "#F5EDE0", border: "1px solid rgba(200,150,62,0.2)" }}>

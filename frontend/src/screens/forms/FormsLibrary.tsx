@@ -5,15 +5,11 @@ import { Input } from "@/components/ui/input"
 import TopBar from "@/components/shared/TopBar"
 import ScreenLabel from "@/components/shared/ScreenLabel"
 import { formsApi, FormResponse } from "@/services/api"
+import { formatDate } from "@/lib/utils"
 
 interface Props { onNav: (s: ScreenId) => void }
 
 const PAGE_SIZE = 20
-
-function formatDate(dateStr: string | null): string {
-  if (!dateStr) return "—"
-  return new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-}
 
 function getLatestVersion(form: FormResponse) {
   if (!form.versions.length) return null
@@ -28,16 +24,15 @@ export default function FormsLibrary({ onNav }: Props) {
   const [search, setSearch] = useState("")
   const [debouncedSearch, setDebouncedSearch] = useState("")
   const [selectedDivision, setSelectedDivision] = useState("")
-  const [selectedLanguage, setSelectedLanguage] = useState("")
+  const [selectedLanguage, setSelectedLanguage] = useState<"es" | "pt" | "">("")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // Load divisions once on mount — non-fatal if it fails
+  // Non-fatal if it fails — dropdown falls back to "All Divisions" only
   useEffect(() => {
     formsApi.divisions().then(setDivisions).catch(() => {})
   }, [])
 
-  // Debounce search: update debouncedSearch after 300ms and reset to page 1
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearch(search)
@@ -46,7 +41,6 @@ export default function FormsLibrary({ onNav }: Props) {
     return () => clearTimeout(timer)
   }, [search])
 
-  // Fetch forms whenever debounced search, filters, or page changes
   useEffect(() => {
     let cancelled = false
     setLoading(true)
@@ -55,7 +49,7 @@ export default function FormsLibrary({ onNav }: Props) {
       .list({
         q: debouncedSearch || undefined,
         division: selectedDivision || undefined,
-        language: (selectedLanguage as "es" | "pt") || undefined,
+        language: selectedLanguage || undefined,
         page,
         page_size: PAGE_SIZE,
       })
@@ -75,15 +69,12 @@ export default function FormsLibrary({ onNav }: Props) {
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
 
-  const handleDivisionChange = (v: string) => {
-    setSelectedDivision(v)
+  const makeFilterSetter = (setter: (v: string) => void) => (v: string) => {
+    setter(v)
     setPage(1)
   }
-
-  const handleLanguageChange = (v: string) => {
-    setSelectedLanguage(v)
-    setPage(1)
-  }
+  const handleDivisionChange = makeFilterSetter(setSelectedDivision)
+  const handleLanguageChange = makeFilterSetter((v) => setSelectedLanguage(v as "es" | "pt" | ""))
 
   const handleFormClick = (form: FormResponse) => {
     sessionStorage.setItem("selected_form_id", form.form_id)
@@ -228,7 +219,6 @@ export default function FormsLibrary({ onNav }: Props) {
           </div>
         )}
 
-        {/* Pagination — only shown when results span multiple pages */}
         {total > PAGE_SIZE && (
           <div className="flex items-center justify-between mt-6">
             <button

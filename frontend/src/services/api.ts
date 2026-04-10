@@ -70,18 +70,17 @@ export interface PipelineStep {
 }
 
 export interface DocumentListResponse {
-  documents: DocumentStatus[];
+  items: DocumentStatus[];
   total: number;
   page: number;
   page_size: number;
-  total_pages: number;
 }
 
 export interface FormListParams {
   q?: string;
   division?: string;
   language?: "es" | "pt";
-  status?: string;
+  status?: "active" | "archived";
   page?: number;
   page_size?: number;
 }
@@ -116,7 +115,7 @@ export interface FormResponse {
   form_slug: string;
   source_url: string;
   file_type: string;
-  status: string;
+  status: "active" | "archived";
   content_hash: string;
   current_version: number;
   needs_human_review: boolean;

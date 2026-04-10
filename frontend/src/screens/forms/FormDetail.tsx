@@ -5,13 +5,9 @@ import { Card, CardContent } from "@/components/ui/card"
 import TopBar from "@/components/shared/TopBar"
 import ScreenLabel from "@/components/shared/ScreenLabel"
 import { formsApi, FormResponse, FormVersionResponse } from "@/services/api"
+import { formatDate } from "@/lib/utils"
 
 interface Props { onNav: (s: ScreenId) => void }
-
-function formatDate(dateStr: string | null | undefined): string {
-  if (!dateStr) return "—"
-  return new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-}
 
 function getHostname(url: string): string {
   try { return new URL(url).hostname } catch { return url }
@@ -46,16 +42,20 @@ export default function FormDetail({ onNav }: Props) {
       setLoading(false)
       return
     }
+    let cancelled = false
     formsApi
       .get(formId)
       .then((data) => {
+        if (cancelled) return
         setForm(data)
         setLoading(false)
       })
       .catch(() => {
+        if (cancelled) return
         setError("Failed to load form. Please go back and try again.")
         setLoading(false)
       })
+    return () => { cancelled = true }
   }, [])
 
   if (loading) {
@@ -88,7 +88,7 @@ export default function FormDetail({ onNav }: Props) {
   }
 
   const latest = getLatestVersion(form)
-  const division = form.appearances[0]?.division ?? "All Divisions"
+  const division = form.appearances[0]?.division ?? "—"
 
   const downloads = [
     {
@@ -113,7 +113,7 @@ export default function FormDetail({ onNav }: Props) {
 
   const details: [string, string][] = [
     ["Source", getHostname(form.source_url)],
-    ["Division", form.appearances[0]?.division ?? "—"],
+    ["Division", division],
     ["Version", String(form.current_version)],
     ["Content Hash", `${form.content_hash.slice(0, 8)}...${form.content_hash.slice(-4)}`],
     ["File Type", form.file_type.toUpperCase()],
@@ -140,7 +140,6 @@ export default function FormDetail({ onNav }: Props) {
 
         <Card className="mb-3">
           <CardContent className="p-5">
-            {/* Warning — only shown when human review is still pending */}
             {form.needs_human_review && (
               <div
                 className="rounded-md p-3 mb-4"

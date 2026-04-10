@@ -66,6 +66,9 @@ export default function HomeAdmin({ onNav }: Props) {
           <FeatureCard icon="🏛" title="Government Forms"
             desc="Browse pre-translated forms"
             onClick={() => onNav(SCREENS.FORMS_LIBRARY)} />
+          <FeatureCard icon="📜" title="My Translations"
+            desc="View your document translation history"
+            onClick={() => onNav(SCREENS.DOC_HISTORY)} />
         </div>
       </div>
       <ScreenLabel name="HOME — ADMIN" />
