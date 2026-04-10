@@ -93,7 +93,10 @@ export default function HomeOfficial({ onNav }: Props) {
             onClick={() => onNav(SCREENS.DOC_UPLOAD)} />
           <FeatureCard icon="🏛" title="Government Forms"
             desc="Browse pre-translated Massachusetts court forms"
-            badge="45 FORMS" onClick={() => onNav(SCREENS.FORMS_LIBRARY)} />
+            onClick={() => onNav(SCREENS.FORMS_LIBRARY)} />
+          <FeatureCard icon="📜" title="My Translations"
+            desc="View your document translation history"
+            onClick={() => onNav(SCREENS.DOC_HISTORY)} />
         </div>
 
         <Card>

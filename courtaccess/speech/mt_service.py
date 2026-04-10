@@ -123,9 +123,7 @@ class MTService:
             )
             logger.info("Conversion complete -> %s", ct2_dir)
 
-        import torch
-
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        device = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
         # float16 on GPU: fast, low VRAM, full quality
         # int8    on CPU: best CPU speed/accuracy balance for NLLB
         compute_type = "float16" if device == "cuda" else "int8"

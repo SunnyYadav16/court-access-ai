@@ -120,15 +120,28 @@ export default function DocResults({ onNav }: Props) {
         <TopBar onNav={onNav} />
         <div className="max-w-xl mx-auto px-5 py-8">
           <Card>
-            <CardContent className="p-6 text-center text-sm" style={{ color: "#8494A7" }}>
-              No completed translation found.{" "}
-              <button
-                className="underline"
-                style={{ color: "#0B1D3A" }}
-                onClick={() => onNav(SCREENS.DOC_UPLOAD)}
-              >
-                Upload a document
-              </button>
+            <CardContent className="p-6 text-center">
+              <p className="text-sm mb-4" style={{ color: "#8494A7" }}>
+                No completed translation found.
+              </p>
+              <div className="flex justify-center gap-3">
+                <Button
+                  size="sm"
+                  className="cursor-pointer"
+                  style={{ background: "#0B1D3A" }}
+                  onClick={() => onNav(SCREENS.DOC_HISTORY)}
+                >
+                  📜 View Document History
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="cursor-pointer"
+                  onClick={() => onNav(SCREENS.DOC_UPLOAD)}
+                >
+                  📄 Upload New Document
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </div>

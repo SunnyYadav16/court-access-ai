@@ -17,6 +17,7 @@ const ALL_SCREENS: [ScreenId, string][] = [
   [SCREENS.DOC_UPLOAD, "📄 Doc Upload"],
   [SCREENS.DOC_PROCESSING, "⏳ Doc Processing"],
   [SCREENS.DOC_RESULTS, "✅ Doc Results"],
+  [SCREENS.DOC_HISTORY, "📜 Doc History"],
   [SCREENS.FORMS_LIBRARY, "🏛 Forms Library"],
   [SCREENS.FORM_DETAIL, "📋 Form Detail"],
   [SCREENS.ADMIN_DASHBOARD, "📊 Admin Dashboard"],
@@ -37,7 +38,7 @@ export default function ScreenNavigator({ current, onNav }: Props) {
       style={{ background: "#0a0f1a", borderRight: "1px solid rgba(255,255,255,0.06)" }}>
       <div className="text-[10px] uppercase tracking-widest px-2 py-1 mb-1"
         style={{ color: "rgba(255,255,255,0.3)" }}>
-        23 Screens
+        24 Screens
       </div>
       {ALL_SCREENS.map(([id, label]) => (
         <button

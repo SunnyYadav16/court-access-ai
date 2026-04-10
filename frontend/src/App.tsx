@@ -33,6 +33,7 @@ import JoinRoomScreen from "@/screens/realtime/JoinRoomScreen"
 import DocUpload from "@/screens/documents/DocUpload"
 import DocProcessing from "@/screens/documents/DocProcessing"
 import DocResults from "@/screens/documents/DocResults"
+import DocHistory from "@/screens/documents/DocHistory"
 
 // Forms
 import FormsLibrary from "@/screens/forms/FormsLibrary"
@@ -58,7 +59,7 @@ const ROLE_SCREENS: Record<UserRole, Set<ScreenId>> = {
     SCREENS.LOGIN, SCREENS.SIGNUP, SCREENS.FORGOT, SCREENS.RESET,
     SCREENS.VERIFY_EMAIL, SCREENS.MFA,
     SCREENS.HOME_PUBLIC,
-    SCREENS.DOC_UPLOAD, SCREENS.DOC_PROCESSING, SCREENS.DOC_RESULTS,
+    SCREENS.DOC_UPLOAD, SCREENS.DOC_PROCESSING, SCREENS.DOC_RESULTS, SCREENS.DOC_HISTORY,
     SCREENS.FORMS_LIBRARY, SCREENS.FORM_DETAIL,
     SCREENS.SETTINGS,
     SCREENS.REALTIME_SESSION, // guests enter via JoinRoomScreen (room-code auth)
@@ -69,7 +70,7 @@ const ROLE_SCREENS: Record<UserRole, Set<ScreenId>> = {
     SCREENS.VERIFY_EMAIL, SCREENS.MFA,
     SCREENS.HOME_OFFICIAL,
     SCREENS.REALTIME_SETUP, SCREENS.REALTIME_LOBBY, SCREENS.REALTIME_SESSION,
-    SCREENS.DOC_UPLOAD, SCREENS.DOC_PROCESSING, SCREENS.DOC_RESULTS,
+    SCREENS.DOC_UPLOAD, SCREENS.DOC_PROCESSING, SCREENS.DOC_RESULTS, SCREENS.DOC_HISTORY,
     SCREENS.FORMS_LIBRARY, SCREENS.FORM_DETAIL,
     SCREENS.SETTINGS,
   ]),
@@ -79,6 +80,7 @@ const ROLE_SCREENS: Record<UserRole, Set<ScreenId>> = {
     SCREENS.VERIFY_EMAIL, SCREENS.MFA,
     SCREENS.HOME_INTERPRETER,
     SCREENS.INTERPRETER_REVIEW,
+    SCREENS.DOC_UPLOAD, SCREENS.DOC_PROCESSING, SCREENS.DOC_RESULTS, SCREENS.DOC_HISTORY,
     SCREENS.FORMS_LIBRARY, SCREENS.FORM_DETAIL,
     SCREENS.SETTINGS,
   ]),
@@ -236,6 +238,7 @@ function ProtectedApp() {
       case SCREENS.DOC_UPLOAD:         return <DocUpload onNav={onNav} />
       case SCREENS.DOC_PROCESSING:     return <DocProcessing onNav={onNav} />
       case SCREENS.DOC_RESULTS:        return <DocResults onNav={onNav} />
+      case SCREENS.DOC_HISTORY:        return <DocHistory onNav={onNav} />
       // Forms
       case SCREENS.FORMS_LIBRARY:      return <FormsLibrary onNav={onNav} />
       case SCREENS.FORM_DETAIL:        return <FormDetail onNav={onNav} />

@@ -425,8 +425,10 @@ async def join_room(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room code not found.")
 
     # ── 2. Validate phase and expiry ──────────────────────────────────────────
-    if rt_request.phase != "waiting":
-        # 409 covers both 'active' (already joined) and 'ended' (session over)
+    if rt_request.phase not in ("waiting", "joining"):
+        # 'joining' means a JWT was issued but the WebSocket never connected
+        # (e.g. guest refreshed the page) — allow re-join so they can retry.
+        # 409 covers 'active' (already in session) and 'ended' (session over).
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Room is not available for joining (phase='{rt_request.phase}').",

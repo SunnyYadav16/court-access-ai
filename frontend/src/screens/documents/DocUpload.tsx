@@ -32,17 +32,20 @@ function validateFile(file: File): string | null {
 
 interface Props { onNav: (s: ScreenId) => void }
 
+type Stage = "idle" | "uploading" | "finalizing" | "done"
+
 export default function DocUpload({ onNav }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const setDocumentSession = useAuthStore((s) => s.setDocumentSession)
 
-  // Local state
-  const [file, setFile]                   = useState<File | null>(null)
+  const [file, setFile]                     = useState<File | null>(null)
   const [targetLanguage, setTargetLanguage] = useState<"es" | "pt">("es")
-  const [uploading, setUploading]         = useState(false)
+  const [stage, setStage]                   = useState<Stage>("idle")
   const [uploadProgress, setUploadProgress] = useState(0)
-  const [error, setError]                 = useState<string | null>(null)
-  const [dragOver, setDragOver]           = useState(false)
+  const [error, setError]                   = useState<string | null>(null)
+  const [dragOver, setDragOver]             = useState(false)
+
+  const busy = stage === "uploading" || stage === "finalizing"
 
   // ── File selection ──────────────────────────────────────────────────────────
 
@@ -85,12 +88,16 @@ export default function DocUpload({ onNav }: Props) {
       setError("Please select a file before uploading.")
       return
     }
-    setUploading(true)
+    setStage("uploading")
     setUploadProgress(0)
     setError(null)
 
     try {
-      const resp = await documentsApi.upload(file, targetLanguage, null, setUploadProgress)
+      const resp = await documentsApi.upload(file, targetLanguage, null, (pct) => {
+        setUploadProgress(pct)
+        if (pct >= 100) setStage("finalizing")
+      })
+      setStage("done")
       setDocumentSession({ sessionId: resp.session_id, targetLanguage: resp.target_language })
       onNav(SCREENS.DOC_PROCESSING)
     } catch (err: unknown) {
@@ -98,7 +105,7 @@ export default function DocUpload({ onNav }: Props) {
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
         "Upload failed. Please try again."
       setError(msg)
-      setUploading(false)
+      setStage("idle")
     }
   }
 
@@ -143,7 +150,7 @@ export default function DocUpload({ onNav }: Props) {
 
             {/* Drop zone */}
             <div
-              onClick={() => !uploading && inputRef.current?.click()}
+              onClick={() => !busy && inputRef.current?.click()}
               onDrop={onDrop}
               onDragOver={onDragOver}
               onDragLeave={onDragLeave}
@@ -151,7 +158,7 @@ export default function DocUpload({ onNav }: Props) {
               style={{
                 border: `2px dashed ${dragOver ? "#0B1D3A" : file ? "#22C55E" : "#E2E6EC"}`,
                 background: dragOver ? "#F0F4FF" : "transparent",
-                cursor: uploading ? "not-allowed" : "pointer",
+                cursor: busy ? "not-allowed" : "pointer",
               }}
             >
               <div className="text-4xl mb-2">{file ? "📄" : "📂"}</div>
@@ -164,7 +171,7 @@ export default function DocUpload({ onNav }: Props) {
                   <p className="text-xs" style={{ color: "#8494A7" }}>
                     {(file.size / 1024 / 1024).toFixed(2)} MB · {langLabel}
                   </p>
-                  {!uploading && (
+                  {!busy && (
                     <button
                       onClick={(e) => { e.stopPropagation(); setFile(null) }}
                       className="mt-2 text-xs underline"
@@ -190,8 +197,8 @@ export default function DocUpload({ onNav }: Props) {
               )}
             </div>
 
-            {/* Upload progress bar — shown only while uploading */}
-            {uploading && (
+            {/* Upload progress bar — shown while bytes are in flight */}
+            {stage === "uploading" && (
               <div>
                 <div className="flex justify-between text-xs mb-1" style={{ color: "#4A5568" }}>
                   <span>Uploading…</span>
@@ -209,6 +216,22 @@ export default function DocUpload({ onNav }: Props) {
               </div>
             )}
 
+            {/* Finalizing state — upload done, server still processing */}
+            {stage === "finalizing" && (
+              <div className="flex items-center gap-3 text-sm" style={{ color: "#4A5568" }}>
+                <svg
+                  className="animate-spin h-4 w-4 flex-shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  style={{ color: "#0B1D3A" }}
+                >
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                Finalizing upload…
+              </div>
+            )}
+
             {/* Language selector */}
             <div>
               <label
@@ -222,7 +245,7 @@ export default function DocUpload({ onNav }: Props) {
                 id="target-language-select"
                 value={targetLanguage}
                 onChange={(e) => setTargetLanguage(e.target.value as "es" | "pt")}
-                disabled={uploading}
+                disabled={busy}
                 className="w-full px-3 py-2.5 rounded-md text-sm"
                 style={{ border: "1.5px solid #E2E6EC", color: "#1A2332", background: "#fff" }}
               >
@@ -242,11 +265,15 @@ export default function DocUpload({ onNav }: Props) {
             <Button
               id="upload-translate-btn"
               className="w-full cursor-pointer"
-              style={{ background: uploading ? "#4A5568" : "#0B1D3A" }}
-              disabled={uploading}
+              style={{ background: busy ? "#4A5568" : "#0B1D3A" }}
+              disabled={busy}
               onClick={handleUpload}
             >
-              {uploading ? `Uploading… ${uploadProgress}%` : "🔄 Upload and Translate"}
+              {stage === "finalizing"
+                ? "Finalizing…"
+                : stage === "uploading"
+                ? `Uploading… ${uploadProgress}%`
+                : "🔄 Upload and Translate"}
             </Button>
 
           </CardContent>

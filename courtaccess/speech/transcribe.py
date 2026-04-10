@@ -53,10 +53,10 @@ class ASRService:
         torch and faster_whisper are imported here so that the module can be
         imported without them installed (USE_REAL_SPEECH=false path).
         """
-        import torch
+        import ctranslate2
         from faster_whisper import WhisperModel
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        device = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
         compute_type = "int8_float16" if device == "cuda" else "int8"
         s = get_settings()
         model_path = s.whisper_model_path
