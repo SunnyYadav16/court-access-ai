@@ -7,8 +7,15 @@ Covers:
   - task_validate_upload: bad DOCX magic bytes → AirflowFailException; valid
       DOCX → meta returned + XCom pushed; session marked 'processing';
       filename path-traversal sanitised; nllb_target defaults correctly
-  - task_finalize: processing_time_seconds computed; invalid start_time → None;
-      sessions / requests updated with status=completed
+  - task_finalize (user-upload path): processing_time_seconds computed;
+      invalid start_time → None; sessions / requests updated with status=completed
+  - task_finalize (pretranslation path, form_id in conf):
+      _update_session/_update_request NOT called; catalog updated via
+      update_form_version_translations_sync for ES and PT; form not found →
+      logged warning, no crash; catalog update failure → logged warning, no crash
+  - task_upload_to_gcs (pretranslation path, form_id in conf):
+      uploads to GCS_BUCKET_FORMS canonical path; signed_url=None in result;
+      _update_request NOT called; form not found → RuntimeError raised
   - _on_dag_failure: writes failed status to session and request
 """
 
@@ -311,3 +318,471 @@ def test_on_dag_failure_graceful_no_conf(monkeypatch) -> None:
     }
     # Must not raise
     dag_mod._on_dag_failure(ctx)
+
+
+# ===========================================================================
+# task_upload_to_gcs — pretranslation path (form_id in conf)
+# ===========================================================================
+
+_FORM_ID = str(uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"))
+_FORM_SLUG = "petition-for-custody"
+_FORM_VERSION = 3
+
+
+def _make_upload_context(
+    form_id: str | None = None,
+    target_lang: str = "es",
+    output_path: str = "/tmp/output_es.docx",
+) -> dict:
+    """Build a context suitable for task_upload_to_gcs tests."""
+    from dags.tests.conftest import _make_context
+
+    conf = {}
+    if form_id:
+        conf["form_id"] = form_id
+    ctx = _make_context(conf=conf)
+
+    meta = {
+        "session_id": _SESSION_ID,
+        "request_id": _REQUEST_ID,
+        "target_lang": target_lang,
+    }
+
+    def _pull(task_ids, key):
+        if task_ids == "validate_upload" and key == "upload_meta":
+            return meta
+        if task_ids == "translate_docx" and key == "output_path":
+            return output_path
+        return None
+
+    ctx["ti"].xcom_pull = MagicMock(side_effect=_pull)
+    return ctx
+
+
+def _mock_orm_form(slug: str = _FORM_SLUG, version: int = _FORM_VERSION) -> MagicMock:
+    """Return a mock ORM form object with one version."""
+    mock_ver = MagicMock()
+    mock_ver.version = version
+    mock_ver.file_path_es = None
+    mock_ver.file_path_pt = None
+    mock_ver.file_type_es = None
+    mock_ver.file_type_pt = None
+
+    mock_form = MagicMock()
+    mock_form.form_slug = slug
+    mock_form.versions = [mock_ver]
+    return mock_form
+
+
+def _patch_upload_to_gcs_pretrans(monkeypatch, mock_form):
+    """Patch all external calls for pretranslation upload path."""
+    monkeypatch.setattr(f"{_PATCH_BASE}._write_step", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}._update_request", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        f"{_PATCH_BASE}.gcs.parse_gcs_uri", lambda uri: ("test-forms", uri.split("gs://test-forms/")[1])
+    )
+    monkeypatch.setattr(f"{_PATCH_BASE}.gcs.upload_file", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}.gcs.generate_signed_url", lambda *a, **kw: "https://signed.url")
+    monkeypatch.setattr(f"{_PATCH_BASE}.get_sync_engine", lambda: MagicMock())
+
+    from unittest.mock import patch
+
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session_ctx)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch(f"{_PATCH_BASE}.Session", return_value=session_ctx),
+        patch(f"{_PATCH_BASE}.form_queries.get_form_by_id_sync", return_value=mock_form),
+    ):
+        yield
+
+
+def test_upload_to_gcs_pretrans_uses_catalog_bucket(monkeypatch) -> None:
+    """Pretranslation path must use the canonical catalog path (slug/version/lang)."""
+    monkeypatch.setattr(f"{_PATCH_BASE}._write_step", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}._update_request", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}.gcs.parse_gcs_uri", lambda uri: ("bucket", "blob"))
+    monkeypatch.setattr(f"{_PATCH_BASE}.gcs.upload_file", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}.get_sync_engine", lambda: MagicMock())
+
+    from unittest.mock import patch
+
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session_ctx)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_form = _mock_orm_form()
+
+    with (
+        patch(f"{_PATCH_BASE}.Session", return_value=session_ctx),
+        patch(f"{_PATCH_BASE}.form_queries.get_form_by_id_sync", return_value=mock_form),
+    ):
+        ctx = _make_upload_context(form_id=_FORM_ID, target_lang="es")
+        result = dag_mod.task_upload_to_gcs(**ctx)
+
+    # GCS URI must follow the canonical catalog path pattern:
+    # gs://<GCS_BUCKET_FORMS>/forms/<slug>/v<version>/<slug>_<lang>.docx
+    assert _FORM_SLUG in result["gcs_uri"]
+    assert f"v{_FORM_VERSION}" in result["gcs_uri"]
+    assert "_es.docx" in result["gcs_uri"]
+    # Must NOT use the translated-documents bucket (user-upload path)
+    assert "translated" not in result["gcs_uri"]
+
+
+def test_upload_to_gcs_pretrans_signed_url_is_none(monkeypatch) -> None:
+    """Pretranslation path must not generate a signed URL (returns None)."""
+    monkeypatch.setattr(f"{_PATCH_BASE}._write_step", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}._update_request", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}.gcs.parse_gcs_uri", lambda uri: ("test-forms", "blob"))
+    monkeypatch.setattr(f"{_PATCH_BASE}.gcs.upload_file", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}.get_sync_engine", lambda: MagicMock())
+
+    from unittest.mock import patch
+
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session_ctx)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_form = _mock_orm_form()
+
+    with (
+        patch(f"{_PATCH_BASE}.Session", return_value=session_ctx),
+        patch(f"{_PATCH_BASE}.form_queries.get_form_by_id_sync", return_value=mock_form),
+    ):
+        ctx = _make_upload_context(form_id=_FORM_ID, target_lang="es")
+        result = dag_mod.task_upload_to_gcs(**ctx)
+
+    assert result["signed_url"] is None
+    assert result["signed_url_expires_at"] is None
+
+
+def test_upload_to_gcs_pretrans_does_not_call_update_request(monkeypatch) -> None:
+    """Pretranslation path must NOT call _update_request (no request row in DB)."""
+    update_request_calls = []
+    monkeypatch.setattr(f"{_PATCH_BASE}._write_step", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}._update_request", lambda *a, **kw: update_request_calls.append(a))
+    monkeypatch.setattr(f"{_PATCH_BASE}.gcs.parse_gcs_uri", lambda uri: ("test-forms", "blob"))
+    monkeypatch.setattr(f"{_PATCH_BASE}.gcs.upload_file", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}.get_sync_engine", lambda: MagicMock())
+
+    from unittest.mock import patch
+
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session_ctx)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_form = _mock_orm_form()
+
+    with (
+        patch(f"{_PATCH_BASE}.Session", return_value=session_ctx),
+        patch(f"{_PATCH_BASE}.form_queries.get_form_by_id_sync", return_value=mock_form),
+    ):
+        ctx = _make_upload_context(form_id=_FORM_ID)
+        dag_mod.task_upload_to_gcs(**ctx)
+
+    assert len(update_request_calls) == 0
+
+
+def test_upload_to_gcs_pretrans_form_not_found_raises(monkeypatch) -> None:
+    """Pretranslation path: form_id not found in DB must raise RuntimeError."""
+    monkeypatch.setattr(f"{_PATCH_BASE}._write_step", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}._update_request", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}.gcs.upload_file", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}.get_sync_engine", lambda: MagicMock())
+
+    from unittest.mock import patch
+
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session_ctx)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch(f"{_PATCH_BASE}.Session", return_value=session_ctx),
+        patch(f"{_PATCH_BASE}.form_queries.get_form_by_id_sync", return_value=None),
+    ):
+        ctx = _make_upload_context(form_id=_FORM_ID)
+        with pytest.raises(RuntimeError, match="could not resolve slug/version"):
+            dag_mod.task_upload_to_gcs(**ctx)
+
+
+def test_upload_to_gcs_pretrans_pushes_gcs_result_xcom(monkeypatch) -> None:
+    """Pretranslation path must push gcs_result to XCom."""
+    monkeypatch.setattr(f"{_PATCH_BASE}._write_step", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}._update_request", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}.gcs.parse_gcs_uri", lambda uri: ("test-forms", "blob"))
+    monkeypatch.setattr(f"{_PATCH_BASE}.gcs.upload_file", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}.get_sync_engine", lambda: MagicMock())
+
+    from unittest.mock import patch
+
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session_ctx)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_form = _mock_orm_form()
+
+    with (
+        patch(f"{_PATCH_BASE}.Session", return_value=session_ctx),
+        patch(f"{_PATCH_BASE}.form_queries.get_form_by_id_sync", return_value=mock_form),
+    ):
+        ctx = _make_upload_context(form_id=_FORM_ID)
+        dag_mod.task_upload_to_gcs(**ctx)
+
+    ctx["ti"].xcom_push.assert_called_once()
+    assert ctx["ti"].xcom_push.call_args.kwargs.get("key") == "gcs_result"
+
+
+# ===========================================================================
+# task_finalize — pretranslation path (form_id in conf)
+# ===========================================================================
+
+
+def _make_finalize_pretrans_context(
+    form_id: str | None = _FORM_ID,
+    target_lang: str = "es",
+    gcs_uri: str = "gs://test-forms/forms/petition-for-custody/v3/petition-for-custody_es.docx",
+    start_time: str | None = None,
+) -> dict:
+    from dags.tests.conftest import _make_context
+
+    conf = {}
+    if form_id:
+        conf["form_id"] = form_id
+    ctx = _make_context(conf=conf)
+
+    meta = {
+        "session_id": _SESSION_ID,
+        "request_id": _REQUEST_ID,
+        "target_lang": target_lang,
+        "start_time": start_time or (datetime.now(tz=UTC) - timedelta(seconds=20)).isoformat(),
+    }
+    translate_summary = {"llama_corrections_count": 1, "total_runs": 10, "translated_runs": 9}
+    gcs_result = {"gcs_uri": gcs_uri}
+
+    def _pull(task_ids, key):
+        if task_ids == "validate_upload" and key == "upload_meta":
+            return meta
+        if task_ids == "translate_docx" and key == "translate_summary":
+            return translate_summary
+        if task_ids == "upload_to_gcs" and key == "gcs_result":
+            return gcs_result
+        return None
+
+    ctx["ti"].xcom_pull = MagicMock(side_effect=_pull)
+    return ctx
+
+
+def test_finalize_pretrans_skips_update_session(monkeypatch) -> None:
+    """Pretranslation path must NOT call _update_session (no session row for catalog runs)."""
+    session_calls = []
+    monkeypatch.setattr(f"{_PATCH_BASE}._update_session", lambda *a, **kw: session_calls.append(a))
+    monkeypatch.setattr(f"{_PATCH_BASE}._update_request", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}.get_sync_engine", lambda: MagicMock())
+
+    from unittest.mock import patch
+
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session_ctx)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_form = _mock_orm_form()
+
+    with (
+        patch(f"{_PATCH_BASE}.Session", return_value=session_ctx),
+        patch(f"{_PATCH_BASE}.form_queries.get_form_by_id_sync", return_value=mock_form),
+        patch(f"{_PATCH_BASE}.form_queries.update_form_version_translations_sync"),
+    ):
+        ctx = _make_finalize_pretrans_context()
+        dag_mod.task_finalize(**ctx)
+
+    assert len(session_calls) == 0
+
+
+def test_finalize_pretrans_skips_update_request(monkeypatch) -> None:
+    """Pretranslation path must NOT call _update_request (no request row for catalog runs)."""
+    request_calls = []
+    monkeypatch.setattr(f"{_PATCH_BASE}._update_session", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}._update_request", lambda *a, **kw: request_calls.append(a))
+    monkeypatch.setattr(f"{_PATCH_BASE}.get_sync_engine", lambda: MagicMock())
+
+    from unittest.mock import patch
+
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session_ctx)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_form = _mock_orm_form()
+
+    with (
+        patch(f"{_PATCH_BASE}.Session", return_value=session_ctx),
+        patch(f"{_PATCH_BASE}.form_queries.get_form_by_id_sync", return_value=mock_form),
+        patch(f"{_PATCH_BASE}.form_queries.update_form_version_translations_sync"),
+    ):
+        ctx = _make_finalize_pretrans_context()
+        dag_mod.task_finalize(**ctx)
+
+    assert len(request_calls) == 0
+
+
+def test_finalize_pretrans_updates_catalog_with_es_uri(monkeypatch) -> None:
+    """Pretranslation path (ES) must call update_form_version_translations_sync with file_path_es set."""
+    monkeypatch.setattr(f"{_PATCH_BASE}._update_session", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}._update_request", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}.get_sync_engine", lambda: MagicMock())
+
+    from unittest.mock import patch
+
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session_ctx)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_form = _mock_orm_form()
+    catalog_calls = []
+
+    def _fake_update(session, form_id, version, **kwargs):
+        catalog_calls.append({"form_id": form_id, "version": version, **kwargs})
+
+    with (
+        patch(f"{_PATCH_BASE}.Session", return_value=session_ctx),
+        patch(f"{_PATCH_BASE}.form_queries.get_form_by_id_sync", return_value=mock_form),
+        patch(f"{_PATCH_BASE}.form_queries.update_form_version_translations_sync", side_effect=_fake_update),
+    ):
+        gcs_uri = "gs://test-forms/forms/petition-for-custody/v3/petition-for-custody_es.docx"
+        ctx = _make_finalize_pretrans_context(target_lang="es", gcs_uri=gcs_uri)
+        dag_mod.task_finalize(**ctx)
+
+    assert len(catalog_calls) == 1
+    assert catalog_calls[0]["file_path_es"] == gcs_uri
+    assert catalog_calls[0]["file_type_es"] == "docx"
+    # PT fields must be preserved (None in this case — form has no existing PT)
+    assert catalog_calls[0]["file_path_pt"] is None
+
+
+def test_finalize_pretrans_updates_catalog_with_pt_uri(monkeypatch) -> None:
+    """Pretranslation path (PT) must call update_form_version_translations_sync with file_path_pt set."""
+    monkeypatch.setattr(f"{_PATCH_BASE}._update_session", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}._update_request", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}.get_sync_engine", lambda: MagicMock())
+
+    from unittest.mock import patch
+
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session_ctx)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_form = _mock_orm_form()
+    catalog_calls = []
+
+    def _fake_update(session, form_id, version, **kwargs):
+        catalog_calls.append({"form_id": form_id, "version": version, **kwargs})
+
+    with (
+        patch(f"{_PATCH_BASE}.Session", return_value=session_ctx),
+        patch(f"{_PATCH_BASE}.form_queries.get_form_by_id_sync", return_value=mock_form),
+        patch(f"{_PATCH_BASE}.form_queries.update_form_version_translations_sync", side_effect=_fake_update),
+    ):
+        gcs_uri = "gs://test-forms/forms/petition-for-custody/v3/petition-for-custody_pt.docx"
+        ctx = _make_finalize_pretrans_context(target_lang="pt", gcs_uri=gcs_uri)
+        dag_mod.task_finalize(**ctx)
+
+    assert len(catalog_calls) == 1
+    assert catalog_calls[0]["file_path_pt"] == gcs_uri
+    assert catalog_calls[0]["file_type_pt"] == "docx"
+    assert catalog_calls[0]["file_path_es"] is None
+
+
+def test_finalize_pretrans_preserves_existing_es_when_running_pt(monkeypatch) -> None:
+    """PT run must preserve the existing ES path in the catalog update."""
+    monkeypatch.setattr(f"{_PATCH_BASE}._update_session", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}._update_request", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}.get_sync_engine", lambda: MagicMock())
+
+    from unittest.mock import patch
+
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session_ctx)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+
+    # Form already has an ES path
+    mock_form = _mock_orm_form()
+    existing_es = "gs://test-forms/forms/petition-for-custody/v3/petition-for-custody_es.docx"
+    mock_form.versions[0].file_path_es = existing_es
+    mock_form.versions[0].file_type_es = "docx"
+
+    catalog_calls = []
+
+    def _fake_update(session, form_id, version, **kwargs):
+        catalog_calls.append(kwargs)
+
+    with (
+        patch(f"{_PATCH_BASE}.Session", return_value=session_ctx),
+        patch(f"{_PATCH_BASE}.form_queries.get_form_by_id_sync", return_value=mock_form),
+        patch(f"{_PATCH_BASE}.form_queries.update_form_version_translations_sync", side_effect=_fake_update),
+    ):
+        pt_uri = "gs://test-forms/forms/petition-for-custody/v3/petition-for-custody_pt.docx"
+        ctx = _make_finalize_pretrans_context(target_lang="pt", gcs_uri=pt_uri)
+        dag_mod.task_finalize(**ctx)
+
+    assert catalog_calls[0]["file_path_es"] == existing_es
+    assert catalog_calls[0]["file_type_es"] == "docx"
+
+
+def test_finalize_pretrans_form_not_found_does_not_crash(monkeypatch) -> None:
+    """form_id not in DB must log a warning and return normally — never crash finalize."""
+    monkeypatch.setattr(f"{_PATCH_BASE}._update_session", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}._update_request", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}.get_sync_engine", lambda: MagicMock())
+
+    from unittest.mock import patch
+
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session_ctx)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch(f"{_PATCH_BASE}.Session", return_value=session_ctx),
+        patch(f"{_PATCH_BASE}.form_queries.get_form_by_id_sync", return_value=None),
+    ):
+        ctx = _make_finalize_pretrans_context()
+        result = dag_mod.task_finalize(**ctx)  # must not raise
+
+    assert result["finalized"] is True
+
+
+def test_finalize_pretrans_catalog_exception_does_not_abort(monkeypatch) -> None:
+    """Catalog update failure must be swallowed — finalize must return normally."""
+    monkeypatch.setattr(f"{_PATCH_BASE}._update_session", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}._update_request", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}.get_sync_engine", lambda: MagicMock())
+
+    from unittest.mock import patch
+
+    session_ctx = MagicMock()
+    session_ctx.__enter__ = MagicMock(return_value=session_ctx)
+    session_ctx.__exit__ = MagicMock(return_value=False)
+    mock_form = _mock_orm_form()
+
+    with (
+        patch(f"{_PATCH_BASE}.Session", return_value=session_ctx),
+        patch(f"{_PATCH_BASE}.form_queries.get_form_by_id_sync", return_value=mock_form),
+        patch(
+            f"{_PATCH_BASE}.form_queries.update_form_version_translations_sync",
+            side_effect=Exception("DB connection lost"),
+        ),
+    ):
+        ctx = _make_finalize_pretrans_context()
+        result = dag_mod.task_finalize(**ctx)  # must not raise
+
+    assert result["finalized"] is True
+
+
+def test_finalize_pretrans_no_gcs_uri_skips_catalog_update(monkeypatch) -> None:
+    """If gcs_result has no URI, catalog update must be skipped without crash."""
+    monkeypatch.setattr(f"{_PATCH_BASE}._update_session", lambda *a, **kw: None)
+    monkeypatch.setattr(f"{_PATCH_BASE}._update_request", lambda *a, **kw: None)
+
+    from unittest.mock import patch
+
+    catalog_calls = []
+    with patch(
+        f"{_PATCH_BASE}.form_queries.update_form_version_translations_sync",
+        side_effect=lambda *a, **kw: catalog_calls.append(1),
+    ):
+        ctx = _make_finalize_pretrans_context(gcs_uri="")
+        result = dag_mod.task_finalize(**ctx)
+
+    assert result["finalized"] is True
+    assert len(catalog_calls) == 0
