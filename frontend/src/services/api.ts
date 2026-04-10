@@ -80,39 +80,59 @@ export interface DocumentListResponse {
 export interface FormListParams {
   q?: string;
   division?: string;
-  language?: string;
+  language?: "es" | "pt";
   status?: string;
   page?: number;
   page_size?: number;
 }
 
-export interface Form {
+export interface FormAppearanceResponse {
+  appearance_id: string;
   form_id: string;
-  name: string;
   division: string;
-  available_languages: string[];
-  status: string;
+  section_heading: string;
+}
+
+export interface FormVersionResponse {
+  version_id: string;
+  form_id: string;
+  version: number;
+  content_hash: string;
+  file_type: string;
+  file_path_original: string;
+  file_path_es: string | null;
+  file_path_pt: string | null;
+  signed_url_original: string | null;
+  signed_url_es: string | null;
+  signed_url_pt: string | null;
+  file_type_es: string | null;
+  file_type_pt: string | null;
   created_at: string;
-  updated_at: string;
+}
+
+export interface FormResponse {
+  form_id: string;
+  form_name: string;
+  form_slug: string;
+  source_url: string;
+  file_type: string;
+  status: string;
+  content_hash: string;
+  current_version: number;
+  needs_human_review: boolean;
+  preprocessing_flags: unknown[] | null;
+  created_at: string;
+  last_scraped_at: string | null;
+  versions: FormVersionResponse[];
+  appearances: FormAppearanceResponse[];
 }
 
 export interface FormListResponse {
-  forms: Form[];
+  items: FormResponse[];
   total: number;
   page: number;
   page_size: number;
-}
-
-export interface FormDetail extends Form {
-  description?: string;
-  reviewer_notes?: string;
-  file_urls: Record<string, string>;
-}
-
-export interface Division {
-  division_id: string;
-  name: string;
-  description?: string;
+  filters_applied: Record<string, string>;
 }
 
 export interface ReviewResponse {
@@ -264,12 +284,12 @@ export const formsApi = {
     api.get<FormListResponse>("/forms/", { params }).then((r) => r.data),
 
   /** Get a single form by ID. */
-  get: (formId: string): Promise<FormDetail> =>
-    api.get<FormDetail>(`/forms/${formId}`).then((r) => r.data),
+  get: (formId: string): Promise<FormResponse> =>
+    api.get<FormResponse>(`/forms/${formId}`).then((r) => r.data),
 
   /** List all court divisions. */
-  divisions: (): Promise<Division[]> =>
-    api.get<Division[]>("/forms/divisions").then((r) => r.data),
+  divisions: (): Promise<string[]> =>
+    api.get<string[]>("/forms/divisions").then((r) => r.data),
 
   /**
    * Submit a human review decision.
