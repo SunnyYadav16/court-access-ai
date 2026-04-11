@@ -13,7 +13,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import useRealtimeStore from "@/store/realtimeStore"
+import useRealtimeStore, { type ChatMessage } from "@/store/realtimeStore"
 import { useRealtimeWebSocket } from "@/hooks/useRealtimeWebSocket"
 import { useAudioCapture } from "@/hooks/useAudioCapture"
 import { useTtsPlayback } from "@/hooks/useTtsPlayback"
@@ -63,23 +63,119 @@ const STATE_CONFIG: Record<
   ended:        { ring: "#475569", label: "Session ended",      sublabel: "Thank you", pulse: false, spin: false },
 }
 
-// ── Orb component ─────────────────────────────────────────────────────────────
+// ── Guest message bubbles ─────────────────────────────────────────────────────
 
-function AudioOrb({ state }: { state: AudioState }) {
-  const cfg = STATE_CONFIG[state]
+function GuestMessageBubble({
+  msg,
+  myName,
+  partnerName,
+}: {
+  msg: ChatMessage
+  myName: string
+  partnerName: string
+}) {
+  const isSelf = msg.speaker === "self"
+  const displayText = isSelf
+    ? msg.text
+    : (msg.verifiedTranslation ?? msg.translation ?? msg.text)
+  const subText = isSelf ? msg.translation : msg.text
+  const subLabel = isSelf ? "Sent as" : "Original"
+  const speakerLabel = isSelf ? (myName || "You") : (partnerName || "Court Official")
 
   return (
-    <div className="relative flex items-center justify-center" style={{ width: 200, height: 200 }}>
+    <div className={`flex flex-col ${isSelf ? "items-end" : "items-start"} gap-1`}>
+      <div className="flex items-center gap-2 px-1">
+        <span className="text-[11px] font-semibold" style={{ color: "rgba(255,255,255,0.5)" }}>
+          {speakerLabel}
+        </span>
+        <span className="text-[10px]" style={{ color: "rgba(255,255,255,0.25)" }}>
+          {msg.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+        </span>
+      </div>
+      <div
+        className="max-w-xs px-3 py-2 text-sm leading-relaxed"
+        style={{
+          background: isSelf ? "rgba(99,102,241,0.14)" : "rgba(34,197,94,0.1)",
+          borderRadius: isSelf ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
+          color: "rgba(255,255,255,0.92)",
+        }}
+      >
+        {displayText}
+      </div>
+      {subText && (
+        <div
+          className="max-w-xs px-2 text-[11px] leading-relaxed"
+          style={{ color: "rgba(255,255,255,0.35)" }}
+        >
+          <span style={{ color: "rgba(255,255,255,0.2)" }}>{subLabel}: </span>
+          {subText}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function GuestPartialBubble({
+  partial,
+  myName,
+  partnerName,
+}: {
+  partial: { speaker: "self" | "partner"; text: string; translation?: string }
+  myName: string
+  partnerName: string
+}) {
+  const isSelf = partial.speaker === "self"
+  const speakerLabel = isSelf ? (myName || "You") : (partnerName || "Court Official")
+  const displayText = isSelf ? partial.text : (partial.translation ?? partial.text)
+
+  return (
+    <div className={`flex flex-col ${isSelf ? "items-end" : "items-start"} gap-1`}>
+      <div className="flex items-center gap-2 px-1">
+        <span className="text-[11px] font-semibold" style={{ color: "rgba(255,255,255,0.4)" }}>
+          {speakerLabel}
+        </span>
+        <span className="blink-dot" />
+        <span className="text-[10px]" style={{ color: "rgba(255,255,255,0.3)" }}>speaking</span>
+      </div>
+      <div
+        className="max-w-xs px-3 py-2 text-sm leading-relaxed"
+        style={{
+          background: isSelf ? "rgba(99,102,241,0.07)" : "rgba(34,197,94,0.05)",
+          borderRadius: isSelf ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
+          border: "1px dashed rgba(255,255,255,0.1)",
+          color: "rgba(255,255,255,0.6)",
+        }}
+      >
+        {displayText}
+      </div>
+    </div>
+  )
+}
+
+// ── Orb component ─────────────────────────────────────────────────────────────
+
+function AudioOrb({ state, compact = false }: { state: AudioState; compact?: boolean }) {
+  const cfg = STATE_CONFIG[state]
+  const size = compact ? 90 : 200
+  const midSize = compact ? 72 : 160
+  const innerSize = compact ? 54 : 120
+
+  return (
+    <div
+      className="relative flex items-center justify-center"
+      style={{ width: size, height: size, transition: "width 0.3s ease, height 0.3s ease" }}
+    >
       {/* Outer pulse ring */}
       {cfg.pulse && (
         <div
           className="absolute rounded-full"
           style={{
-            width: 200,
-            height: 200,
+            width: size,
+            height: size,
             border: `2px solid ${cfg.ring}`,
             opacity: 0.3,
             animation: "guestPulseOuter 2s ease-in-out infinite",
+            transition: "width 0.3s ease, height 0.3s ease",
           }}
         />
       )}
@@ -87,8 +183,8 @@ function AudioOrb({ state }: { state: AudioState }) {
       <div
         className="absolute rounded-full"
         style={{
-          width: 160,
-          height: 160,
+          width: midSize,
+          height: midSize,
           border: `2px solid ${cfg.ring}`,
           opacity: 0.5,
           animation: cfg.pulse
@@ -96,14 +192,15 @@ function AudioOrb({ state }: { state: AudioState }) {
             : cfg.spin
               ? "guestSpin 1.4s linear infinite"
               : undefined,
+          transition: "width 0.3s ease, height 0.3s ease",
         }}
       />
       {/* Inner orb */}
       <div
         className="relative flex items-center justify-center rounded-full"
         style={{
-          width: 120,
-          height: 120,
+          width: innerSize,
+          height: innerSize,
           background: `radial-gradient(circle at 35% 35%, ${cfg.ring}55, ${cfg.ring}22)`,
           border: `2.5px solid ${cfg.ring}88`,
           boxShadow: `0 0 ${cfg.pulse || state === "you_speaking" ? "40px" : "20px"} ${cfg.ring}44`,
@@ -111,9 +208,10 @@ function AudioOrb({ state }: { state: AudioState }) {
             state === "you_speaking"
               ? "guestSpeaking 0.5s ease-in-out infinite alternate"
               : undefined,
+          transition: "width 0.3s ease, height 0.3s ease",
         }}
       >
-        <span className="text-3xl select-none">
+        <span className={`${compact ? "text-xl" : "text-3xl"} select-none`}>
           {state === "connecting"   && "⋯"}
           {state === "waiting"      && "⏳"}
           {state === "your_turn"    && "🎙"}
@@ -144,6 +242,8 @@ export default function GuestSession({ meta, code }: Props) {
   const micLocked     = useRealtimeStore((s) => s.micLocked)
   const isSpeaking    = useRealtimeStore((s) => s.isSpeaking)
   const isPlayingTts  = useRealtimeStore((s) => s.isPlayingTts)
+  const myName        = useRealtimeStore((s) => s.myName)
+  const partner       = useRealtimeStore((s) => s.partner)
   const toggleMute    = useRealtimeStore((s) => s.toggleMute)
   const reset         = useRealtimeStore((s) => s.reset)
   const setMyName     = useRealtimeStore((s) => s.setMyName)
@@ -210,26 +310,10 @@ export default function GuestSession({ meta, code }: Props) {
     return "your_turn"
   }, [sessionPhase, isPlayingTts, micLocked, isSpeaking, isMuted])
 
-  // ── Latest displayable content ────────────────────────────────────────────
-  // Priority: live partial → last committed message
-  const latestDisplay = useMemo((): { text: string; source: "partner" | "self" | "partial" } | null => {
-    if (livePartial) {
-      return {
-        text: livePartial.translation ?? livePartial.text,
-        source: "partial",
-      }
-    }
-    if (messages.length === 0) return null
-    const last = messages[messages.length - 1]
-    if (last.speaker === "partner") {
-      // Show the verified/translated version — this is what the guest should understand
-      return {
-        text: last.verifiedTranslation ?? last.translation ?? last.text,
-        source: "partner",
-      }
-    }
-    // self — show their own transcription as confirmation
-    return { text: last.text, source: "self" }
+  // ── Auto-scroll ────────────────────────────────────────────────────────────
+  const chatEndRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages, livePartial])
 
   // ── Handlers ──────────────────────────────────────────────────────────────
@@ -325,6 +409,9 @@ export default function GuestSession({ meta, code }: Props) {
           from { opacity: 0; transform: translateY(8px); }
           to   { opacity: 1; transform: translateY(0); }
         }
+        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+        .blink-dot { display:inline-block; width:6px; height:6px; border-radius:50%;
+                     background:#ef4444; animation:blink 1s ease-in-out infinite; }
       `}</style>
 
       <div
@@ -378,72 +465,49 @@ export default function GuestSession({ meta, code }: Props) {
           </strong>
         </div>
 
-        {/* ── Center: orb + status ─────────────────────────────────────────── */}
-        <div className="flex-1 flex flex-col items-center justify-center gap-6 px-6">
-          <AudioOrb state={audioState} />
+        {/* ── Main content: compact orb + message history ────────────────── */}
+        <div className="flex-1 flex flex-col overflow-hidden">
 
-          {/* State label */}
-          <div className="text-center">
-            <p
-              className="text-xl font-semibold mb-1"
-              style={{ color: cfg.ring, transition: "color 0.4s ease" }}
-            >
+          {/* Orb area — compact when messages exist */}
+          <div
+            className="flex flex-col items-center py-4 shrink-0 transition-all"
+            style={{ borderBottom: messages.length > 0 || livePartial ? "1px solid rgba(255,255,255,0.06)" : "none" }}
+          >
+            <AudioOrb state={audioState} compact={messages.length > 0 || !!livePartial} />
+            <p className="text-sm font-semibold mt-3" style={{ color: cfg.ring, transition: "color 0.4s ease" }}>
               {cfg.label}
             </p>
-            <p className="text-sm" style={{ color: "rgba(255,255,255,0.35)" }}>
+            <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.35)" }}>
               {cfg.sublabel}
             </p>
           </div>
 
-          {/* ── Latest translated content ──────────────────────────────────── */}
-          {latestDisplay && (
-            <div
-              key={latestDisplay.text.slice(0, 20)} // re-animate on new content
-              className="w-full max-w-md rounded-xl px-5 py-4 text-center"
-              style={{
-                background: latestDisplay.source === "partner"
-                  ? "rgba(34,197,94,0.08)"
-                  : latestDisplay.source === "self"
-                    ? "rgba(99,102,241,0.09)"
-                    : "rgba(255,255,255,0.04)",
-                border: `1px solid ${
-                  latestDisplay.source === "partner"
-                    ? "rgba(34,197,94,0.2)"
-                    : latestDisplay.source === "self"
-                      ? "rgba(99,102,241,0.2)"
-                      : "rgba(255,255,255,0.08)"
-                }`,
-                animation: "guestFadeIn 0.35s ease-out",
-              }}
-            >
-              {/* Label */}
-              <p
-                className="text-[10px] font-semibold uppercase tracking-widest mb-2"
-                style={{
-                  color: latestDisplay.source === "partner"
-                    ? "#22c55e"
-                    : latestDisplay.source === "self"
-                      ? "#a5b4fc"
-                      : "rgba(255,255,255,0.3)",
-                }}
-              >
-                {latestDisplay.source === "partner"
-                  ? "Court Official (translated)"
-                  : latestDisplay.source === "self"
-                    ? "You said"
-                    : "…"}
-              </p>
-              {/* Text */}
-              <p
-                className="text-base leading-relaxed"
-                style={{
-                  color: latestDisplay.source === "partial"
-                    ? "rgba(255,255,255,0.5)"
-                    : "rgba(255,255,255,0.9)",
-                  fontStyle: latestDisplay.source === "partial" ? "italic" : "normal",
-                }}
-              >
-                {latestDisplay.text}
+          {/* Message history — scrollable */}
+          {messages.length > 0 || livePartial ? (
+            <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-4">
+              {messages.map((msg) => (
+                <GuestMessageBubble
+                  key={msg.id}
+                  msg={msg}
+                  myName={myName || meta.partnerName}
+                  partnerName={partner?.name ?? "Court Official"}
+                />
+              ))}
+              {livePartial && (
+                <GuestPartialBubble
+                  partial={livePartial}
+                  myName={myName || meta.partnerName}
+                  partnerName={partner?.name ?? "Court Official"}
+                />
+              )}
+              <div ref={chatEndRef} />
+            </div>
+          ) : (
+            <div className="flex-1 flex items-center justify-center">
+              <p className="text-sm text-center max-w-xs" style={{ color: "rgba(255,255,255,0.3)" }}>
+                {sessionPhase === "waiting"
+                  ? "Waiting for session to start…"
+                  : "Conversation will appear here"}
               </p>
             </div>
           )}

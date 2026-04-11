@@ -28,6 +28,15 @@ export default function FormsLibrary({ onNav }: Props) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  // Read search prefill from admin review navigation
+  useEffect(() => {
+    const prefill = sessionStorage.getItem("forms_search_prefill")
+    if (prefill) {
+      setSearch(prefill)
+      sessionStorage.removeItem("forms_search_prefill")
+    }
+  }, [])
+
   // Non-fatal if it fails — dropdown falls back to "All Divisions" only
   useEffect(() => {
     formsApi.divisions().then(setDivisions).catch(() => {})

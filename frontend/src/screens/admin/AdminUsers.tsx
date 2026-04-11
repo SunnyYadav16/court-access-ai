@@ -55,9 +55,9 @@ export default function AdminUsers({ onNav }: Props) {
     if (!newRole) return
     setSaving(userId)
     try {
-      await adminApi.setUserRole(userId, newRole)
+      const updated = await adminApi.setUserRole(userId, newRole)
       setUsers((prev) =>
-        prev.map((u) => (u.user_id === userId ? { ...u, role: newRole } : u))
+        prev.map((u) => (u.user_id === userId ? { ...u, role: updated.role } : u))
       )
       setEditing((prev) => { const next = { ...prev }; delete next[userId]; return next })
     } catch {

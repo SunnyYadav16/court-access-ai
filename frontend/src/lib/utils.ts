@@ -24,17 +24,18 @@ export function getFirstName(
   return "User"
 }
 
+/** Format an ISO date string to a short readable format (e.g., "Apr 11, 2026"). */
+export function formatDate(dateStr: string | null | undefined): string {
+  if (!dateStr) return "—"
+  return new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+}
+
 /**
  * Extract initials from user name or email
  * @param name - Full name (e.g., "Sunny Yadav" → "SY", "Ana Maria Garcia" → "AM")
  * @param email - Email address (e.g., "sunny@gmail.com" → "S")
  * @returns Initials (max 2 characters, uppercase)
  */
-export function formatDate(dateStr: string | null | undefined): string {
-  if (!dateStr) return "—"
-  return new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-}
-
 export function getInitials(
   name?: string | null,
   email?: string | null

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { ScreenId } from "@/lib/constants"
+import { ScreenId, SCREENS } from "@/lib/constants"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import TopBar from "@/components/shared/TopBar"
@@ -191,9 +191,8 @@ export default function AdminForms({ onNav }: Props) {
                       className="cursor-pointer text-xs"
                       onClick={() => {
                         sessionStorage.setItem("admin_review_form_id", f.form_id)
-                        // Navigate to forms library where the form can be reviewed
                         sessionStorage.setItem("forms_search_prefill", f.form_name)
-                        onNav("FORMS_LIBRARY" as ScreenId)
+                        onNav(SCREENS.FORMS_LIBRARY)
                       }}
                     >
                       Review
