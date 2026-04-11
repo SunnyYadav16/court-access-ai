@@ -256,7 +256,8 @@ export function useRealtimeWebSocket({
 
         case "error":
           setError((msg.message as string) ?? "Unknown error");
-          setPhase("lobby");
+          // Don't force-reset the phase — the error banner renders in context
+          // so the user sees what went wrong without losing their current screen.
           _close();
           break;
       }

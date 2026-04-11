@@ -948,7 +948,16 @@ async def session_websocket(
             return
 
         room_id = room_id_param
-        user_lang = room.language_b
+        # DB-backed rooms: the owner always speaks language_a (en); guests speak
+        # language_b (the LEP language).  Ad-hoc WS-only rooms have no
+        # db_session_id — both participants use language_b as a fallback.
+        is_room_owner = (
+            room.db_session_id is not None
+            and not ws_user.is_guest
+            and room.owner_uid is not None
+            and caller_uid == room.owner_uid
+        )
+        user_lang = room.language_a if is_room_owner else room.language_b
     else:
         # Creating a new room
         my_lang = (websocket.query_params.get("my_lang") or "en").strip().lower()
@@ -971,7 +980,13 @@ async def session_websocket(
     # ── Create participant (only reached after successful auth + role check) ──
     conn_ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     audio_session = AudioSession(conn_ts, language=user_lang)
-    role = "a" if len(room.participants) == 0 else "b"
+    # DB-backed rooms assign role "a" to the owner so _handle_session_start()
+    # (guarded by role=="a") works regardless of WebSocket connection order.
+    # Ad-hoc WS-only rooms fall back to connection-order assignment.
+    if room.db_session_id is not None:
+        role = "a" if is_room_owner else "b"
+    else:
+        role = "a" if len(room.participants) == 0 else "b"
     participant = Participant(websocket, user_name, user_lang, audio_session, role=role)
     room.add_participant(participant)
 
@@ -1006,7 +1021,7 @@ async def session_websocket(
             logger.warning("Failed to promote room phase to active on WS connect: %s", _e)
 
     # ── Notify participants ───────────────────────────────────────────────
-    if len(room.participants) == 1:
+    if role == "a":
         await participant.send_json_safe(
             {
                 "type": "room_created",
@@ -1016,8 +1031,17 @@ async def session_websocket(
                 "partner_language": room.language_b,
             }
         )
-        await participant.send_json_safe({"type": "session_status", "status": "waiting"})
-        logger.info("Room %s created by %s (%s ↔ %s)", room_id, user_name, room.language_a, room.language_b)
+        # Guest may have connected before the owner (e.g. owner page-refreshed).
+        # In that case skip "waiting" and go straight to "ready" for both sides.
+        existing_guest = next((p for p in room.participants if p.role == "b" and p.ws_open), None)
+        if existing_guest:
+            await existing_guest.send_json_safe({"type": "partner_joined", "name": user_name, "language": user_lang})
+            for p in room.participants:
+                if p.ws_open:
+                    await p.send_json_safe({"type": "session_status", "status": "ready"})
+        else:
+            await participant.send_json_safe({"type": "session_status", "status": "waiting"})
+        logger.info("Room %s: owner %s connected (%s ↔ %s)", room_id, user_name, room.language_a, room.language_b)
     else:
         partner = room.get_partner(participant)
         await participant.send_json_safe(
@@ -1030,11 +1054,13 @@ async def session_websocket(
                 "partner_language": partner.language if partner else None,
             }
         )
-        if partner:
+        if partner and partner.ws_open:
             await partner.send_json_safe({"type": "partner_joined", "name": user_name, "language": user_lang})
-        for p in room.participants:
-            if p.ws_open:
-                await p.send_json_safe({"type": "session_status", "status": "ready"})
+            for p in room.participants:
+                if p.ws_open:
+                    await p.send_json_safe({"type": "session_status", "status": "ready"})
+        else:
+            await participant.send_json_safe({"type": "session_status", "status": "waiting"})
         logger.info("Room %s: %s joined as %s", room_id, user_name, user_lang)
 
     turn = room.turn

@@ -36,6 +36,72 @@ const STEP_ORDER = [
 
 const TERMINAL_STATUSES = ["translated", "completed", "error", "failed", "rejected"]
 
+// ── Per-step detail formatter ──────────────────────────────────────────────────
+// DAG tasks write internal diagnostic strings (raw GCS URIs, model names, etc.)
+// into step.detail. This function converts them to user-facing copy.
+
+function formatDetail(stepName: string, detail: string): string {
+  if (!detail) return ""
+
+  switch (stepName) {
+    case "validate_upload":
+      return detail.replace(/^PDF validated/, "Valid PDF")
+
+    case "classify_document":
+      if (detail.startsWith("LEGAL")) {
+        const m = detail.match(/confidence=([\d.]+)/)
+        const pct = m ? ` · ${Math.round(parseFloat(m[1]) * 100)}% confidence` : ""
+        return `Legal document confirmed${pct}`
+      }
+      if (/rejected|non.legal/i.test(detail)) return "Not recognised as a legal document"
+      return detail.replace(/^.*?·\s*/, "").slice(0, 80)
+
+    case "ocr_printed_text":
+      // "PaddleOCR: 27 regions · 26 translatable · avg 0.99 conf"
+      return detail.replace(/^PaddleOCR:\s*/, "").replace("avg ", "avg conf ")
+
+    case "translate":
+      // "NLLB-200: 2/26 regions changed in 0.3s"
+      return detail.replace(/^NLLB-200:\s*/, "")
+
+    case "legal_review":
+      // "Llama: 3 correction(s) on 26 spans in 7.3s"
+      return detail.replace(/^Llama:\s*/, "")
+
+    case "reconstruct_pdf":
+      // "PDF rebuilt · 0.21 MB" — already clean
+      return detail
+
+    case "upload_to_gcs":
+      if (detail.startsWith("Uploading to gs://")) return "Uploading translated PDF…"
+      if (detail.startsWith("Uploaded · signed")) return "Upload complete · Download link ready"
+      if (detail.startsWith("Uploaded · download link unavailable")) return "Upload complete · Download link unavailable"
+      return detail.replace(/gs:\/\/[^\s]+/g, "")
+
+    case "finalize":
+      return "Saving final results"
+
+    case "log_summary":
+      return detail.replace("Pipeline complete — ", "").replace(" translation ready", " ready")
+
+    default:
+      return detail.replace(/gs:\/\/[^\s]+/g, "[GCS path]").slice(0, 80)
+  }
+}
+
+// ── Terminal error formatter ────────────────────────────────────────────────────
+// Converts raw DB error_message strings to user-friendly copy.
+
+function friendlyError(raw: string | null): string {
+  if (!raw) return "Translation failed. Please try again."
+  if (/validate_upload|invalid|corrupt/i.test(raw)) return "The file could not be processed. Please check it and try again."
+  if (/classify|non.legal|rejected/i.test(raw)) return "This document was not recognised as a legal filing and cannot be translated."
+  if (/upload_to_gcs|signed|gcs/i.test(raw)) return "Translation completed but the download link could not be generated. Please try again."
+  if (/ocr/i.test(raw)) return "Text extraction failed. The document may be scanned at too low a resolution."
+  if (/translate|nllb/i.test(raw)) return "Translation service unavailable. Please try again in a few minutes."
+  return "Translation failed. Please try uploading again."
+}
+
 // ── Status icon ────────────────────────────────────────────────────────────────
 
 function stepIcon(status: string | undefined) {
@@ -103,9 +169,7 @@ export default function DocProcessing({ onNav }: Props) {
             onNav(SCREENS.DOC_RESULTS)
           } else {
             // error / failed / rejected
-            setTerminalError(
-              statusResp.error_message ?? "Translation failed. Please try again."
-            )
+            setTerminalError(friendlyError(statusResp.error_message ?? null))
           }
         }
       } catch {
@@ -241,9 +305,10 @@ export default function DocProcessing({ onNav }: Props) {
             {/* Step list */}
             <div className="flex flex-col">
               {STEP_ORDER.map((stepName, i) => {
-                const step   = stepMap.get(stepName)
-                const status = step?.status
-                const detail = step?.detail ?? ""
+                const step          = stepMap.get(stepName)
+                const status        = step?.status
+                const detail        = step?.detail ?? ""
+                const cleanedDetail = formatDetail(stepName, detail)
 
                 return (
                   <div
@@ -269,13 +334,12 @@ export default function DocProcessing({ onNav }: Props) {
                           </span>
                         )}
                       </div>
-                      {detail && (status === "running" || status === "success" || status === "failed") && (
+                      {cleanedDetail && (status === "running" || status === "success" || status === "failed") && (
                         <div
-                          className="text-[11px] mt-0.5 truncate"
+                          className="text-[11px] mt-0.5"
                           style={{ color: status === "failed" ? "#EF4444" : "#8494A7" }}
-                          title={detail}
                         >
-                          {detail}
+                          {cleanedDetail}
                         </div>
                       )}
                     </div>

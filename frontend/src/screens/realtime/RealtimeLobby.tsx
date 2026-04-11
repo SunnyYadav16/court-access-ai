@@ -10,7 +10,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import QRCode from "react-qr-code"
 import { ScreenId, SCREENS } from "@/lib/constants"
-import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import TopBar from "@/components/shared/TopBar"
 import ScreenLabel from "@/components/shared/ScreenLabel"
@@ -164,27 +163,18 @@ export default function RealtimeLobby({ onNav }: Props) {
         {/* ── Partner joining banner (JWT issued, WS not yet open) ──────────── */}
         {partnerPhase === "joining" && (
           <div
-            className="rounded-md p-4 mb-4 flex items-center justify-between gap-3"
+            className="rounded-md p-4 mb-4 flex items-center gap-3"
             style={{ background: "#EFF6FF", border: "1.5px solid #93C5FD" }}
           >
-            <div className="flex items-center gap-3">
-              <span className="text-xl">🔗</span>
-              <div>
-                <p className="text-sm font-semibold" style={{ color: "#1D4ED8" }}>
-                  {partnerName} is connecting…
-                </p>
-                <p className="text-xs" style={{ color: "#2563EB" }}>
-                  They have the code — waiting for their connection to open.
-                </p>
-              </div>
+            <span className="text-xl">🔗</span>
+            <div>
+              <p className="text-sm font-semibold" style={{ color: "#1D4ED8" }}>
+                {partnerName} is connecting…
+              </p>
+              <p className="text-xs" style={{ color: "#2563EB" }}>
+                They have the code — waiting for their connection to open.
+              </p>
             </div>
-            <Button
-              onClick={goToSession}
-              className="shrink-0 cursor-pointer"
-              style={{ background: "#0B1D3A" }}
-            >
-              Start Session
-            </Button>
           </div>
         )}
 

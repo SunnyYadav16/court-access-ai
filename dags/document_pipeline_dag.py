@@ -730,8 +730,21 @@ def task_upload_to_gcs(**context) -> dict:
     b, bl = gcs.parse_gcs_uri(gcs_uri_str)
     gcs.upload_file(output_path, b, bl)
 
-    signed_url = gcs.generate_signed_url(b, bl, _SIGNED_URL_EXPIRY, _GCP_SA_JSON)
-    expires_at = datetime.now(tz=UTC) + timedelta(seconds=_SIGNED_URL_EXPIRY)
+    # Signed URL generation can fail independently of the upload (e.g. the VM
+    # service account lacks roles/iam.serviceAccountTokenCreator on itself).
+    # Treat it as non-fatal: store None and let the results page surface a
+    # "re-generate link" prompt rather than marking the whole step as failed.
+    signed_url: str | None = None
+    expires_at = None
+    try:
+        signed_url = gcs.generate_signed_url(b, bl, _SIGNED_URL_EXPIRY, _GCP_SA_JSON)
+        expires_at = datetime.now(tz=UTC) + timedelta(seconds=_SIGNED_URL_EXPIRY)
+    except Exception as sign_exc:
+        logger.warning(
+            "session=%s: signed URL generation failed (non-fatal) — %s",
+            session_id,
+            sign_exc,
+        )
 
     # Write URL immediately — don't wait for finalize
     _update_request(
@@ -740,18 +753,23 @@ def task_upload_to_gcs(**context) -> dict:
         signed_url=signed_url,
         signed_url_expires_at=expires_at,
     )
+    detail_msg = (
+        f"Uploaded · signed URL expires in {_SIGNED_URL_EXPIRY // 60} min"
+        if signed_url
+        else "Uploaded · download link unavailable (check SA permissions)"
+    )
     _write_step(
         session_id,
         "upload_to_gcs",
         "success",
-        f"Uploaded · signed URL expires in {_SIGNED_URL_EXPIRY // 60} min",
+        detail_msg,
         {"gcs_uri": gcs_uri_str},
     )
 
     result = {
         "gcs_uri": gcs_uri_str,
         "signed_url": signed_url,
-        "signed_url_expires_at": expires_at.isoformat(),
+        "signed_url_expires_at": expires_at.isoformat() if expires_at else None,
     }
     ti.xcom_push(key="gcs_result", value=result)
     return result

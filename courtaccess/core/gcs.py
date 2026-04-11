@@ -265,16 +265,25 @@ def generate_signed_url(
         credentials = _get_service_account_credentials(service_account_json)
         client = _get_storage_client_with_sa(service_account_json)
     else:
-        # Production — use Compute Engine credentials (supports signBlob via metadata server)
+        # Production — Compute Engine / Workload Identity (GCE, Cloud Run, GKE).
+        # Explicitly request the cloud-platform scope so the access token can
+        # call the IAM signBlob API.  Without scopes= the default token may lack
+        # the signing scope, causing 403 errors even when the SA has the right IAM
+        # binding (roles/iam.serviceAccountTokenCreator on itself).
         import google.auth
         import google.auth.transport.requests
         from google.auth.compute_engine import Credentials as ComputeCredentials
+        from google.cloud import storage as _storage
 
-        credentials, _ = google.auth.default()
+        credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
         if isinstance(credentials, ComputeCredentials):
-            # Refresh to ensure the token and service_account_email are populated
+            # Refresh so that service_account_email is populated — the GCS client
+            # library reads it from the credentials object to build the signed URL.
             credentials.refresh(google.auth.transport.requests.Request())
-        client = _get_storage_client()
+        # Build a fresh (non-cached) client with the scoped, refreshed credentials.
+        # The module-level _get_storage_client() uses plain ADC without signing
+        # scopes, so we must not reuse it here.
+        client = _storage.Client(credentials=credentials)
 
     url = (
         client.bucket(bucket)
