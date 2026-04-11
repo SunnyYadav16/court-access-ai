@@ -259,6 +259,8 @@ export default function RealtimeSession({ onNav }: Props) {
   const courtroom = useRealtimeStore((s) => s.courtroom)
   const caseDocket = useRealtimeStore((s) => s.caseDocket)
   const sessionId  = useRealtimeStore((s) => s.sessionId)
+  const error      = useRealtimeStore((s) => s.error)
+  const setError   = useRealtimeStore((s) => s.setError)
   const toggleMute = useRealtimeStore((s) => s.toggleMute)
   const resetStore = useRealtimeStore((s) => s.reset)
 
@@ -291,6 +293,27 @@ export default function RealtimeSession({ onNav }: Props) {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages, livePartial])
+
+  // ── Preflight mic permission ───────────────────────────────────────────────
+  // Request microphone access immediately on mount so the browser permission
+  // dialog fires now (while the user is reading the UI) rather than mid-session
+  // when the creator clicks "Start Session".  The stream is released right away;
+  // the real capture starts later via onStartCapture → startCapture().
+  useEffect(() => {
+    // Skip the prompt when permission is already granted so React StrictMode's
+    // double-mount doesn't trigger two browser dialogs in quick succession.
+    navigator.permissions
+      .query({ name: "microphone" as PermissionName })
+      .then((result) => {
+        if (result.state === "granted") return
+        return navigator.mediaDevices
+          .getUserMedia({ audio: true })
+          .then((stream) => stream.getTracks().forEach((t) => t.stop()))
+      })
+      .catch(() => {
+        setError("Microphone access denied. Please allow mic access in your browser and reload.")
+      })
+  }, [setError])
 
   // ── Reconnect on mount ─────────────────────────────────────────────────────
   // If RealtimeSetup navigated here with the WebSocket still open (normal flow),
@@ -440,6 +463,24 @@ export default function RealtimeSession({ onNav }: Props) {
             </button>
           </div>
         </div>
+
+        {/* ── Error banner ────────────────────────────────────────────────── */}
+        {error && (
+          <div
+            className="px-5 py-2 text-xs flex items-center gap-2 flex-shrink-0"
+            style={{ background: "rgba(127,29,29,0.85)", color: "#fca5a5", borderBottom: "1px solid rgba(239,68,68,0.3)" }}
+          >
+            <span>⚠</span>
+            <span>{error}</span>
+            <button
+              onClick={() => setError(null)}
+              className="ml-auto opacity-60 hover:opacity-100 cursor-pointer"
+              style={{ background: "none", border: "none", color: "inherit", fontSize: 14 }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
 
         {/* ── Body ────────────────────────────────────────────────────────── */}
         <div className="flex flex-1 overflow-hidden">

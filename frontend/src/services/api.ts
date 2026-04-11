@@ -380,4 +380,77 @@ export const sessionsApi = {
     api.post<SessionEndResponse>(`/sessions/${sessionId}/end`).then((r) => r.data),
 };
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Admin endpoints
+// ══════════════════════════════════════════════════════════════════════════════
+
+export interface AdminStats {
+  active_sessions_total: number;
+  active_sessions_realtime: number;
+  active_sessions_document: number;
+  todays_translations_total: number;
+  todays_translations_docs: number;
+  todays_translations_realtime: number;
+  avg_nmt_confidence: number | null;
+  last_scrape_at: string | null;
+  recent_audit_events: AdminAuditEvent[];
+}
+
+export interface AdminAuditEvent {
+  audit_id: string;
+  action_type: string;
+  created_at: string;
+  details: Record<string, unknown> | null;
+}
+
+export interface AdminUserRow {
+  user_id: string;
+  name: string;
+  email: string;
+  role: string;
+  last_login_at: string | null;
+  session_count: number;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface TriggerScraperResponse {
+  dag_run_id: string;
+  triggered_at: string;
+}
+
+export const adminApi = {
+  getStats: (): Promise<AdminStats> =>
+    api.get<AdminStats>("/admin/stats").then((r) => r.data),
+
+  listUsers: (page = 1, pageSize = 50): Promise<AdminUserRow[]> =>
+    api.get<AdminUserRow[]>("/admin/users", { params: { page, page_size: pageSize } }).then((r) => r.data),
+
+  setUserRole: (userId: string, roleName: string): Promise<void> =>
+    api.post(`/admin/users/${userId}/role`, { role_name: roleName }).then(() => undefined),
+
+  listRoleRequests: (pendingOnly = true): Promise<RoleRequestSummary[]> =>
+    api.get<RoleRequestSummary[]>("/admin/role-requests", { params: { pending_only: pendingOnly } }).then((r) => r.data),
+
+  approveRoleRequest: (requestId: string): Promise<void> =>
+    api.post(`/admin/role-requests/${requestId}/approve`, {}).then(() => undefined),
+
+  rejectRoleRequest: (requestId: string): Promise<void> =>
+    api.post(`/admin/role-requests/${requestId}/reject`, {}).then(() => undefined),
+
+  triggerScraper: (): Promise<TriggerScraperResponse> =>
+    api.post<TriggerScraperResponse>("/forms/scraper/trigger", { force: false }).then((r) => r.data),
+};
+
+// Re-export RoleRequestSummary for consumers that need it
+export interface RoleRequestSummary {
+  request_id: string;
+  user_id: string;
+  requested_role_id: number;
+  status: string;
+  requested_at: string;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+}
+
 export default api;
