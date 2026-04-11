@@ -37,11 +37,11 @@ export default function AdminForms({ onNav }: Props) {
       setPendingForms(pending)
       // Derive last scrape time from the most recently scraped form rather than
       // making a separate stats call just for this one timestamp.
-      const latest = formsResp.items
+      const sorted = formsResp.items
         .map((f) => f.last_scraped_at)
-        .filter(Boolean)
+        .filter((d): d is string => d !== null)
         .sort()
-        .at(-1) ?? null
+      const latest = sorted.length > 0 ? sorted[sorted.length - 1] : null
       setLastScrapeAt(latest)
     } catch {
       setError("Failed to load forms data. Please try again.")
