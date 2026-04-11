@@ -18,12 +18,12 @@ Endpoints:
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 
 from api.dependencies import CurrentUser, DBSession, require_role
 from api.schemas.schemas import UserResponse
@@ -48,6 +48,38 @@ _AdminUser = Annotated[CurrentUser, Depends(require_role("admin"))]
 # ══════════════════════════════════════════════════════════════════════════════
 
 
+class AdminUserRow(BaseModel):
+    user_id: uuid.UUID
+    name: str
+    email: str
+    role: str
+    last_login_at: datetime | None
+    session_count: int
+    is_active: bool  # True if last_login_at within the past 30 days
+    created_at: datetime
+
+
+class AuditEventSummary(BaseModel):
+    audit_id: uuid.UUID
+    action_type: str
+    created_at: datetime
+    details: dict | None
+
+    model_config = {"from_attributes": True}
+
+
+class AdminStats(BaseModel):
+    active_sessions_total: int
+    active_sessions_realtime: int
+    active_sessions_document: int
+    todays_translations_total: int
+    todays_translations_docs: int
+    todays_translations_realtime: int
+    avg_nmt_confidence: float | None
+    last_scrape_at: datetime | None
+    recent_audit_events: list[AuditEventSummary]
+
+
 class RoleAssignRequest(BaseModel):
     role_name: str  # "public" | "court_official" | "interpreter" | "admin"
 
@@ -69,6 +101,88 @@ class RoleRequestSummary(BaseModel):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# GET /admin/stats
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@router.get(
+    "/stats",
+    summary="Aggregated monitoring stats (admin only)",
+    response_model=AdminStats,
+)
+async def get_admin_stats(
+    admin: _AdminUser,
+    db: DBSession,
+) -> AdminStats:
+    """
+    Returns live session counts, today's translation totals, avg NMT confidence,
+    last scrape timestamp, and the 8 most recent audit log entries.
+    """
+    import asyncio
+
+    from db.models import AuditLog, DocumentTranslationRequest, Session
+
+    now = datetime.now(tz=UTC)
+    today_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    (
+        active_q,
+        today_q,
+        conf_q,
+        scrape_q,
+        audit_q,
+    ) = await asyncio.gather(
+        db.execute(
+            select(Session.type, func.count().label("cnt")).where(Session.status == "active").group_by(Session.type)
+        ),
+        db.execute(
+            select(Session.type, func.count().label("cnt"))
+            .where(Session.created_at >= today_midnight)
+            .group_by(Session.type)
+        ),
+        db.execute(
+            select(func.avg(DocumentTranslationRequest.avg_confidence_score)).where(
+                DocumentTranslationRequest.created_at >= today_midnight,
+                DocumentTranslationRequest.avg_confidence_score.is_not(None),
+            )
+        ),
+        db.execute(
+            select(AuditLog.created_at)
+            .where(AuditLog.action_type == "form_scrape_triggered")
+            .order_by(desc(AuditLog.created_at))
+            .limit(1)
+        ),
+        db.execute(select(AuditLog).order_by(desc(AuditLog.created_at)).limit(8)),
+    )
+
+    active_by_type: dict[str, int] = {row.type: row.cnt for row in active_q}
+    today_by_type: dict[str, int] = {row.type: row.cnt for row in today_q}
+    avg_nmt: float | None = conf_q.scalar()
+    last_scrape_at: datetime | None = scrape_q.scalar()
+    recent_events = audit_q.scalars().all()
+
+    return AdminStats(
+        active_sessions_total=sum(active_by_type.values()),
+        active_sessions_realtime=active_by_type.get("realtime", 0),
+        active_sessions_document=active_by_type.get("document", 0),
+        todays_translations_total=sum(today_by_type.values()),
+        todays_translations_docs=today_by_type.get("document", 0),
+        todays_translations_realtime=today_by_type.get("realtime", 0),
+        avg_nmt_confidence=round(avg_nmt, 4) if avg_nmt is not None else None,
+        last_scrape_at=last_scrape_at,
+        recent_audit_events=[
+            AuditEventSummary(
+                audit_id=e.audit_id,
+                action_type=e.action_type,
+                created_at=e.created_at,
+                details=e.details,
+            )
+            for e in recent_events
+        ],
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # GET /admin/users
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -76,22 +190,44 @@ class RoleRequestSummary(BaseModel):
 @router.get(
     "/users",
     summary="List all users (admin only)",
-    response_model=list[UserResponse],
+    response_model=list[AdminUserRow],
 )
 async def list_users(
     admin: _AdminUser,
     db: DBSession,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
-) -> list[UserResponse]:
-    """Return all registered users, ordered by created_at desc."""
-    from db.models import User
+) -> list[AdminUserRow]:
+    """Return all registered users with session counts, ordered by created_at desc."""
+    from api.schemas.schemas import ROLE_ID_TO_NAME
+    from db.models import Session, User
 
+    # Single query: users + their session count via correlated subquery
+    session_count_subq = select(func.count()).where(Session.user_id == User.user_id).correlate(User).scalar_subquery()
     result = await db.execute(
-        select(User).order_by(desc(User.created_at)).offset((page - 1) * page_size).limit(page_size)
+        select(User, session_count_subq.label("session_count"))
+        .order_by(desc(User.created_at))
+        .offset((page - 1) * page_size)
+        .limit(page_size)
     )
-    users = result.scalars().all()
-    return [UserResponse.from_orm_user(u) for u in users]
+    rows = result.all()
+
+    now = datetime.now(tz=UTC)
+    active_threshold = now - timedelta(days=30)
+
+    return [
+        AdminUserRow(
+            user_id=u.user_id,
+            name=u.name,
+            email=u.email,
+            role=ROLE_ID_TO_NAME.get(u.role_id, "public"),
+            last_login_at=u.last_login_at,
+            session_count=count,
+            is_active=u.last_login_at is not None and u.last_login_at >= active_threshold,
+            created_at=u.created_at,
+        )
+        for u, count in rows
+    ]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
