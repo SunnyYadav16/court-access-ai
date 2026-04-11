@@ -426,8 +426,8 @@ export const adminApi = {
   listUsers: (page = 1, pageSize = 50): Promise<AdminUserRow[]> =>
     api.get<AdminUserRow[]>("/admin/users", { params: { page, page_size: pageSize } }).then((r) => r.data),
 
-  setUserRole: (userId: string, roleName: string): Promise<void> =>
-    api.post(`/admin/users/${userId}/role`, { role_name: roleName }).then(() => undefined),
+  setUserRole: (userId: string, roleName: string): Promise<UserInfo> =>
+    api.post<UserInfo>(`/admin/users/${userId}/role`, { role_name: roleName }).then((r) => r.data),
 
   listRoleRequests: (pendingOnly = true): Promise<RoleRequestSummary[]> =>
     api.get<RoleRequestSummary[]>("/admin/role-requests", { params: { pending_only: pendingOnly } }).then((r) => r.data),

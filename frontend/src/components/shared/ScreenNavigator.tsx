@@ -13,6 +13,7 @@ const ALL_SCREENS: [ScreenId, string][] = [
   [SCREENS.HOME_INTERPRETER, "🏠 Home (Interpreter)"],
   [SCREENS.HOME_ADMIN, "🏠 Home (Admin)"],
   [SCREENS.REALTIME_SETUP, "🎙 RT Setup"],
+  [SCREENS.REALTIME_LOBBY, "🎙 RT Lobby"],
   [SCREENS.REALTIME_SESSION, "🎙 RT Live Session"],
   [SCREENS.DOC_UPLOAD, "📄 Doc Upload"],
   [SCREENS.DOC_PROCESSING, "⏳ Doc Processing"],
@@ -38,7 +39,7 @@ export default function ScreenNavigator({ current, onNav }: Props) {
       style={{ background: "#0a0f1a", borderRight: "1px solid rgba(255,255,255,0.06)" }}>
       <div className="text-[10px] uppercase tracking-widest px-2 py-1 mb-1"
         style={{ color: "rgba(255,255,255,0.3)" }}>
-        24 Screens
+        25 Screens
       </div>
       {ALL_SCREENS.map(([id, label]) => (
         <button

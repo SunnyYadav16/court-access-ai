@@ -118,42 +118,33 @@ async def get_admin_stats(
     Returns live session counts, today's translation totals, avg NMT confidence,
     last scrape timestamp, and the 8 most recent audit log entries.
     """
-    import asyncio
-
     from db.models import AuditLog, DocumentTranslationRequest, Session
 
     now = datetime.now(tz=UTC)
     today_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-    (
-        active_q,
-        today_q,
-        conf_q,
-        scrape_q,
-        audit_q,
-    ) = await asyncio.gather(
-        db.execute(
-            select(Session.type, func.count().label("cnt")).where(Session.status == "active").group_by(Session.type)
-        ),
-        db.execute(
-            select(Session.type, func.count().label("cnt"))
-            .where(Session.created_at >= today_midnight)
-            .group_by(Session.type)
-        ),
-        db.execute(
-            select(func.avg(DocumentTranslationRequest.avg_confidence_score)).where(
-                DocumentTranslationRequest.created_at >= today_midnight,
-                DocumentTranslationRequest.avg_confidence_score.is_not(None),
-            )
-        ),
-        db.execute(
-            select(AuditLog.created_at)
-            .where(AuditLog.action_type == "form_scrape_triggered")
-            .order_by(desc(AuditLog.created_at))
-            .limit(1)
-        ),
-        db.execute(select(AuditLog).order_by(desc(AuditLog.created_at)).limit(8)),
+    # Run sequentially — AsyncSession is not safe for concurrent execute() calls
+    active_q = await db.execute(
+        select(Session.type, func.count().label("cnt")).where(Session.status == "active").group_by(Session.type)
     )
+    today_q = await db.execute(
+        select(Session.type, func.count().label("cnt"))
+        .where(Session.created_at >= today_midnight)
+        .group_by(Session.type)
+    )
+    conf_q = await db.execute(
+        select(func.avg(DocumentTranslationRequest.avg_confidence_score)).where(
+            DocumentTranslationRequest.created_at >= today_midnight,
+            DocumentTranslationRequest.avg_confidence_score.is_not(None),
+        )
+    )
+    scrape_q = await db.execute(
+        select(AuditLog.created_at)
+        .where(AuditLog.action_type == "form_scrape_triggered")
+        .order_by(desc(AuditLog.created_at))
+        .limit(1)
+    )
+    audit_q = await db.execute(select(AuditLog).order_by(desc(AuditLog.created_at)).limit(8))
 
     active_by_type: dict[str, int] = {row.type: row.cnt for row in active_q}
     today_by_type: dict[str, int] = {row.type: row.cnt for row in today_q}

@@ -80,10 +80,16 @@ function MessageBubble({
 
   return (
     <div className={`flex flex-col ${isSelf ? "items-end" : "items-start"} gap-1`}>
-      {/* Speaker + timestamp */}
+      {/* Speaker + language + timestamp */}
       <div className="flex items-center gap-2 px-1">
         <span className="text-[11px] font-semibold" style={{ color: "rgba(255,255,255,0.5)" }}>
           {speakerLabel}
+        </span>
+        <span
+          className="text-[9px] px-1.5 py-0.5 rounded"
+          style={{ background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)" }}
+        >
+          {LANG_FLAGS[msg.language] ?? msg.language.toUpperCase()}
         </span>
         <span className="text-[10px]" style={{ color: "rgba(255,255,255,0.25)" }}>
           {timeLabel}

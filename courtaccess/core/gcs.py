@@ -261,40 +261,46 @@ def generate_signed_url(
     provides credentials that support the signing interface.
     """
     if service_account_json:
-        # Local dev — use explicit SA JSON key
+        # Local dev — SA JSON key has a private key, so the GCS library can
+        # sign the URL locally without any IAM API call.
         credentials = _get_service_account_credentials(service_account_json)
         client = _get_storage_client_with_sa(service_account_json)
+        url = (
+            client.bucket(bucket)
+            .blob(blob)
+            .generate_signed_url(
+                expiration=timedelta(seconds=expiry_seconds),
+                method="GET",
+                version="v4",
+                credentials=credentials,
+            )
+        )
     else:
-        # Production — Compute Engine / Workload Identity (GCE, Cloud Run, GKE).
-        # Explicitly request the cloud-platform scope so the access token can
-        # call the IAM signBlob API.  Without scopes= the default token may lack
-        # the signing scope, causing 403 errors even when the SA has the right IAM
-        # binding (roles/iam.serviceAccountTokenCreator on itself).
+        # Production — Compute Engine / Workload Identity credentials have no
+        # private key, so they can't sign locally. Pass service_account_email +
+        # access_token to make the GCS library delegate signing to the IAM
+        # signBlob API instead. Requires roles/iam.serviceAccountTokenCreator
+        # on the SA (self-sign permission).
         import google.auth
         import google.auth.transport.requests
         from google.auth.compute_engine import Credentials as ComputeCredentials
-        from google.cloud import storage as _storage
 
         credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
         if isinstance(credentials, ComputeCredentials):
-            # Refresh so that service_account_email is populated — the GCS client
-            # library reads it from the credentials object to build the signed URL.
             credentials.refresh(google.auth.transport.requests.Request())
-        # Build a fresh (non-cached) client with the scoped, refreshed credentials.
-        # The module-level _get_storage_client() uses plain ADC without signing
-        # scopes, so we must not reuse it here.
-        client = _storage.Client(credentials=credentials)
 
-    url = (
-        client.bucket(bucket)
-        .blob(blob)
-        .generate_signed_url(
-            expiration=timedelta(seconds=expiry_seconds),
-            method="GET",
-            version="v4",
-            credentials=credentials,
+        client = _get_storage_client()
+        url = (
+            client.bucket(bucket)
+            .blob(blob)
+            .generate_signed_url(
+                expiration=timedelta(seconds=expiry_seconds),
+                method="GET",
+                version="v4",
+                service_account_email=credentials.service_account_email,
+                access_token=credentials.token,
+            )
         )
-    )
     logger.debug(
         "%sGCS signed URL generated: gs://%s/%s (expires in %ds)",
         _ctx(correlation_id),
