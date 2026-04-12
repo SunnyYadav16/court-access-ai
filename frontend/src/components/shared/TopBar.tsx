@@ -1,4 +1,5 @@
 import { useState } from "react"
+import courtaccessLogo from "@/assets/courtaccess-logo.png"
 import { ScreenId, SCREENS } from "@/lib/constants"
 import { useAuth } from "@/hooks/useAuth"
 import { getInitials } from "@/lib/utils"
@@ -25,9 +26,9 @@ export default function TopBar({ onNav }: TopBarProps) {
     <div className="relative">
       <div className="h-14 px-6 flex items-center justify-between"
         style={{ background: "#0B1D3A", color: "#fff" }}>
-        <div className="flex items-center gap-3 cursor-pointer"
+        <div className="flex items-center gap-2 cursor-pointer"
           onClick={() => onNav(homeScreen())}>
-          <span className="text-lg font-bold tracking-wide font-serif">⚖ CourtAccess AI</span>
+          <img src={courtaccessLogo} alt="CourtAccess AI" className="h-8 w-auto block" />
           <span className="text-[10px] font-semibold px-2 py-0.5 rounded tracking-wide"
             style={{ background: "rgba(200,150,62,0.25)", color: "#C8963E" }}>BETA</span>
         </div>

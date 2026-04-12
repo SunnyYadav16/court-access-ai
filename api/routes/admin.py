@@ -23,7 +23,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, select, text
 
 from api.dependencies import CurrentUser, DBSession, require_role
 from api.schemas.schemas import UserResponse
@@ -76,8 +76,20 @@ class AdminStats(BaseModel):
     todays_translations_docs: int
     todays_translations_realtime: int
     avg_nmt_confidence: float | None
+    avg_asr_confidence: float | None
     last_scrape_at: datetime | None
     recent_audit_events: list[AuditEventSummary]
+
+
+class AdminMetrics(BaseModel):
+    # Drift: 7-day rolling averages
+    nmt_confidence_es_7d: float | None
+    nmt_confidence_pt_7d: float | None
+    asr_confidence_7d: float | None
+    ocr_confidence_7d: float | None
+    llama_correction_rate_7d: float | None  # avg corrections per document request
+    # Model health: avg seconds per step, derived from pipeline_steps.updated_at deltas
+    model_latencies: dict[str, float | None]
 
 
 class RoleAssignRequest(BaseModel):
@@ -118,7 +130,7 @@ async def get_admin_stats(
     Returns live session counts, today's translation totals, avg NMT confidence,
     last scrape timestamp, and the 8 most recent audit log entries.
     """
-    from db.models import AuditLog, DocumentTranslationRequest, Session
+    from db.models import AuditLog, DocumentTranslationRequest, RealtimeTranslationRequest, Session
 
     now = datetime.now(tz=UTC)
     today_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -138,6 +150,12 @@ async def get_admin_stats(
             DocumentTranslationRequest.avg_confidence_score.is_not(None),
         )
     )
+    asr_conf_q = await db.execute(
+        select(func.avg(RealtimeTranslationRequest.avg_asr_confidence_score)).where(
+            RealtimeTranslationRequest.completed_at >= today_midnight,
+            RealtimeTranslationRequest.avg_asr_confidence_score.is_not(None),
+        )
+    )
     scrape_q = await db.execute(
         select(AuditLog.created_at)
         .where(AuditLog.action_type == "form_scrape_triggered")
@@ -149,6 +167,7 @@ async def get_admin_stats(
     active_by_type: dict[str, int] = {row.type: row.cnt for row in active_q}
     today_by_type: dict[str, int] = {row.type: row.cnt for row in today_q}
     avg_nmt: float | None = conf_q.scalar()
+    avg_asr: float | None = asr_conf_q.scalar()
     last_scrape_at: datetime | None = scrape_q.scalar()
     recent_events = audit_q.scalars().all()
 
@@ -160,6 +179,7 @@ async def get_admin_stats(
         todays_translations_docs=today_by_type.get("document", 0),
         todays_translations_realtime=today_by_type.get("realtime", 0),
         avg_nmt_confidence=round(avg_nmt, 4) if avg_nmt is not None else None,
+        avg_asr_confidence=round(avg_asr, 4) if avg_asr is not None else None,
         last_scrape_at=last_scrape_at,
         recent_audit_events=[
             AuditEventSummary(
@@ -170,6 +190,124 @@ async def get_admin_stats(
             )
             for e in recent_events
         ],
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /admin/metrics
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@router.get(
+    "/metrics",
+    summary="7-day drift + model latency metrics (admin only)",
+    response_model=AdminMetrics,
+)
+async def get_admin_metrics(
+    admin: _AdminUser,
+    db: DBSession,
+) -> AdminMetrics:
+    """
+    Returns 7-day rolling averages for NMT/ASR/OCR confidence, Llama correction
+    rate, and per-step model latency derived from pipeline_steps.updated_at deltas.
+    """
+    from db.models import DocumentTranslationRequest, RealtimeTranslationRequest
+
+    now = datetime.now(tz=UTC)
+    seven_days_ago = now - timedelta(days=7)
+
+    # NMT confidence — Spanish (spa_Latn), last 7d completed document requests
+    nmt_es_q = await db.execute(
+        select(func.avg(DocumentTranslationRequest.avg_confidence_score)).where(
+            DocumentTranslationRequest.created_at >= seven_days_ago,
+            DocumentTranslationRequest.target_language == "spa_Latn",
+            DocumentTranslationRequest.avg_confidence_score.is_not(None),
+        )
+    )
+
+    # NMT confidence — Portuguese (por_Latn), last 7d
+    nmt_pt_q = await db.execute(
+        select(func.avg(DocumentTranslationRequest.avg_confidence_score)).where(
+            DocumentTranslationRequest.created_at >= seven_days_ago,
+            DocumentTranslationRequest.target_language == "por_Latn",
+            DocumentTranslationRequest.avg_confidence_score.is_not(None),
+        )
+    )
+
+    # ASR confidence — realtime sessions completed in the last 7d
+    asr_q = await db.execute(
+        select(func.avg(RealtimeTranslationRequest.avg_asr_confidence_score)).where(
+            RealtimeTranslationRequest.completed_at >= seven_days_ago,
+            RealtimeTranslationRequest.avg_asr_confidence_score.is_not(None),
+        )
+    )
+
+    # OCR confidence — from pipeline_steps.metadata->>'avg_confidence' (raw SQL for JSONB cast)
+    ocr_q = await db.execute(
+        text("""
+            SELECT AVG(CAST(metadata->>'avg_confidence' AS float))
+            FROM pipeline_steps
+            WHERE step_name = 'ocr_printed_text'
+              AND status    = 'success'
+              AND updated_at >= :cutoff
+              AND metadata->>'avg_confidence' IS NOT NULL
+        """),
+        {"cutoff": seven_days_ago},
+    )
+
+    # Llama correction rate — SUM(corrections) / COUNT(requests) over last 7d
+    llama_q = await db.execute(
+        select(
+            func.sum(DocumentTranslationRequest.llama_corrections_count),
+            func.count(),
+        ).where(
+            DocumentTranslationRequest.created_at >= seven_days_ago,
+        )
+    )
+
+    # Model latencies — avg seconds between consecutive step completions per session
+    # Uses LAG() window function partitioned by session so each step's "duration"
+    # is the gap from when the previous step finished to when this one finished.
+    latency_q = await db.execute(
+        text("""
+            SELECT step_name,
+                   AVG(EXTRACT(EPOCH FROM (updated_at - prev_updated_at))) AS avg_seconds
+            FROM (
+                SELECT step_name,
+                       updated_at,
+                       LAG(updated_at) OVER (
+                           PARTITION BY session_id ORDER BY updated_at
+                       ) AS prev_updated_at
+                FROM pipeline_steps
+                WHERE updated_at >= :cutoff
+                  AND status     = 'success'
+            ) sub
+            WHERE prev_updated_at IS NOT NULL
+            GROUP BY step_name
+        """),
+        {"cutoff": seven_days_ago},
+    )
+
+    # ── Collate ───────────────────────────────────────────────────────────────
+    nmt_es: float | None = nmt_es_q.scalar()
+    nmt_pt: float | None = nmt_pt_q.scalar()
+    avg_asr: float | None = asr_q.scalar()
+    avg_ocr: float | None = ocr_q.scalar()
+
+    llama_sum, llama_count = llama_q.one()
+    llama_rate: float | None = round(llama_sum / llama_count, 4) if llama_count else None
+
+    model_latencies: dict[str, float | None] = {
+        row.step_name: round(row.avg_seconds, 3) if row.avg_seconds is not None else None for row in latency_q.all()
+    }
+
+    return AdminMetrics(
+        nmt_confidence_es_7d=round(nmt_es, 4) if nmt_es is not None else None,
+        nmt_confidence_pt_7d=round(nmt_pt, 4) if nmt_pt is not None else None,
+        asr_confidence_7d=round(avg_asr, 4) if avg_asr is not None else None,
+        ocr_confidence_7d=round(avg_ocr, 4) if avg_ocr is not None else None,
+        llama_correction_rate_7d=llama_rate,
+        model_latencies=model_latencies,
     )
 
 

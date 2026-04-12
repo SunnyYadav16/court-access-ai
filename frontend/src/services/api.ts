@@ -392,8 +392,18 @@ export interface AdminStats {
   todays_translations_docs: number;
   todays_translations_realtime: number;
   avg_nmt_confidence: number | null;
+  avg_asr_confidence: number | null;
   last_scrape_at: string | null;
   recent_audit_events: AdminAuditEvent[];
+}
+
+export interface AdminMetrics {
+  nmt_confidence_es_7d: number | null;
+  nmt_confidence_pt_7d: number | null;
+  asr_confidence_7d: number | null;
+  ocr_confidence_7d: number | null;
+  llama_correction_rate_7d: number | null;
+  model_latencies: Record<string, number | null>;
 }
 
 export interface AdminAuditEvent {
@@ -422,6 +432,9 @@ export interface TriggerScraperResponse {
 export const adminApi = {
   getStats: (): Promise<AdminStats> =>
     api.get<AdminStats>("/admin/stats").then((r) => r.data),
+
+  getMetrics: (): Promise<AdminMetrics> =>
+    api.get<AdminMetrics>("/admin/metrics").then((r) => r.data),
 
   listUsers: (page = 1, pageSize = 50): Promise<AdminUserRow[]> =>
     api.get<AdminUserRow[]>("/admin/users", { params: { page, page_size: pageSize } }).then((r) => r.data),

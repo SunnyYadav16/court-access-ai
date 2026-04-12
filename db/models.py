@@ -465,6 +465,7 @@ class RealtimeTranslationRequest(Base):
     # Summary stats — computed in-memory, written once on session end
     total_utterances: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
     duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    avg_asr_confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

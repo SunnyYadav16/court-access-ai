@@ -211,13 +211,15 @@ def _on_dag_failure(context) -> None:
     conf = (context.get("dag_run") or {}).conf or {}
     session_id = conf.get("session_id", "")
     request_id = conf.get("request_id", "")
+    form_id = conf.get("form_id")
     task_id = getattr(context.get("task_instance"), "task_id", "unknown")
     msg = f"Pipeline failed at '{task_id}': {context.get('exception', 'unknown error')}"
 
-    if session_id:
+    # Pretranslation runs (form_id set) have no sessions row — skip FK writes.
+    if session_id and not form_id:
         _update_session(session_id, "failed")
         _write_step(session_id, task_id, "failed", msg)
-    if request_id:
+    if request_id and not form_id:
         _update_request(request_id, status="failed", error_message=msg[:500])
 
     logger.error("[DAG FAILURE] session=%s task=%s: %s", session_id, task_id, msg)
@@ -253,9 +255,14 @@ def task_validate_upload(**context) -> dict:
 
     start_time = conf.get("start_time", datetime.now(tz=UTC).isoformat())
     original_format = conf.get("original_format", "docx")
+    # form_id is set when triggered from form_scraper_dag (pretranslation path).
+    # Those runs have no sessions/document_translation_requests rows, so any write
+    # that touches pipeline_steps or sessions via FK will violate constraints.
+    form_id = conf.get("form_id")
 
-    _update_session(session_id, "processing")
-    _write_step(session_id, "validate_upload", "running", "Downloading DOCX from GCS")
+    if not form_id:
+        _update_session(session_id, "processing")
+        _write_step(session_id, "validate_upload", "running", "Downloading DOCX from GCS")
 
     # LocalExecutor on GCE VM: shared /tmp is fine. Switch to GCS-backed tmp if moving to Cloud Composer.
     work_dir = f"/tmp/courtaccess/{context['dag_run'].run_id}"  # noqa: S108 # nosec B108
@@ -270,9 +277,10 @@ def task_validate_upload(**context) -> dict:
 
     if not Path(local_docx).exists():
         msg = f"File not found at {local_docx} after download"
-        _write_step(session_id, "validate_upload", "failed", msg)
-        _update_session(session_id, "failed")
-        _update_request(request_id, status="failed", error_message=msg)
+        if not form_id:
+            _write_step(session_id, "validate_upload", "failed", msg)
+            _update_session(session_id, "failed")
+            _update_request(request_id, status="failed", error_message=msg)
         raise AirflowFailException(msg)
 
     # DOCX files are ZIP archives — check PK ZIP magic bytes
@@ -280,19 +288,21 @@ def task_validate_upload(**context) -> dict:
         magic = fh.read(4)
     if not magic.startswith(b"\x50\x4b\x03\x04"):
         msg = f"Not a valid DOCX (ZIP magic bytes missing, got {magic!r})"
-        _write_step(session_id, "validate_upload", "failed", msg)
-        _update_session(session_id, "failed")
-        _update_request(request_id, status="failed", error_message=msg)
+        if not form_id:
+            _write_step(session_id, "validate_upload", "failed", msg)
+            _update_session(session_id, "failed")
+            _update_request(request_id, status="failed", error_message=msg)
         raise AirflowFailException(msg)
 
     size_mb = round(Path(local_docx).stat().st_size / 1_048_576, 2)
-    _write_step(
-        session_id,
-        "validate_upload",
-        "success",
-        f"DOCX validated · {size_mb} MB · format={original_format}",
-        {"size_mb": size_mb, "target_lang": target_lang, "original_format": original_format},
-    )
+    if not form_id:
+        _write_step(
+            session_id,
+            "validate_upload",
+            "success",
+            f"DOCX validated · {size_mb} MB · format={original_format}",
+            {"size_mb": size_mb, "target_lang": target_lang, "original_format": original_format},
+        )
 
     meta = {
         "session_id": session_id,
@@ -306,6 +316,7 @@ def task_validate_upload(**context) -> dict:
         "filename": filename,
         "start_time": start_time,
         "original_format": original_format,
+        "form_id": form_id,
     }
     context["ti"].xcom_push(key="upload_meta", value=meta)
     return meta
@@ -333,13 +344,15 @@ def task_translate_docx(**context) -> dict:
     target_lang = meta["target_lang"]
     nllb_target = meta["nllb_target"]
     lang_label = "Spanish" if target_lang == "es" else "Portuguese"
+    form_id = meta.get("form_id")
 
-    _write_step(
-        session_id,
-        "translate_docx",
-        "running",
-        f"Translating DOCX to {lang_label} (NLLB + Llama verification)",
-    )
+    if not form_id:
+        _write_step(
+            session_id,
+            "translate_docx",
+            "running",
+            f"Translating DOCX to {lang_label} (NLLB + Llama verification)",
+        )
 
     # Load language config, glossary, translator, reviewer — same pattern as PDF DAG
     config = _lang_config(target_lang)
@@ -365,18 +378,19 @@ def task_translate_docx(**context) -> dict:
         shutil.copy2(output_path, f"/opt/airflow/data/output_{target_lang}.docx")
 
     size_mb = round(Path(output_path).stat().st_size / 1_048_576, 2)
-    _write_step(
-        session_id,
-        "translate_docx",
-        "success",
-        f"{summary['translated_runs']}/{summary['total_runs']} runs translated · "
-        f"{summary['llama_corrections_count']} Llama correction(s) · "
-        f"{summary['elapsed_seconds']}s · {size_mb} MB",
-        {
-            **summary,
-            "output_size_mb": size_mb,
-        },
-    )
+    if not form_id:
+        _write_step(
+            session_id,
+            "translate_docx",
+            "success",
+            f"{summary['translated_runs']}/{summary['total_runs']} runs translated · "
+            f"{summary['llama_corrections_count']} Llama correction(s) · "
+            f"{summary['elapsed_seconds']}s · {size_mb} MB",
+            {
+                **summary,
+                "output_size_mb": size_mb,
+            },
+        )
 
     ti.xcom_push(key="output_path", value=output_path)
     ti.xcom_push(key="translate_summary", value=summary)
@@ -440,16 +454,9 @@ def task_upload_to_gcs(**context) -> dict:
         blob = f"forms/{slug}/v{vnum}/{slug}_{target_lang}.docx"
         gcs_uri_str = f"gs://{_GCS_BUCKET_FORMS}/{blob}"
 
-        _write_step(session_id, "upload_to_gcs", "running", f"Uploading to {gcs_uri_str}")
         b, bl = gcs.parse_gcs_uri(gcs_uri_str)
         gcs.upload_file(output_path, b, bl)
-        _write_step(
-            session_id,
-            "upload_to_gcs",
-            "success",
-            f"Catalog DOCX uploaded · {target_lang.upper()}",
-            {"gcs_uri": gcs_uri_str},
-        )
+        logger.info("Catalog DOCX uploaded: %s (%s)", gcs_uri_str, target_lang.upper())
 
         result = {"gcs_uri": gcs_uri_str, "signed_url": None, "signed_url_expires_at": None}
     else:
@@ -648,25 +655,27 @@ def task_log_summary(**context) -> None:
         gcs_result.get("gcs_uri", "unknown"),
     )
 
-    _write_step(
-        session_id,
-        "log_summary",
-        "success",
-        f"Pipeline complete — {meta.get('target_lang', '').upper()} DOCX translation ready",
-    )
-    _write_audit(
-        user_id=meta.get("user_id", ""),
-        session_id=session_id,
-        request_id=meta.get("request_id", ""),
-        action="docx_pipeline_completed",
-        details={
-            "target_lang": meta.get("target_lang"),
-            "total_runs": translate_summary.get("total_runs", 0),
-            "translated_runs": translate_summary.get("translated_runs", 0),
-            "llama_corrections": translate_summary.get("llama_corrections_count", 0),
-            "gcs_uri": gcs_result.get("gcs_uri", ""),
-        },
-    )
+    form_id = meta.get("form_id")
+    if not form_id:
+        _write_step(
+            session_id,
+            "log_summary",
+            "success",
+            f"Pipeline complete — {meta.get('target_lang', '').upper()} DOCX translation ready",
+        )
+        _write_audit(
+            user_id=meta.get("user_id", ""),
+            session_id=session_id,
+            request_id=meta.get("request_id", ""),
+            action="docx_pipeline_completed",
+            details={
+                "target_lang": meta.get("target_lang"),
+                "total_runs": translate_summary.get("total_runs", 0),
+                "translated_runs": translate_summary.get("translated_runs", 0),
+                "llama_corrections": translate_summary.get("llama_corrections_count", 0),
+                "gcs_uri": gcs_result.get("gcs_uri", ""),
+            },
+        )
 
     work_dir = meta.get("work_dir", "")
     if work_dir and Path(work_dir).exists():

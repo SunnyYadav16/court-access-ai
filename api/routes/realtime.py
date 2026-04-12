@@ -731,9 +731,12 @@ async def end_room(
         except Exception as exc:
             logger.warning("Room %s: end_room transcript GCS upload failed: %s", session_id, exc)
 
-        rt_request.total_utterances = room.transcript_logger.entry_count
+        _utterances = room.transcript_logger.utterances if room.transcript_logger else []
+        rt_request.total_utterances = len(_utterances)
         if room.session_start_time:
             rt_request.duration_seconds = round((now - room.session_start_time).total_seconds(), 2)
+        _asr_scores = [u["asr_confidence"] for u in _utterances if u.get("asr_confidence") is not None]
+        rt_request.avg_asr_confidence_score = round(sum(_asr_scores) / len(_asr_scores), 4) if _asr_scores else None
 
         # Prevent double-upload if WebSocket subsequently disconnects
         room.artifacts_uploaded = True
@@ -1406,10 +1409,13 @@ async def session_websocket(
                     from db.models import RealtimeTranslationRequest
                     from db.models import Session as SessionModel
 
-                    total_utterances = room.transcript_logger.entry_count if room.transcript_logger else 0
+                    _utterances = room.transcript_logger.utterances if room.transcript_logger else []
+                    total_utterances = len(_utterances)
                     duration_s: float | None = None
                     if room.session_start_time is not None:
                         duration_s = round((end_time - room.session_start_time).total_seconds(), 2)
+                    _asr_scores = [u["asr_confidence"] for u in _utterances if u.get("asr_confidence") is not None]
+                    avg_asr = round(sum(_asr_scores) / len(_asr_scores), 4) if _asr_scores else None
 
                     async with AsyncSessionLocal() as _db:
                         rt_result = await _db.execute(
@@ -1424,6 +1430,7 @@ async def session_websocket(
                             rt_row.transcript_signed_url_expires_at = transcript_signed_url_expires_at
                             rt_row.total_utterances = total_utterances
                             rt_row.duration_seconds = duration_s
+                            rt_row.avg_asr_confidence_score = avg_asr
                             rt_row.phase = "ended"
                             rt_row.completed_at = end_time
 

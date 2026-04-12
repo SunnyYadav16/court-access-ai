@@ -79,11 +79,21 @@ CITATION_PATTERNS: list = [
 
 
 def _cuda_available() -> bool:
-    """Check CUDA availability via CTranslate2 (no torch dependency)."""
+    """Check CUDA availability — requires both CTranslate2 device count AND libcublas.
+
+    ctranslate2.get_cuda_device_count() can report devices from the host kernel
+    even when the container has no CUDA library mount (e.g. the Airflow image built
+    from Dockerfile target 'airflow' which lacks CUDA).  Verifying that libcublas is
+    actually loadable prevents a mid-translation crash and allows graceful CPU fallback.
+    """
     try:
         import ctranslate2
 
-        return ctranslate2.get_cuda_device_count() > 0
+        if ctranslate2.get_cuda_device_count() == 0:
+            return False
+        # Verify libcublas is actually loadable inside this container.
+        ctypes.CDLL("libcublas.so.12")
+        return True
     except Exception:
         return False
 
