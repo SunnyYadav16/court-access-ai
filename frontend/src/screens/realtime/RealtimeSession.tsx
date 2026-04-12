@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useMemo } from "react"
-import { ScreenId, SCREENS } from "@/lib/constants"
+import { ScreenId, SCREENS, type UserRole } from "@/lib/constants"
+import useAuth from "@/hooks/useAuth"
 import ScreenLabel from "@/components/shared/ScreenLabel"
 import useRealtimeStore, { type ChatMessage } from "@/store/realtimeStore"
 import { useRealtimeWebSocket, _wsRef } from "@/hooks/useRealtimeWebSocket"
@@ -270,6 +271,16 @@ export default function RealtimeSession({ onNav }: Props) {
   const toggleMute = useRealtimeStore((s) => s.toggleMute)
   const resetStore = useRealtimeStore((s) => s.reset)
 
+  // ── Auth — role-based home screen ──────────────────────────────────────────
+  const { role } = useAuth()
+  const ROLE_HOME: Record<UserRole, ScreenId> = {
+    public:         SCREENS.HOME_PUBLIC,
+    court_official: SCREENS.HOME_OFFICIAL,
+    interpreter:    SCREENS.HOME_INTERPRETER,
+    admin:          SCREENS.HOME_ADMIN,
+  }
+  const homeScreen = ROLE_HOME[role ?? "court_official"]
+
   // ── Hooks ──────────────────────────────────────────────────────────────────
   const { enqueue, clearQueue } = useTtsPlayback()
   const { startCapture, stopCapture } = useAudioCapture()
@@ -393,17 +404,17 @@ export default function RealtimeSession({ onNav }: Props) {
       })
     }
 
-    // Disconnect WS, reset store, queue toast for HomeCourtOfficial
+    // Disconnect WS, reset store, queue toast for home screen
     disconnect()
     resetStore()
     sessionStorage.setItem("pending_toast", TOAST_SESSION_ENDED)
-    onNav(SCREENS.HOME_OFFICIAL)
+    onNav(homeScreen)
   }
 
   function handleLeave() {
     disconnect()
     resetStore()
-    onNav(SCREENS.HOME_OFFICIAL)
+    onNav(homeScreen)
   }
 
   // ── Transcript area content (phase-aware) ─────────────────────────────────
