@@ -71,11 +71,13 @@ export default function AuthModal() {
         onClick={isDismissable ? closeAuthModal : undefined}
       />
 
-      {/* Modal card */}
+      {/* Modal card — force light-mode colours so inputs are readable on white bg.
+           The <html> has class="dark" globally; inside this white card we need dark ink. */}
       <div
         className="relative w-full max-w-md mx-4 rounded-xl shadow-2xl"
         style={{
           background: "#fff",
+          color: "#1A2332",
           maxHeight: "90vh",
           overflowY: "auto",
           animation: "authModalSlideUp 0.25s ease-out",

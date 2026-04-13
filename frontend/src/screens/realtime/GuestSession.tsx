@@ -40,27 +40,25 @@ type AudioState =
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const BG = "#0D1B2A"
-
 const LANG_LABELS: Record<string, string> = {
   en: "English",
   es: "Spanish (Español)",
   pt: "Portuguese (Português)",
 }
 
-// Per audio-state: { ring color, label, sublabel, animate }
+// Per audio-state: { ring color, icon, label, sublabel, animate }
 const STATE_CONFIG: Record<
   AudioState,
-  { ring: string; label: string; sublabel: string; pulse: boolean; spin: boolean }
+  { ring: string; icon: string; label: string; sublabel: string; pulse: boolean; spin: boolean }
 > = {
-  connecting:   { ring: "#475569", label: "Connecting…",        sublabel: "Setting up your session", pulse: false, spin: true },
-  waiting:      { ring: "#F59E0B", label: "Waiting",            sublabel: "Session will start shortly", pulse: true, spin: false },
-  your_turn:    { ring: "#3B82F6", label: "You may speak",      sublabel: "Speak clearly into your microphone", pulse: true, spin: false },
-  you_speaking: { ring: "#EF4444", label: "You're speaking",    sublabel: "Listening…", pulse: false, spin: false },
-  translating:  { ring: "#A78BFA", label: "Translating",        sublabel: "Processing your speech", pulse: true, spin: false },
-  ai_speaking:  { ring: "#22C55E", label: "Court is speaking",  sublabel: "Listen to the translation", pulse: true, spin: false },
-  muted:        { ring: "#6B7280", label: "Microphone muted",   sublabel: "Tap the mic button to unmute", pulse: false, spin: false },
-  ended:        { ring: "#475569", label: "Session ended",      sublabel: "Thank you", pulse: false, spin: false },
+  connecting:   { ring: "#475569", icon: "more_horiz",         label: "Connecting…",        sublabel: "Setting up your session", pulse: false, spin: true },
+  waiting:      { ring: "#F59E0B", icon: "hourglass_top",      label: "Waiting",            sublabel: "Session will start shortly", pulse: true, spin: false },
+  your_turn:    { ring: "#3B82F6", icon: "mic",                label: "You may speak",      sublabel: "Speak clearly into your microphone", pulse: true, spin: false },
+  you_speaking: { ring: "#EF4444", icon: "mic",                label: "You're speaking",    sublabel: "Listening…", pulse: false, spin: false },
+  translating:  { ring: "#A78BFA", icon: "translate",          label: "Translating",        sublabel: "Processing your speech", pulse: true, spin: false },
+  ai_speaking:  { ring: "#22C55E", icon: "volume_up",          label: "Court is speaking",  sublabel: "Listen to the translation", pulse: true, spin: false },
+  muted:        { ring: "#6B7280", icon: "mic_off",            label: "Microphone muted",   sublabel: "Tap the mic button to unmute", pulse: false, spin: false },
+  ended:        { ring: "#475569", icon: "waving_hand",        label: "Session ended",      sublabel: "Thank you", pulse: false, spin: false },
 }
 
 // ── Guest message bubbles ─────────────────────────────────────────────────────
@@ -85,29 +83,25 @@ function GuestMessageBubble({
   return (
     <div className={`flex flex-col ${isSelf ? "items-end" : "items-start"} gap-1`}>
       <div className="flex items-center gap-2 px-1">
-        <span className="text-[11px] font-semibold" style={{ color: "rgba(255,255,255,0.5)" }}>
+        <span className="text-[11px] font-semibold text-white/50">
           {speakerLabel}
         </span>
-        <span className="text-[10px]" style={{ color: "rgba(255,255,255,0.25)" }}>
+        <span className="text-[10px] text-white/25">
           {msg.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
         </span>
       </div>
       <div
-        className="max-w-xs px-3 py-2 text-sm leading-relaxed"
-        style={{
-          background: isSelf ? "rgba(99,102,241,0.14)" : "rgba(34,197,94,0.1)",
-          borderRadius: isSelf ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
-          color: "rgba(255,255,255,0.92)",
-        }}
+        className={`max-w-xs px-3 py-2 text-sm leading-relaxed text-white/[0.92] ${
+          isSelf
+            ? "bg-indigo-500/[0.14] rounded-[14px_14px_4px_14px]"
+            : "bg-green-500/10 rounded-[14px_14px_14px_4px]"
+        }`}
       >
         {displayText}
       </div>
       {subText && (
-        <div
-          className="max-w-xs px-2 text-[11px] leading-relaxed"
-          style={{ color: "rgba(255,255,255,0.35)" }}
-        >
-          <span style={{ color: "rgba(255,255,255,0.2)" }}>{subLabel}: </span>
+        <div className="max-w-xs px-2 text-[11px] leading-relaxed text-white/35">
+          <span className="text-white/20">{subLabel}: </span>
           {subText}
         </div>
       )}
@@ -131,20 +125,18 @@ function GuestPartialBubble({
   return (
     <div className={`flex flex-col ${isSelf ? "items-end" : "items-start"} gap-1`}>
       <div className="flex items-center gap-2 px-1">
-        <span className="text-[11px] font-semibold" style={{ color: "rgba(255,255,255,0.4)" }}>
+        <span className="text-[11px] font-semibold text-white/40">
           {speakerLabel}
         </span>
         <span className="blink-dot" />
-        <span className="text-[10px]" style={{ color: "rgba(255,255,255,0.3)" }}>speaking</span>
+        <span className="text-[10px] text-white/30">speaking</span>
       </div>
       <div
-        className="max-w-xs px-3 py-2 text-sm leading-relaxed"
-        style={{
-          background: isSelf ? "rgba(99,102,241,0.07)" : "rgba(34,197,94,0.05)",
-          borderRadius: isSelf ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
-          border: "1px dashed rgba(255,255,255,0.1)",
-          color: "rgba(255,255,255,0.6)",
-        }}
+        className={`max-w-xs px-3 py-2 text-sm leading-relaxed border border-dashed border-white/10 text-white/60 ${
+          isSelf
+            ? "bg-indigo-500/[0.07] rounded-[14px_14px_4px_14px]"
+            : "bg-green-500/[0.05] rounded-[14px_14px_14px_4px]"
+        }`}
       >
         {displayText}
       </div>
@@ -211,15 +203,9 @@ function AudioOrb({ state, compact = false }: { state: AudioState; compact?: boo
           transition: "width 0.3s ease, height 0.3s ease",
         }}
       >
-        <span className={`${compact ? "text-xl" : "text-3xl"} select-none`}>
-          {state === "connecting"   && "⋯"}
-          {state === "waiting"      && "⏳"}
-          {state === "your_turn"    && "🎙"}
-          {state === "you_speaking" && "🎙"}
-          {state === "translating"  && "✦"}
-          {state === "ai_speaking"  && "🔊"}
-          {state === "muted"        && "🔇"}
-          {state === "ended"        && "👋"}
+        <span className={`material-symbols-outlined ${compact ? "text-2xl" : "text-4xl"} select-none`}
+          style={{ color: cfg.ring }}>
+          {cfg.icon}
         </span>
       </div>
     </div>
@@ -302,7 +288,6 @@ export default function GuestSession({ meta, code }: Props) {
     if (sessionPhase === "connecting") return "connecting"
     if (sessionPhase === "waiting")    return "waiting"
     if (sessionPhase === "ended")      return "ended"
-    // active
     if (isPlayingTts)  return "ai_speaking"
     if (micLocked)     return "translating"
     if (isSpeaking)    return "you_speaking"
@@ -332,21 +317,11 @@ export default function GuestSession({ meta, code }: Props) {
   // ── Thank-you screen ───────────────────────────────────────────────────────
   if (left) {
     return (
-      <div
-        className="min-h-screen flex flex-col items-center justify-center gap-5"
-        style={{ background: BG, color: "#fff" }}
-      >
-        <div className="text-5xl">👋</div>
-        <h1
-          className="text-2xl font-bold"
-          style={{ fontFamily: "Palatino, Georgia, serif" }}
-        >
-          Session Ended
-        </h1>
-        <p className="text-sm" style={{ color: "rgba(255,255,255,0.5)" }}>
-          Thank you for using CourtAccess AI.
-        </p>
-        <p className="text-xs text-center max-w-xs" style={{ color: "rgba(255,255,255,0.3)" }}>
+      <div className="min-h-screen flex flex-col items-center justify-center gap-5 bg-background text-on-surface">
+        <span className="material-symbols-outlined text-5xl text-white/40">waving_hand</span>
+        <h1 className="text-2xl font-headline text-white">Session Ended</h1>
+        <p className="text-sm text-white/50">Thank you for using CourtAccess AI.</p>
+        <p className="text-xs text-center max-w-xs text-white/30">
           If you need a record of this session, please ask the court official.
         </p>
       </div>
@@ -356,24 +331,13 @@ export default function GuestSession({ meta, code }: Props) {
   // ── Session ended by host ──────────────────────────────────────────────────
   if (sessionPhase === "ended" && !left) {
     return (
-      <div
-        className="min-h-screen flex flex-col items-center justify-center gap-5"
-        style={{ background: BG, color: "#fff" }}
-      >
-        <div className="text-5xl">✅</div>
-        <h1
-          className="text-2xl font-bold"
-          style={{ fontFamily: "Palatino, Georgia, serif" }}
-        >
-          Session Complete
-        </h1>
-        <p className="text-sm" style={{ color: "rgba(255,255,255,0.5)" }}>
-          The court official has ended the session.
-        </p>
+      <div className="min-h-screen flex flex-col items-center justify-center gap-5 bg-background text-on-surface">
+        <span className="material-symbols-outlined text-5xl text-green-400">check_circle</span>
+        <h1 className="text-2xl font-headline text-white">Session Complete</h1>
+        <p className="text-sm text-white/50">The court official has ended the session.</p>
         <button
           onClick={() => setLeft(true)}
-          className="mt-4 px-6 py-2.5 rounded-lg text-sm font-semibold"
-          style={{ background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.8)", border: "1px solid rgba(255,255,255,0.12)" }}
+          className="mt-4 px-6 py-2.5 rounded-lg text-sm font-semibold bg-white/[0.08] text-white/80 border border-white/[0.12] cursor-pointer hover:bg-white/[0.12] transition-colors"
         >
           Close
         </button>
@@ -414,53 +378,41 @@ export default function GuestSession({ meta, code }: Props) {
                      background:#ef4444; animation:blink 1s ease-in-out infinite; }
       `}</style>
 
-      <div
-        className="min-h-screen flex flex-col"
-        style={{ background: BG, color: "#fff" }}
-      >
+      <div className="min-h-screen flex flex-col bg-background text-on-surface">
         {/* ── Top bar ─────────────────────────────────────────────────────── */}
-        <div
-          className="flex items-center justify-between px-5 py-3 shrink-0"
-          style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
-        >
+        <div className="flex items-center justify-between px-5 py-3 shrink-0 bg-[#0D1B2A] border-b border-white/[0.07] shadow-xl shadow-black/40">
           <div className="flex items-center gap-2">
-            <span className="text-base">⚖</span>
-            <span
-              className="text-sm font-semibold"
-              style={{ fontFamily: "Palatino, Georgia, serif", color: "rgba(255,255,255,0.85)" }}
-            >
+            <span className="material-symbols-outlined text-[#FFD700] text-base">gavel</span>
+            <span className="text-sm font-headline font-semibold text-white/85">
               CourtAccess AI
             </span>
           </div>
           <div className="flex items-center gap-3">
             {meta.courtDivision && (
-              <span className="text-xs" style={{ color: "rgba(255,255,255,0.35)" }}>
-                {meta.courtDivision}
-              </span>
+              <span className="text-xs text-white/35">{meta.courtDivision}</span>
             )}
             {meta.courtroom && (
-              <span className="text-xs" style={{ color: "rgba(255,255,255,0.35)" }}>
-                {meta.courtroom}
-              </span>
+              <span className="text-xs text-white/35">{meta.courtroom}</span>
             )}
             <span
-              className="text-[10px] font-semibold px-2 py-0.5 rounded"
-              style={{
-                background: isActive ? "rgba(239,68,68,0.12)" : "rgba(255,255,255,0.06)",
-                color: isActive ? "#ef4444" : "rgba(255,255,255,0.4)",
-              }}
+              className={`text-[10px] font-semibold px-2 py-0.5 rounded ${
+                isActive
+                  ? "bg-red-500/[0.12] text-red-400"
+                  : "bg-white/[0.06] text-white/40"
+              }`}
             >
-              {isActive ? "● LIVE" : sessionPhase === "connecting" ? "Connecting" : "Waiting"}
+              {isActive ? (
+                <span className="flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-400 inline-block" /> LIVE
+                </span>
+              ) : sessionPhase === "connecting" ? "Connecting" : "Waiting"}
             </span>
           </div>
         </div>
 
         {/* ── Language banner ─────────────────────────────────────────────── */}
-        <div
-          className="text-center py-2 text-xs"
-          style={{ color: "rgba(255,255,255,0.3)", borderBottom: "1px solid rgba(255,255,255,0.04)" }}
-        >
-          Your language: <strong style={{ color: "rgba(255,255,255,0.55)" }}>
+        <div className="text-center py-2 text-xs text-white/30 border-b border-white/[0.04]">
+          Your language: <strong className="text-white/55">
             {LANG_LABELS[meta.targetLanguage] ?? meta.targetLanguage}
           </strong>
         </div>
@@ -470,14 +422,15 @@ export default function GuestSession({ meta, code }: Props) {
 
           {/* Orb area — compact when messages exist */}
           <div
-            className="flex flex-col items-center py-4 shrink-0 transition-all"
-            style={{ borderBottom: messages.length > 0 || livePartial ? "1px solid rgba(255,255,255,0.06)" : "none" }}
+            className={`flex flex-col items-center py-4 shrink-0 transition-all ${
+              messages.length > 0 || livePartial ? "border-b border-white/[0.06]" : ""
+            }`}
           >
             <AudioOrb state={audioState} compact={messages.length > 0 || !!livePartial} />
-            <p className="text-sm font-semibold mt-3" style={{ color: cfg.ring, transition: "color 0.4s ease" }}>
+            <p className="text-sm font-semibold mt-3 transition-colors" style={{ color: cfg.ring }}>
               {cfg.label}
             </p>
-            <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.35)" }}>
+            <p className="text-xs mt-0.5 text-white/35">
               {cfg.sublabel}
             </p>
           </div>
@@ -504,7 +457,7 @@ export default function GuestSession({ meta, code }: Props) {
             </div>
           ) : (
             <div className="flex-1 flex items-center justify-center">
-              <p className="text-sm text-center max-w-xs" style={{ color: "rgba(255,255,255,0.3)" }}>
+              <p className="text-sm text-center max-w-xs text-white/30">
                 {sessionPhase === "waiting"
                   ? "Waiting for session to start…"
                   : "Conversation will appear here"}
@@ -514,19 +467,11 @@ export default function GuestSession({ meta, code }: Props) {
         </div>
 
         {/* ── Bottom controls ──────────────────────────────────────────────── */}
-        <div
-          className="px-6 py-5 flex items-center justify-between shrink-0"
-          style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }}
-        >
+        <div className="px-6 py-5 flex items-center justify-between shrink-0 border-t border-outline-variant/20 bg-surface-container-lowest/30">
           {/* Leave button */}
           <button
             onClick={handleLeave}
-            className="px-4 py-2 rounded-lg text-sm font-semibold"
-            style={{
-              background: "rgba(127,29,29,0.35)",
-              color: "#fca5a5",
-              border: "1px solid rgba(127,29,29,0.5)",
-            }}
+            className="px-4 py-2 rounded-lg text-sm font-semibold bg-red-950/50 text-red-300 border border-red-900/50 cursor-pointer hover:bg-red-950/70 transition-colors"
           >
             Leave Session
           </button>
@@ -535,7 +480,7 @@ export default function GuestSession({ meta, code }: Props) {
           <button
             onClick={isActive && !micLocked ? handleMicToggle : undefined}
             disabled={!isActive || micLocked}
-            className="w-16 h-16 rounded-full flex items-center justify-center text-2xl"
+            className="w-16 h-16 rounded-full flex items-center justify-center"
             style={{
               background: isMuted
                 ? "rgba(255,255,255,0.06)"
@@ -550,7 +495,9 @@ export default function GuestSession({ meta, code }: Props) {
               boxShadow: !isMuted && isActive && !micLocked ? "0 0 20px rgba(239,68,68,0.25)" : "none",
             }}
           >
-            {micLocked ? "🔒" : isMuted ? "🔇" : "🎙"}
+            <span className="material-symbols-outlined text-2xl">
+              {micLocked ? "lock" : isMuted ? "mic_off" : "mic"}
+            </span>
           </button>
 
           {/* Spacer to keep mic centered */}

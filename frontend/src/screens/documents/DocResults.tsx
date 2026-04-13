@@ -1,9 +1,16 @@
+/**
+ * screens/documents/DocResults.tsx
+ *
+ * Document results / download screen — renders INSIDE AppShell.
+ * Dark-themed with download cards, processing summary, and retranslate option.
+ *
+ * Preserved logic: documentsApi.status() for fresh signed URL,
+ * documentsApi.retranslate() for second language, OCR metadata from steps,
+ * session & result state management.
+ */
+
 import { useEffect, useState } from "react"
 import { ScreenId, SCREENS } from "@/lib/constants"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
-import TopBar from "@/components/shared/TopBar"
-import ScreenLabel from "@/components/shared/ScreenLabel"
 import { documentsApi, type PipelineStep } from "@/services/api"
 import useAuthStore from "@/store/authStore"
 
@@ -104,46 +111,40 @@ export default function DocResults({ onNav }: Props) {
   const totalRegions = (ocrMeta.total_regions as number | undefined) ?? null
   const translatable = (ocrMeta.translatable as number | undefined) ?? null
 
-  const summaryRows: [string, string][] = [
-    ["Text regions", totalRegions != null ? String(totalRegions) : "—"],
-    ["Translatable", translatable != null ? String(translatable) : "—"],
-    ["Avg confidence", avgConf != null ? avgConf.toFixed(3) : "—"],
-    ["Llama corrections", String(corrections)],
-    ["Processing time", formatSeconds(procTime)],
+  const summaryRows: { label: string; value: string; icon: string }[] = [
+    { label: "Text regions", value: totalRegions != null ? String(totalRegions) : "—", icon: "text_fields" },
+    { label: "Translatable", value: translatable != null ? String(translatable) : "—", icon: "translate" },
+    { label: "Avg confidence", value: avgConf != null ? avgConf.toFixed(3) : "—", icon: "verified" },
+    { label: "Llama corrections", value: String(corrections), icon: "auto_fix_high" },
+    { label: "Processing time", value: formatSeconds(procTime), icon: "schedule" },
   ]
 
   // ── Guard — navigated here without a result ──────────────────────────────────
 
   if (!sessionId || !documentResult) {
     return (
-      <div className="min-h-screen" style={{ background: "#F6F7F9" }}>
-        <TopBar onNav={onNav} />
-        <div className="max-w-xl mx-auto px-5 py-8">
-          <Card>
-            <CardContent className="p-6 text-center">
-              <p className="text-sm mb-4" style={{ color: "#8494A7" }}>
-                No completed translation found.
-              </p>
-              <div className="flex justify-center gap-3">
-                <Button
-                  size="sm"
-                  className="cursor-pointer"
-                  style={{ background: "#0B1D3A" }}
-                  onClick={() => onNav(SCREENS.DOC_HISTORY)}
-                >
-                  📜 View Document History
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="cursor-pointer"
-                  onClick={() => onNav(SCREENS.DOC_UPLOAD)}
-                >
-                  📄 Upload New Document
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+      <div className="px-6 lg:px-12 py-8 max-w-4xl mx-auto">
+        <div className="bg-surface-container-low rounded-xl p-12 text-center border border-white/5">
+          <span className="material-symbols-outlined text-5xl text-on-surface-variant mb-4 block">
+            search_off
+          </span>
+          <p className="text-on-surface-variant mb-6">No completed translation found.</p>
+          <div className="flex justify-center gap-4">
+            <button
+              className="px-6 py-3 bg-[#FFD700] text-[#0D1B2A] rounded-lg font-bold text-sm hover:scale-105 transition-transform active:scale-95 border-none cursor-pointer flex items-center gap-2"
+              onClick={() => onNav(SCREENS.DOC_HISTORY)}
+            >
+              <span className="material-symbols-outlined text-lg">history</span>
+              View Document History
+            </button>
+            <button
+              className="px-6 py-3 bg-surface-container-high text-on-surface rounded-lg font-bold text-sm hover:bg-surface-bright transition-colors border border-white/10 cursor-pointer flex items-center gap-2"
+              onClick={() => onNav(SCREENS.DOC_UPLOAD)}
+            >
+              <span className="material-symbols-outlined text-lg">upload_file</span>
+              Upload New Document
+            </button>
+          </div>
         </div>
       </div>
     )
@@ -152,153 +153,166 @@ export default function DocResults({ onNav }: Props) {
   const expiresLabel = expiresAt ? minutesLeft(expiresAt) : null
 
   return (
-    <div className="min-h-screen" style={{ background: "#F6F7F9" }}>
-      <TopBar onNav={onNav} />
-      <div className="max-w-xl mx-auto px-5 py-8">
+    <div className="px-6 lg:px-8 py-8 max-w-5xl mx-auto space-y-8">
 
-        {/* Header */}
-        <div className="flex items-center gap-3 mb-6">
-          <span className="text-3xl">✅</span>
-          <div>
-            <h1
-              className="text-xl font-bold m-0"
-              style={{ fontFamily: "Palatino, Georgia, serif", color: "#1A2332" }}
+      {/* Header */}
+      <section className="relative overflow-hidden rounded-xl bg-gradient-to-br from-primary-container to-surface-container-lowest p-8 shadow-2xl border border-white/5">
+        <div className="relative z-10 flex items-center gap-4">
+          <div className="p-3 rounded-xl bg-secondary-container/20">
+            <span
+              className="material-symbols-outlined text-secondary text-4xl"
+              style={{ fontVariationSettings: "'FILL' 1" }}
             >
+              task_alt
+            </span>
+          </div>
+          <div>
+            <h1 className="text-3xl font-headline text-on-surface mb-1">
               Translation Complete
             </h1>
-            <p className="text-xs m-0" style={{ color: "#8494A7" }}>
+            <p className="text-on-surface-variant text-sm">
               Session {sessionId.slice(0, 8)}…
               {procTime != null && ` · Completed in ${formatSeconds(procTime)}`}
             </p>
           </div>
         </div>
+        {/* Background glow */}
+        <div className="absolute right-0 top-0 w-64 h-64 bg-secondary/5 blur-[100px] rounded-full -translate-y-1/2 translate-x-1/2" />
+      </section>
 
-        {/* Action error banner */}
-        {actionError && (
-          <div
-            className="rounded-md px-4 py-3 text-sm flex items-start gap-2 mb-4"
-            style={{ background: "#FEF2F2", color: "#B91C1C", border: "1px solid #FECACA" }}
-          >
-            <span className="flex-shrink-0">⚠️</span>
-            <span>{actionError}</span>
-          </div>
-        )}
+      {/* Action error banner */}
+      {actionError && (
+        <div className="rounded-xl px-5 py-4 text-sm flex items-start gap-3 bg-error-container/20 border border-error/30">
+          <span className="material-symbols-outlined text-error text-lg flex-shrink-0 mt-0.5">warning</span>
+          <span className="text-error">{actionError}</span>
+        </div>
+      )}
 
-        {/* Downloads */}
-        <Card className="mb-3">
-          <CardContent className="p-5">
-            <div className="text-sm font-semibold mb-3" style={{ color: "#1A2332" }}>
-              Download Translations
+      {/* Download Cards */}
+      <section>
+        <h2 className="font-headline text-2xl text-on-surface mb-2">Certified Deliverables</h2>
+        <p className="text-on-surface-variant text-sm italic mb-6">
+          High-precision legal PDFs available for immediate download.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+          {/* Primary language — completed */}
+          <div className="group bg-surface-container-high rounded-xl p-6 transition-all hover:translate-y-[-4px] hover:shadow-2xl hover:shadow-black/60 relative overflow-hidden border-t-2 border-secondary/0 hover:border-secondary/40">
+            <div className="absolute -top-10 -right-10 w-32 h-32 bg-secondary/5 rounded-full blur-3xl group-hover:bg-secondary/10 transition-colors" />
+            <div className="flex justify-between items-start mb-4">
+              <span className="text-4xl">{FLAG[targetLang] ?? "🌐"}</span>
+              <span className="text-[10px] bg-tertiary-container/30 text-tertiary-fixed px-2 py-0.5 rounded uppercase font-bold tracking-widest">
+                Translated
+              </span>
             </div>
-            <div className="flex gap-3">
-
-              {/* Primary language — completed */}
-              <div
-                className="flex-1 rounded-lg p-4 text-center"
-                style={{ border: "1.5px solid #0B1D3A" }}
-              >
-                <div className="text-3xl mb-1">{FLAG[targetLang] ?? "🌐"}</div>
-                <div className="text-sm font-semibold mb-0.5" style={{ color: "#1A2332" }}>
-                  {LANG_LABEL[targetLang] ?? targetLang}
-                </div>
-                {avgConf != null && (
-                  <div className="text-[11px] mb-3" style={{ color: "#8494A7" }}>
-                    Avg confidence: {avgConf.toFixed(3)}
-                  </div>
-                )}
-                <Button
-                  id="download-pdf-btn"
-                  size="sm"
-                  className="w-full cursor-pointer"
-                  style={{ background: downloading ? "#4A5568" : "#0B1D3A" }}
-                  disabled={downloading}
-                  onClick={handleDownload}
-                >
-                  {downloading ? "Fetching…" : "⬇ Download PDF"}
-                </Button>
-              </div>
-
-              {/* Second language — trigger retranslate */}
-              <div
-                className="flex-1 rounded-lg p-4 text-center"
-                style={{ border: "1.5px solid #E2E6EC" }}
-              >
-                <div className="text-3xl mb-1">{FLAG[secondLang] ?? "🌐"}</div>
-                <div className="text-sm font-semibold mb-0.5" style={{ color: "#1A2332" }}>
-                  {LANG_LABEL[secondLang] ?? secondLang}
-                </div>
-                <div className="text-[11px] mb-3" style={{ color: "#8494A7" }}>
-                  Not yet translated
-                </div>
-                <Button
-                  id="retranslate-btn"
-                  size="sm"
-                  variant="outline"
-                  className="w-full cursor-pointer"
-                  disabled={retranslating}
-                  onClick={handleRetranslate}
-                >
-                  {retranslating ? "Starting…" : "🔄 Translate Now"}
-                </Button>
-              </div>
-            </div>
-
-            {expiresLabel && (
-              <p className="text-[11px] text-center mt-3" style={{ color: "#8494A7" }}>
-                Signed URL expires in {expiresLabel} · Original file auto-deletes in 24 hours
+            <h3 className="font-headline text-xl text-on-surface mb-1">
+              {LANG_LABEL[targetLang] ?? targetLang}
+            </h3>
+            {avgConf != null && (
+              <p className="text-on-surface-variant text-xs mb-6">
+                Avg confidence: {avgConf.toFixed(3)}
               </p>
             )}
-          </CardContent>
-        </Card>
+            <button
+              id="download-pdf-btn"
+              onClick={handleDownload}
+              disabled={downloading}
+              className="w-full bg-secondary text-on-secondary py-3 rounded-lg font-bold text-sm flex items-center justify-center gap-2 hover:bg-secondary-fixed-dim transition-colors active:scale-[0.98] border-none cursor-pointer disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined text-lg">download</span>
+              {downloading ? "Fetching…" : "Download PDF"}
+            </button>
+          </div>
 
-        {/* Summary */}
-        <Card className="mb-3">
-          <CardContent className="p-5">
-            <div className="text-sm font-semibold mb-3" style={{ color: "#1A2332" }}>
-              Processing Summary
+          {/* Second language — trigger retranslate */}
+          <div className="group bg-surface-container-high rounded-xl p-6 transition-all hover:translate-y-[-4px] hover:shadow-2xl hover:shadow-black/60 relative overflow-hidden">
+            <div className="absolute -top-10 -right-10 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors" />
+            <div className="flex justify-between items-start mb-4">
+              <span className="text-4xl">{FLAG[secondLang] ?? "🌐"}</span>
+              <span className="text-[10px] bg-surface-container-highest text-on-surface-variant px-2 py-0.5 rounded uppercase font-bold tracking-widest">
+                Available
+              </span>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              {summaryRows.map(([k, v]) => (
-                <div key={k} className="flex justify-between text-xs py-1">
-                  <span style={{ color: "#8494A7" }}>{k}</span>
-                  <span className="font-medium" style={{ color: "#1A2332" }}>{v}</span>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Legal note — only shown when Llama made corrections */}
-        {corrections > 0 && (
-          <Card className="mb-5" style={{ background: "#EFF6FF", border: "1px solid #BFDBFE" }}>
-            <CardContent className="p-4">
-              <p className="text-xs leading-relaxed m-0" style={{ color: "#1e40af" }}>
-                <strong>⚡ Legal Review Note:</strong> Llama 4 made {corrections} correction
-                {corrections !== 1 ? "s" : ""} to legal terminology during translation.
-              </p>
-            </CardContent>
-          </Card>
-        )}
-
-        <div className="flex gap-3">
-          <Button
-            variant="outline"
-            className="cursor-pointer"
-            onClick={() => onNav(SCREENS.DOC_UPLOAD)}
-          >
-            📄 Upload Another
-          </Button>
-          <Button
-            variant="outline"
-            className="cursor-pointer"
-            onClick={() => onNav(SCREENS.HOME_PUBLIC)}
-          >
-            🏠 Home
-          </Button>
+            <h3 className="font-headline text-xl text-on-surface mb-1">
+              {LANG_LABEL[secondLang] ?? secondLang}
+            </h3>
+            <p className="text-on-surface-variant text-xs mb-6">Not yet translated</p>
+            <button
+              id="retranslate-btn"
+              onClick={handleRetranslate}
+              disabled={retranslating}
+              className="w-full py-3 rounded-lg font-bold text-sm flex items-center justify-center gap-2 transition-colors active:scale-[0.98] cursor-pointer border border-secondary/20 text-secondary hover:bg-secondary/10 bg-transparent disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined text-lg">translate</span>
+              {retranslating ? "Starting…" : "Translate Now"}
+            </button>
+          </div>
         </div>
 
+        {expiresLabel && (
+          <p className="text-[11px] text-center mt-4 text-on-surface-variant">
+            Signed URL expires in {expiresLabel} · Original file auto-deletes in 24 hours
+          </p>
+        )}
+      </section>
+
+      {/* Processing Summary */}
+      <section className="bg-surface-container-low rounded-xl p-6 border border-white/5">
+        <h3 className="font-headline text-lg text-on-surface mb-5">Processing Summary</h3>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          {summaryRows.map((row) => (
+            <div
+              key={row.label}
+              className="bg-surface-container-high rounded-lg p-4 border border-white/5"
+            >
+              <span className="material-symbols-outlined text-secondary text-lg mb-2 block">
+                {row.icon}
+              </span>
+              <div className="text-xl font-bold text-on-surface mb-0.5">{row.value}</div>
+              <div className="text-[10px] text-on-surface-variant uppercase tracking-widest">
+                {row.label}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Legal Review Note — only shown when Llama made corrections */}
+      {corrections > 0 && (
+        <section className="bg-tertiary-container/20 border border-tertiary/20 rounded-xl p-5 flex items-start gap-4">
+          <span className="material-symbols-outlined text-tertiary text-xl flex-shrink-0 mt-0.5"
+                style={{ fontVariationSettings: "'FILL' 1" }}>
+            auto_awesome
+          </span>
+          <div>
+            <h4 className="text-sm font-bold text-tertiary mb-1">Legal Review Note</h4>
+            <p className="text-xs text-on-surface-variant leading-relaxed">
+              Llama 4 made {corrections} correction
+              {corrections !== 1 ? "s" : ""} to legal terminology during translation.
+              Review the translated document to verify term accuracy in the legal context.
+            </p>
+          </div>
+        </section>
+      )}
+
+      {/* Bottom actions */}
+      <div className="flex gap-4 pt-2">
+        <button
+          onClick={() => onNav(SCREENS.DOC_UPLOAD)}
+          className="px-6 py-3 rounded-lg font-bold text-sm flex items-center gap-2 bg-surface-container-high text-on-surface hover:bg-surface-bright transition-colors border border-white/10 cursor-pointer"
+        >
+          <span className="material-symbols-outlined text-lg">upload_file</span>
+          Upload Another
+        </button>
+        <button
+          onClick={() => onNav(SCREENS.DOC_HISTORY)}
+          className="px-6 py-3 rounded-lg font-bold text-sm flex items-center gap-2 bg-surface-container-high text-on-surface hover:bg-surface-bright transition-colors border border-white/10 cursor-pointer"
+        >
+          <span className="material-symbols-outlined text-lg">history</span>
+          View History
+        </button>
       </div>
-      <ScreenLabel name="DOCUMENT RESULTS — DOWNLOAD" />
     </div>
   )
 }

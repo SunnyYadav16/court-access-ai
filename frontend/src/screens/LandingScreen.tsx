@@ -1,214 +1,258 @@
-import { ScreenId } from "@/lib/constants"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
+/**
+ * screens/LandingScreen.tsx
+ *
+ * Public landing page for unauthenticated users.
+ * Renders OUTSIDE AppShell — has its own inline nav and footer.
+ * Migrated from the `landing_page/code.html` design mockup.
+ *
+ * Preserved logic:
+ *   - openAuthModal("login") for sign-in buttons
+ *   - openAuthModal("signup") for "Create one for free" link
+ */
+
+import type { ScreenId } from "@/lib/constants"
 import useAuthStore from "@/store/authStore"
 
-interface Props { onNav: (s: ScreenId) => void }
+interface Props {
+  onNav: (s: ScreenId) => void
+}
+
+// ── Service card data ──────────────────────────────────────────────────────
 
 const services = [
   {
-    icon: "📄",
+    icon: "description",
     title: "Document Translation",
     who: "For the public",
-    desc: "Upload legal court documents and receive accurate translations in Spanish or Portuguese, powered by AI and reviewed for legal terminology.",
+    desc: "Instant, accurate translation of legal notices, evidence, and filings. Optimized for the public to understand complex legal jargon.",
   },
   {
-    icon: "🎙",
+    icon: "mic",
     title: "Real-Time Interpretation",
     who: "For court officials",
-    desc: "Enable live bidirectional speech interpretation during court proceedings, with automatic legal term correction and session transcripts.",
+    desc: "Low-latency audio-to-text and text-to-speech interpretation designed for active courtroom dialogue and legal counsel.",
   },
   {
-    icon: "🏛",
+    icon: "account_balance",
     title: "Government Forms",
     who: "For everyone",
-    desc: "Browse and download pre-translated Massachusetts court forms in Spanish and Portuguese, regularly updated and verified by interpreters.",
+    desc: "Guided assistance for completing court-mandated documentation with automated multilingual validation.",
   },
 ]
 
+// ── Feature pill data ──────────────────────────────────────────────────────
+
 const features = [
-  { icon: "🌐", label: "Spanish & Portuguese" },
-  { icon: "⚡", label: "Real-Time AI Processing" },
-  { icon: "📋", label: "45+ Court Forms" },
-  { icon: "🔒", label: "Secure & Private" },
+  { icon: "language", emoji: "🌐", label: "Spanish & Portuguese" },
+  { icon: "bolt", emoji: "⚡", label: "Real-Time AI Processing" },
+  { icon: "assignment", emoji: "📋", label: "45+ Court Forms" },
+  { icon: "lock", emoji: "🔒", label: "Secure & Private" },
 ]
 
+// ── Component ──────────────────────────────────────────────────────────────
+
 export default function LandingScreen({ onNav: _onNav }: Props) {
-  const openAuthModal = useAuthStore((s) => s.openAuthModal);
+  const openAuthModal = useAuthStore((s) => s.openAuthModal)
 
   return (
-    <div className="min-h-screen" style={{ background: "#F6F7F9", fontFamily: "'Segoe UI', sans-serif" }}>
+    <div className="min-h-screen text-on-surface font-body selection:bg-secondary-container selection:text-on-secondary-container relative">
 
-      {/* Top Nav */}
-      <nav className="px-8 py-4 flex items-center justify-between"
-        style={{ background: "#fff", borderBottom: "1px solid #E2E6EC" }}>
-        <div className="flex items-center gap-2">
-          <span className="text-2xl">⚖</span>
-          <span className="text-lg font-bold tracking-wide"
-            style={{ fontFamily: "Palatino, Georgia, serif", color: "#0B1D3A" }}>
+      {/* Fixed background overlay with justice statue */}
+      <div className="page-bg-overlay" />
+
+      {/* ── Top Nav Bar ────────────────────────────────────────────── */}
+      <nav className="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-6 h-14 bg-[#0D1B2A]/90 backdrop-blur-md shadow-xl shadow-black/40">
+        <div className="flex items-center gap-4">
+          <span className="font-headline text-xl font-semibold text-white tracking-tight">
             CourtAccess AI
           </span>
-          <span className="text-[10px] font-semibold px-2 py-0.5 rounded ml-1"
-            style={{ background: "#F5EDE0", color: "#C8963E" }}>
+          <span className="bg-secondary-container text-on-secondary-container px-2 py-0.5 rounded-lg text-[10px] font-bold tracking-widest uppercase">
             BETA
           </span>
         </div>
-        <Button
-          onClick={() => openAuthModal("login")}
-          className="cursor-pointer transition-all"
-          style={{
-            background: "#C8963E",
-            color: "#fff",
-            border: "none",
-            fontWeight: 600
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = "#B8852E";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "#C8963E";
-          }}>
-          Sign In
-        </Button>
+        <div className="flex items-center gap-6">
+          <button
+            onClick={() => openAuthModal("login")}
+            className="bg-secondary-fixed-dim text-on-secondary-fixed px-5 py-1.5 rounded-lg font-medium text-sm hover:brightness-110 transition-all active:scale-95 cursor-pointer"
+          >
+            Sign In
+          </button>
+        </div>
       </nav>
 
-      {/* Hero */}
-      <div className="max-w-6xl mx-auto px-6 py-20 text-center">
-        <div className="text-5xl mb-6">⚖</div>
-        <h1 className="text-4xl font-bold mb-4 leading-tight"
-          style={{ fontFamily: "Palatino, Georgia, serif", color: "#0B1D3A" }}>
-          AI-Powered Legal Translation<br />and Interpretation
-        </h1>
-        <p className="text-base leading-relaxed mb-8 max-w-xl mx-auto"
-          style={{ color: "#4A5568" }}>
-          CourtAccess AI bridges language barriers in the courtroom — providing
-          real-time interpretation, document translation, and access to pre-translated
-          court forms for Spanish and Portuguese speakers.
-        </p>
+      <main className="pt-14 relative z-10">
 
-        {/* Feature pills */}
-        <div className="flex flex-wrap justify-center gap-3 mb-10">
-          {features.map((f, i) => (
-            <div key={i} className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium"
-              style={{ background: "#fff", border: "1px solid #E2E6EC", color: "#1A2332" }}>
-              <span>{f.icon}</span>
-              <span>{f.label}</span>
+        {/* ── Hero Section ──────────────────────────────────────────── */}
+        <section className="relative min-h-[870px] flex flex-col items-center justify-center text-center px-6 overflow-hidden">
+          {/* Local decorative background enhancements */}
+          <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-secondary-fixed-dim/5 blur-[120px] rounded-full z-[-1]" />
+
+          <div className="max-w-4xl mx-auto space-y-8">
+            {/* Gavel icon */}
+            <div className="inline-flex items-center justify-center p-4 rounded-full bg-surface-container-highest/60 backdrop-blur-sm border border-outline-variant/15 text-secondary shadow-2xl">
+              <span
+                className="material-symbols-outlined text-5xl"
+                style={{ fontVariationSettings: "'FILL' 0" }}
+              >
+                gavel
+              </span>
             </div>
-          ))}
-        </div>
 
-        <Button
-          onClick={() => openAuthModal("login")}
-          className="cursor-pointer px-8 py-3 text-base h-auto transition-all shadow-md"
-          style={{
-            background: "#C8963E",
-            color: "#fff",
-            fontWeight: 600,
-            border: "none"
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = "#B8852E";
-            e.currentTarget.style.transform = "translateY(-1px)";
-            e.currentTarget.style.boxShadow = "0 8px 16px rgba(200, 150, 62, 0.3)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "#C8963E";
-            e.currentTarget.style.transform = "translateY(0)";
-            e.currentTarget.style.boxShadow = "0 4px 6px rgba(0, 0, 0, 0.1)";
-          }}>
-          Sign In to Use Services
-        </Button>
-        <p className="text-xs mt-3" style={{ color: "#8494A7" }}>
-          Don't have an account?{" "}
-          <button
-            onClick={() => openAuthModal("signup")}
-            className="font-semibold cursor-pointer"
-            style={{ color: "#2563eb", background: "none", border: "none" }}>
-            Create one for free
-          </button>
-        </p>
-      </div>
+            {/* Headline */}
+            <h1 className="text-5xl md:text-7xl font-bold text-on-surface tracking-tight leading-[1.1] font-headline">
+              AI-Powered Legal Translation <br />
+              <span className="text-secondary italic font-normal">&amp; Interpretation</span>
+            </h1>
 
-      {/* About */}
-      <div className="max-w-6xl mx-auto px-6 pb-16">
-        <div className="rounded-xl p-8 text-center mb-16"
-          style={{ background: "#fff", border: "1px solid #E2E6EC" }}>
-          <h2 className="text-2xl font-bold mb-3"
-            style={{ fontFamily: "Palatino, Georgia, serif", color: "#0B1D3A" }}>
-            What is CourtAccess AI?
-          </h2>
-          <p className="text-sm leading-relaxed max-w-xl mx-auto" style={{ color: "#4A5568" }}>
-            CourtAccess AI is a language access system built for the justice system.
-            It uses a multi-model AI pipeline — combining speech recognition, neural
-            machine translation, OCR, and large language models — to make legal
-            proceedings and documents accessible to non-English speakers in real time.
-          </p>
-        </div>
+            {/* Subhead */}
+            <p className="text-lg md:text-xl text-on-surface-variant max-w-2xl mx-auto leading-relaxed">
+              Democratizing justice through linguistic precision. Our platform
+              provides high-fidelity, legally-aware translation tools to ensure
+              every voice is heard in the courtroom, regardless of language.
+            </p>
 
-        {/* Services */}
-        <h2 className="text-2xl font-bold text-center mb-8"
-          style={{ fontFamily: "Palatino, Georgia, serif", color: "#0B1D3A" }}>
-          What We Offer
-        </h2>
-        <div className="grid grid-cols-3 gap-4 mb-10">
-          {services.map((s, i) => (
-            <Card key={i} className="border shadow-sm">
-              <CardContent className="p-6">
-                <div className="w-12 h-12 rounded-lg flex items-center justify-center text-2xl mb-4"
-                  style={{ background: "#F5EDE0" }}>
-                  {s.icon}
-                </div>
-                <div className="text-[10px] font-semibold uppercase tracking-wider mb-1"
-                  style={{ color: "#C8963E" }}>
-                  {s.who}
-                </div>
-                <h3 className="text-sm font-bold mb-2" style={{ color: "#0B1D3A" }}>
-                  {s.title}
-                </h3>
-                <p className="text-xs leading-relaxed" style={{ color: "#4A5568" }}>
-                  {s.desc}
+            {/* Feature pills */}
+            <div className="flex flex-wrap justify-center gap-3 mt-8">
+              {features.map((f) => (
+                <span
+                  key={f.label}
+                  className="px-4 py-2 rounded-full bg-surface-container-low/40 backdrop-blur-sm border border-outline-variant/15 text-sm font-medium flex items-center gap-2"
+                >
+                  <span className="material-symbols-outlined text-primary text-lg">
+                    {f.icon}
+                  </span>
+                  {f.emoji} {f.label}
+                </span>
+              ))}
+            </div>
+
+            {/* CTA */}
+            <div className="flex flex-col items-center gap-4 pt-6">
+              <button
+                onClick={() => openAuthModal("login")}
+                className="bg-secondary-fixed-dim text-on-secondary-fixed px-8 py-4 rounded-lg font-bold text-lg shadow-lg shadow-secondary-fixed-dim/20 hover:brightness-110 transition-all active:scale-95 cursor-pointer"
+              >
+                Sign In to Use Services
+              </button>
+              <button
+                onClick={() => openAuthModal("signup")}
+                className="text-on-surface-variant hover:text-secondary text-sm transition-colors cursor-pointer bg-transparent border-none"
+              >
+                Don&apos;t have an account?{" "}
+                <span className="underline underline-offset-4 decoration-secondary/30">
+                  Create one for free
+                </span>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {/* ── About Section ─────────────────────────────────────────── */}
+        <section className="max-w-7xl mx-auto px-6 py-24">
+          <div className="grid grid-cols-1 gap-16 items-center max-w-3xl mx-auto text-center">
+            <div className="space-y-6">
+              <h2 className="text-4xl font-bold text-on-surface font-headline">
+                What is CourtAccess AI?
+              </h2>
+              <div className="p-8 rounded-xl glass-panel border border-outline-variant/15">
+                <p className="text-on-surface-variant leading-relaxed text-lg">
+                  CourtAccess AI is a specialized legal intelligence platform
+                  built to bridge the communication gap in the judicial system.
+                  By combining neural machine translation with a deep
+                  understanding of legal terminology and courtroom protocol, we
+                  provide tools that are more accurate than general-purpose AI.
                 </p>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+                <ul className="mt-6 space-y-4 flex flex-col items-center">
+                  <li className="flex gap-4 items-start">
+                    <span className="material-symbols-outlined text-secondary">
+                      verified
+                    </span>
+                    <span className="text-on-surface font-medium">
+                      Verified Legal Terminology Database
+                    </span>
+                  </li>
+                  <li className="flex gap-4 items-start">
+                    <span className="material-symbols-outlined text-secondary">
+                      verified
+                    </span>
+                    <span className="text-on-surface font-medium">
+                      Compliance with Judicial Privacy Standards
+                    </span>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </section>
 
-        {/* Bottom CTA */}
-        <div className="rounded-xl p-8 text-center"
-          style={{ background: "#0B1D3A" }}>
-          <h3 className="text-xl font-bold text-white mb-2"
-            style={{ fontFamily: "Palatino, Georgia, serif" }}>
-            Ready to get started?
-          </h3>
-          <p className="text-sm mb-5" style={{ color: "rgba(255,255,255,0.6)" }}>
-            Sign in to access translation and interpretation services.
-          </p>
-          <Button
-            onClick={() => openAuthModal("login")}
-            className="cursor-pointer px-8 transition-all"
-            style={{
-              background: "#C8963E",
-              color: "#fff",
-              border: "none",
-              fontWeight: 600
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = "#B8852E";
-              e.currentTarget.style.transform = "translateY(-1px)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "#C8963E";
-              e.currentTarget.style.transform = "translateY(0)";
-            }}>
-            Sign In to Use Services
-          </Button>
-        </div>
-      </div>
+        {/* ── Services Grid ─────────────────────────────────────────── */}
+        <section className="bg-surface-container-lowest/30 backdrop-blur-sm py-24 px-6">
+          <div className="max-w-7xl mx-auto">
+            <div className="mb-16">
+              <h2 className="text-3xl font-bold text-on-surface font-headline">
+                Precision Services
+              </h2>
+              <p className="text-on-surface-variant mt-2">
+                Tailored solutions for every member of the judicial process.
+              </p>
+            </div>
 
-      {/* Minimal footer */}
-      <div className="text-center py-6 text-xs" style={{ color: "#8494A7", borderTop: "1px solid #E2E6EC" }}>
-        © 2026 CourtAccess AI · All translations are AI-generated and not official legal records
-      </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+              {services.map((s) => (
+                <div
+                  key={s.title}
+                  className="group bg-surface-container-low/60 backdrop-blur-md p-8 rounded-xl border border-outline-variant/10 hover:border-secondary/30 transition-all flex flex-col"
+                >
+                  <div className="w-12 h-12 rounded-lg bg-primary-container flex items-center justify-center text-secondary mb-6">
+                    <span className="material-symbols-outlined">{s.icon}</span>
+                  </div>
+                  <h3 className="text-2xl font-bold mb-4 font-headline">{s.title}</h3>
+                  <p className="text-on-surface-variant mb-8 flex-grow">{s.desc}</p>
+                  <span className="text-secondary text-sm font-bold tracking-widest uppercase">
+                    {s.who}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ── Bottom CTA Bar ────────────────────────────────────────── */}
+        <section className="max-w-5xl mx-auto my-24 px-6">
+          <div className="bg-primary-container/80 backdrop-blur-lg rounded-2xl p-10 flex flex-col md:flex-row items-center justify-between gap-8 border border-outline-variant/15 shadow-2xl">
+            <div className="text-center md:text-left">
+              <h2 className="text-3xl font-bold text-white font-headline">
+                Ready to get started?
+              </h2>
+              <p className="text-primary mt-1">
+                Access the next generation of legal accessibility today.
+              </p>
+            </div>
+            <button
+              onClick={() => openAuthModal("login")}
+              className="bg-secondary-fixed-dim text-on-secondary-fixed px-10 py-4 rounded-lg font-bold text-lg hover:brightness-110 transition-all active:scale-95 whitespace-nowrap cursor-pointer"
+            >
+              Sign In
+            </button>
+          </div>
+        </section>
+      </main>
+
+      {/* ── Footer ──────────────────────────────────────────────────── */}
+      <footer className="bg-surface-container-lowest/80 backdrop-blur-md border-t border-outline-variant/10 py-12 px-6 relative z-10">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-8">
+          <div className="text-on-surface-variant text-sm font-medium">
+            © 2026 CourtAccess AI. All rights reserved.
+          </div>
+          <div className="text-center md:text-right max-w-md">
+            <p className="text-[10px] uppercase tracking-widest text-on-surface-variant/60 leading-relaxed">
+              AI Disclaimer: This tool is for linguistic assistance only and
+              does not constitute legal advice. Users should verify all
+              translations with certified court interpreters for official record.
+            </p>
+          </div>
+        </div>
+      </footer>
     </div>
   )
 }

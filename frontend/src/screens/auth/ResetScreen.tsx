@@ -32,7 +32,7 @@ export default function ResetScreen({ onNav }: Props) {
               <Input placeholder="Enter new password" type="password" />
             </div>
             <div className="flex gap-1 mb-1">
-              {["#16a34a","#16a34a","#16a34a","#16a34a"].map((c, i) => (
+              {["#16a34a", "#16a34a", "#16a34a", "#16a34a"].map((c, i) => (
                 <div key={i} className="flex-1 h-1 rounded-full" style={{ background: c }} />
               ))}
             </div>

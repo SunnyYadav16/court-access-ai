@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useMemo } from "react"
 import { ScreenId, SCREENS, type UserRole } from "@/lib/constants"
 import useAuth from "@/hooks/useAuth"
-import ScreenLabel from "@/components/shared/ScreenLabel"
 import useRealtimeStore, { type ChatMessage } from "@/store/realtimeStore"
 import { useRealtimeWebSocket, _wsRef } from "@/hooks/useRealtimeWebSocket"
 import { useAudioCapture } from "@/hooks/useAudioCapture"
@@ -23,9 +22,9 @@ const LANG_LABELS: Record<string, string> = {
 }
 
 const LANG_FLAGS: Record<string, string> = {
-  en: "🇺🇸 EN",
-  es: "🇪🇸 ES",
-  pt: "🇧🇷 PT",
+  en: "EN",
+  es: "ES",
+  pt: "PT",
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -34,30 +33,21 @@ function VerificationChip({ score }: { score: number }) {
   const pct = Math.round(score * 100)
   if (score >= 0.9) {
     return (
-      <span
-        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold"
-        style={{ background: "rgba(22,163,74,0.18)", color: "#4ade80" }}
-      >
-        ✔ {pct}%
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-green-900/30 text-green-400">
+        <span className="material-symbols-outlined text-[10px]">check_circle</span> {pct}%
       </span>
     )
   }
   if (score >= 0.7) {
     return (
-      <span
-        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold"
-        style={{ background: "rgba(217,119,6,0.18)", color: "#fbbf24" }}
-      >
-        ▲ {pct}%
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-900/30 text-amber-400">
+        <span className="material-symbols-outlined text-[10px]">warning</span> {pct}%
       </span>
     )
   }
   return (
-    <span
-      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold"
-      style={{ background: "rgba(239,68,68,0.18)", color: "#f87171" }}
-    >
-      ⚠ {pct}%
+    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-red-900/30 text-red-400">
+      <span className="material-symbols-outlined text-[10px]">error</span> {pct}%
     </span>
   )
 }
@@ -83,43 +73,32 @@ function MessageBubble({
     <div className={`flex flex-col ${isSelf ? "items-end" : "items-start"} gap-1`}>
       {/* Speaker + language + timestamp */}
       <div className="flex items-center gap-2 px-1">
-        <span className="text-[11px] font-semibold" style={{ color: "rgba(255,255,255,0.5)" }}>
+        <span className="text-[11px] font-semibold text-white/50">
           {speakerLabel}
         </span>
-        <span
-          className="text-[9px] px-1.5 py-0.5 rounded"
-          style={{ background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)" }}
-        >
+        <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/[0.08] text-white/40">
           {LANG_FLAGS[msg.language] ?? msg.language.toUpperCase()}
         </span>
-        <span className="text-[10px]" style={{ color: "rgba(255,255,255,0.25)" }}>
+        <span className="text-[10px] text-white/25">
           {timeLabel}
         </span>
       </div>
 
       {/* Original text bubble */}
       <div
-        className="max-w-xs px-3 py-2 text-sm leading-relaxed"
-        style={{
-          background: isSelf ? "rgba(99,102,241,0.14)" : "rgba(34,211,238,0.08)",
-          borderRadius: isSelf ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
-          color: "rgba(255,255,255,0.9)",
-        }}
+        className={`max-w-xs px-3 py-2 text-sm leading-relaxed text-white/90 ${
+          isSelf
+            ? "bg-indigo-500/[0.14] rounded-[14px_14px_4px_14px]"
+            : "bg-cyan-400/[0.08] rounded-[14px_14px_14px_4px]"
+        }`}
       >
         {msg.text}
       </div>
 
       {/* AI translation block */}
       {msg.translation && (
-        <div
-          className="max-w-xs px-3 py-2 text-xs leading-relaxed"
-          style={{
-            borderLeft: "2px solid #C8963E",
-            paddingLeft: 10,
-            color: "rgba(255,255,255,0.75)",
-          }}
-        >
-          <div className="text-[10px] font-semibold mb-0.5" style={{ color: "#C8963E" }}>
+        <div className="max-w-xs px-3 py-2 text-xs leading-relaxed border-l-2 border-[#C8963E] pl-2.5 text-white/75">
+          <div className="text-[10px] font-semibold mb-0.5 text-[#C8963E]">
             {msg.targetLanguage ? LANG_FLAGS[msg.targetLanguage] ?? msg.targetLanguage.toUpperCase() : "Translation"}
           </div>
           {msg.translation}
@@ -128,28 +107,20 @@ function MessageBubble({
 
       {/* Legal verification block */}
       {msg.verifiedTranslation && !msg.usedFallback && (
-        <div
-          className="max-w-xs px-3 py-2 text-xs leading-relaxed"
-          style={{
-            background: "rgba(99,102,241,0.07)",
-            borderLeft: "2px solid rgba(99,102,241,0.4)",
-            paddingLeft: 10,
-            color: "rgba(255,255,255,0.7)",
-          }}
-        >
+        <div className="max-w-xs px-3 py-2 text-xs leading-relaxed bg-indigo-500/[0.07] border-l-2 border-indigo-500/40 pl-2.5 text-white/70">
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-[10px] font-semibold" style={{ color: "#a5b4fc" }}>
-              ✦ Legal Verified
+            <span className="text-[10px] font-semibold text-indigo-300 flex items-center gap-1">
+              <span className="material-symbols-outlined text-xs">gavel</span> Legal Verified
             </span>
             {msg.accuracyScore != null && <VerificationChip score={msg.accuracyScore} />}
           </div>
           {msg.verifiedTranslation === msg.translation ? (
-            <span style={{ color: "rgba(255,255,255,0.4)" }}>No changes — legally precise.</span>
+            <span className="text-white/40">No changes — legally precise.</span>
           ) : (
             msg.verifiedTranslation
           )}
           {msg.accuracyNote && msg.verifiedTranslation !== msg.translation && (
-            <div className="mt-1 text-[10px]" style={{ color: "rgba(255,255,255,0.4)" }}>
+            <div className="mt-1 text-[10px] text-white/40">
               {msg.accuracyNote}
             </div>
           )}
@@ -158,7 +129,7 @@ function MessageBubble({
 
       {/* Duration */}
       {msg.duration != null && (
-        <div className="text-[10px] px-1" style={{ color: "rgba(255,255,255,0.25)" }}>
+        <div className="text-[10px] px-1 text-white/25">
           {msg.duration}s
         </div>
       )}
@@ -185,26 +156,24 @@ function LivePartialBubble({
   return (
     <div className={`flex flex-col ${isSelf ? "items-end" : "items-start"} gap-1`}>
       <div className="flex items-center gap-2 px-1">
-        <span className="text-[11px] font-semibold" style={{ color: "rgba(255,255,255,0.4)" }}>
+        <span className="text-[11px] font-semibold text-white/40">
           {speakerLabel}
         </span>
         <span className="blink-dot" />
-        <span className="text-[10px]" style={{ color: "rgba(255,255,255,0.3)" }}>
+        <span className="text-[10px] text-white/30">
           speaking
         </span>
       </div>
       <div
-        className="max-w-xs px-3 py-2 text-sm leading-relaxed"
-        style={{
-          background: isSelf ? "rgba(99,102,241,0.07)" : "rgba(34,211,238,0.04)",
-          borderRadius: isSelf ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
-          border: "1px dashed rgba(255,255,255,0.1)",
-          color: "rgba(255,255,255,0.6)",
-        }}
+        className={`max-w-xs px-3 py-2 text-sm leading-relaxed border border-dashed border-white/10 text-white/60 ${
+          isSelf
+            ? "bg-indigo-500/[0.07] rounded-[14px_14px_4px_14px]"
+            : "bg-cyan-400/[0.04] rounded-[14px_14px_14px_4px]"
+        }`}
       >
         {text}
         {translation && (
-          <div className="mt-1 text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>
+          <div className="mt-1 text-xs text-white/40">
             {translation}
           </div>
         )}
@@ -216,10 +185,7 @@ function LivePartialBubble({
 function SidebarSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <div
-        className="text-[10px] uppercase tracking-widest mb-2"
-        style={{ color: "rgba(255,255,255,0.35)" }}
-      >
+      <div className="text-[10px] uppercase tracking-widest mb-2 text-white/35 font-label">
         {title}
       </div>
       {children}
@@ -229,14 +195,9 @@ function SidebarSection({ title, children }: { title: string; children: React.Re
 
 function SidebarRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div
-      className="flex justify-between items-center py-1"
-      style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}
-    >
-      <span style={{ color: "rgba(255,255,255,0.38)" }}>{label}</span>
-      <span className="font-medium text-right" style={{ color: "rgba(255,255,255,0.8)" }}>
-        {value}
-      </span>
+    <div className="flex justify-between items-center py-1 border-b border-white/[0.04]">
+      <span className="text-white/[0.38]">{label}</span>
+      <span className="font-medium text-right text-white/80">{value}</span>
     </div>
   )
 }
@@ -285,7 +246,6 @@ export default function RealtimeSession({ onNav }: Props) {
   const { enqueue, clearQueue } = useTtsPlayback()
   const { startCapture, stopCapture } = useAudioCapture()
 
-  // Stable callbacks — prevents cascading identity changes in WS hook
   const sendAudioRef = useRef<((data: Blob | ArrayBuffer) => void) | null>(null)
   const onStartCapture = useCallback(
     () => startCapture((data) => sendAudioRef.current?.(data)),
@@ -302,7 +262,6 @@ export default function RealtimeSession({ onNav }: Props) {
     onStopCapture,
   })
 
-  // Keep sendAudioRef current — avoids stale closure in startCapture callback
   useEffect(() => { sendAudioRef.current = sendAudio }, [sendAudio])
 
   // ── Auto-scroll ────────────────────────────────────────────────────────────
@@ -312,13 +271,7 @@ export default function RealtimeSession({ onNav }: Props) {
   }, [messages, livePartial])
 
   // ── Preflight mic permission ───────────────────────────────────────────────
-  // Request microphone access immediately on mount so the browser permission
-  // dialog fires now (while the user is reading the UI) rather than mid-session
-  // when the creator clicks "Start Session".  The stream is released right away;
-  // the real capture starts later via onStartCapture → startCapture().
   useEffect(() => {
-    // Skip the prompt when permission is already granted so React StrictMode's
-    // double-mount doesn't trigger two browser dialogs in quick succession.
     navigator.permissions
       .query({ name: "microphone" as PermissionName })
       .then((result) => {
@@ -333,19 +286,11 @@ export default function RealtimeSession({ onNav }: Props) {
   }, [setError])
 
   // ── Reconnect on mount ─────────────────────────────────────────────────────
-  // If RealtimeSetup navigated here with the WebSocket still open (normal flow),
-  // wsRef.current is already OPEN — do NOT reconnect or the server will delete the
-  // existing room and create a new one.
-  // Only reconnect when wsRef is null (e.g. after a hard page refresh).
   const savedIsCreator = useRef(isCreator)
   useEffect(() => {
     if (_wsRef.current && _wsRef.current.readyState === WebSocket.OPEN) {
-      // Connection is live — just update the onmessage handler so TTS audio
-      // from this point on is routed to this session's enqueue callback.
-      // The handler is already wired by the hook; nothing else to do.
       return
     }
-    // Fallback: reconnect (page refresh or hard navigation)
     if (roomCode && phase !== "idle" && phase !== "ended") {
       connect({ name: myName, roomId: roomCode })
       if (savedIsCreator.current) {
@@ -356,8 +301,6 @@ export default function RealtimeSession({ onNav }: Props) {
   }, []) // mount only
 
   // ── Session timer ──────────────────────────────────────────────────────────
-  // Duration is incremented by useAudioCapture while recording. We also
-  // need a timer when waiting/ready (before audio capture starts).
   const sessionStart = useRef<number | null>(null)
   useEffect(() => {
     if (phase === "active" && sessionStart.current === null) {
@@ -371,7 +314,6 @@ export default function RealtimeSession({ onNav }: Props) {
     const avgAsr = scored.length
       ? (scored.reduce((s, m) => s + (m.accuracyScore ?? 0), 0) / scored.length).toFixed(2)
       : "—"
-    // NMT confidence: only count messages that have BOTH a translation AND a legal score
     const nmtScored = messages.filter((m) => m.translation != null && m.accuracyScore != null)
     const avgNmt = nmtScored.length
       ? (nmtScored.reduce((s, m) => s + (m.accuracyScore ?? 0), 0) / nmtScored.length).toFixed(2)
@@ -383,7 +325,6 @@ export default function RealtimeSession({ onNav }: Props) {
 
   // ── Action handlers ────────────────────────────────────────────────────────
   function handleToggleMute() {
-    // Read live store value so the marker is never stale between renders.
     const currentIsMuted = useRealtimeStore.getState().isMuted
     sendMarker(currentIsMuted ? "MIC_UNMUTE" : "MIC_MUTE")
     toggleMute()
@@ -394,17 +335,14 @@ export default function RealtimeSession({ onNav }: Props) {
   }
 
   async function handleEndSession() {
-    // Send WS marker so the backend finalises the audio/transcript pipeline
     sendMarker("SESSION_END")
 
-    // Call the REST endpoint (idempotent — safe to call even if WS marker fires first)
     if (sessionId) {
       realtimeApi.endRoom(sessionId).catch((err) => {
         console.warn("[RealtimeSession] endRoom REST call failed (non-blocking):", err)
       })
     }
 
-    // Disconnect WS, reset store, queue toast for home screen
     disconnect()
     resetStore()
     sessionStorage.setItem("pending_toast", TOAST_SESSION_ENDED)
@@ -433,30 +371,25 @@ export default function RealtimeSession({ onNav }: Props) {
         @keyframes waveBar { 0%,100%{transform:scaleY(0.4)} 50%{transform:scaleY(1)} }
       `}</style>
 
-      <div className="min-h-screen flex flex-col" style={{ background: "#0D1B2A", color: "#fff" }}>
+      <div className="min-h-screen flex flex-col bg-background text-on-surface">
 
         {/* ── Header ──────────────────────────────────────────────────────── */}
-        <div
-          className="px-6 py-2.5 flex items-center justify-between flex-shrink-0"
-          style={{ background: "rgba(0,0,0,0.35)", borderBottom: "1px solid rgba(255,255,255,0.07)" }}
-        >
+        <div className="px-6 py-2.5 flex items-center justify-between flex-shrink-0 bg-[#0D1B2A] border-b border-white/[0.07] shadow-xl shadow-black/40">
           <div className="flex items-center gap-3">
-            <span className="font-bold tracking-wide text-sm" style={{ fontFamily: "Palatino, Georgia, serif" }}>
-              ⚖ CourtAccess AI
+            <span className="material-symbols-outlined text-[#FFD700] text-lg">gavel</span>
+            <span className="font-headline font-bold tracking-wide text-sm text-white">
+              CourtAccess AI
             </span>
             {sessionActive && (
-              <span
-                className="text-[10px] font-semibold px-2 py-0.5 rounded"
-                style={{ background: "rgba(239,68,68,0.15)", color: "#ef4444" }}
-              >
-                ● LIVE
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-red-500/15 text-red-400 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-400" /> LIVE
               </span>
             )}
           </div>
 
           <div className="flex items-center gap-4 text-xs">
             {roomCode && (
-              <span style={{ color: "rgba(255,255,255,0.45)" }}>
+              <span className="text-white/45">
                 Session {roomCode}
                 {sessionActive && ` · ${formatDuration(duration)} elapsed`}
               </span>
@@ -469,12 +402,11 @@ export default function RealtimeSession({ onNav }: Props) {
                   handleLeave();
                 }
               }}
-              className="px-3 py-1.5 rounded text-xs font-semibold cursor-pointer"
-              style={{
-                background: phase === "ended" ? "rgba(255,255,255,0.06)" : "#7f1d1d",
-                color: phase === "ended" ? "rgba(255,255,255,0.6)" : "#fca5a5",
-                border: "none"
-              }}
+              className={`px-3 py-1.5 rounded text-xs font-semibold cursor-pointer border-none ${
+                phase === "ended"
+                  ? "bg-white/[0.06] text-white/60"
+                  : "bg-red-950 text-red-300"
+              }`}
             >
               {phase === "ended" ? "Exit Room" : isCreator ? "End Session" : "Leave Room"}
             </button>
@@ -483,18 +415,14 @@ export default function RealtimeSession({ onNav }: Props) {
 
         {/* ── Error banner ────────────────────────────────────────────────── */}
         {error && (
-          <div
-            className="px-5 py-2 text-xs flex items-center gap-2 flex-shrink-0"
-            style={{ background: "rgba(127,29,29,0.85)", color: "#fca5a5", borderBottom: "1px solid rgba(239,68,68,0.3)" }}
-          >
-            <span>⚠</span>
+          <div className="px-5 py-2 text-xs flex items-center gap-2 flex-shrink-0 bg-red-950/85 text-red-300 border-b border-red-500/30">
+            <span className="material-symbols-outlined text-sm">warning</span>
             <span>{error}</span>
             <button
               onClick={() => setError(null)}
-              className="ml-auto opacity-60 hover:opacity-100 cursor-pointer"
-              style={{ background: "none", border: "none", color: "inherit", fontSize: 14 }}
+              className="ml-auto opacity-60 hover:opacity-100 cursor-pointer bg-transparent border-none text-inherit text-sm"
             >
-              ✕
+              <span className="material-symbols-outlined text-sm">close</span>
             </button>
           </div>
         )}
@@ -506,12 +434,9 @@ export default function RealtimeSession({ onNav }: Props) {
           <div className="flex-1 flex flex-col overflow-hidden">
 
             {/* Sub-header */}
-            <div
-              className="px-5 py-2.5 flex justify-between items-center text-xs flex-shrink-0"
-              style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}
-            >
-              <span className="font-semibold">Live transcript</span>
-              <span style={{ color: "rgba(255,255,255,0.38)" }}>{langPairLabel}</span>
+            <div className="px-5 py-2.5 flex justify-between items-center text-xs flex-shrink-0 border-b border-white/[0.06]">
+              <span className="font-semibold text-on-surface">Live transcript</span>
+              <span className="text-white/[0.38]">{langPairLabel}</span>
             </div>
 
             {/* Scroll area */}
@@ -519,10 +444,10 @@ export default function RealtimeSession({ onNav }: Props) {
               {messages.length === 0 && !livePartial ? (
                 /* Empty state — phase-aware */
                 <div className="flex flex-col items-center justify-center h-full gap-3">
-                  <div className="text-3xl">
-                    {phase === "waiting" ? "⏳" : phase === "ready" ? "✋" : phase === "ended" ? "👋" : "💬"}
-                  </div>
-                  <p className="text-sm text-center max-w-xs" style={{ color: "rgba(255,255,255,0.45)" }}>
+                  <span className="material-symbols-outlined text-4xl text-white/20">
+                    {phase === "waiting" ? "hourglass_top" : phase === "ready" ? "pan_tool" : phase === "ended" ? "waving_hand" : "chat"}
+                  </span>
+                  <p className="text-sm text-center max-w-xs text-white/45">
                     {phase === "waiting"
                       ? `Waiting for partner to join. Share room code `
                       : phase === "ready"
@@ -534,20 +459,17 @@ export default function RealtimeSession({ onNav }: Props) {
                           : "Start speaking — your conversation will appear here in real time."}
                   </p>
                   {phase === "waiting" && roomCode && (
-                    <div
-                      className="font-mono text-2xl font-bold tracking-widest px-5 py-3 rounded-lg"
-                      style={{ background: "rgba(255,255,255,0.06)", color: "#a5b4fc", letterSpacing: "0.25em" }}
-                    >
+                    <div className="font-mono text-2xl font-bold tracking-[0.25em] px-5 py-3 rounded-lg bg-white/[0.06] text-[#FFD700]">
                       {roomCode}
                     </div>
                   )}
                   {phase === "ready" && isCreator && (
                     <button
                       onClick={handleStartSession}
-                      className="mt-2 px-6 py-2 rounded-lg text-sm font-semibold cursor-pointer"
-                      style={{ background: "#166534", color: "#86efac", border: "none" }}
+                      className="mt-2 px-6 py-2 rounded-lg text-sm font-semibold cursor-pointer bg-green-900 text-green-300 border-none flex items-center gap-2"
                     >
-                      ▶ Start Session
+                      <span className="material-symbols-outlined text-base">play_arrow</span>
+                      Start Session
                     </button>
                   )}
                 </div>
@@ -576,15 +498,12 @@ export default function RealtimeSession({ onNav }: Props) {
             </div>
 
             {/* ── Bottom bar ──────────────────────────────────────────────── */}
-            <div
-              className="px-5 py-3 flex items-center gap-4 flex-shrink-0"
-              style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}
-            >
+            <div className="px-5 py-3 flex items-center gap-4 flex-shrink-0 border-t border-white/[0.06]">
               {/* Mic button */}
               <button
                 onClick={sessionActive ? handleToggleMute : undefined}
                 disabled={!sessionActive || micLocked}
-                className="w-10 h-10 rounded-full flex items-center justify-center text-base flex-shrink-0 cursor-pointer"
+                className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
                 style={{
                   background: isMuted
                     ? "rgba(255,255,255,0.06)"
@@ -596,7 +515,9 @@ export default function RealtimeSession({ onNav }: Props) {
                   cursor: !sessionActive || micLocked ? "not-allowed" : "pointer",
                 }}
               >
-                {isMuted ? "🔇" : micLocked ? "🔒" : "🎙"}
+                <span className="material-symbols-outlined text-lg">
+                  {isMuted ? "mic_off" : micLocked ? "lock" : "mic"}
+                </span>
               </button>
 
               {/* Waveform + label */}
@@ -624,7 +545,7 @@ export default function RealtimeSession({ onNav }: Props) {
                     )
                   })}
                 </div>
-                <div className="text-[10px]" style={{ color: "rgba(255,255,255,0.35)" }}>
+                <div className="text-[10px] text-white/35">
                   {isMuted
                     ? "Muted"
                     : micLocked
@@ -641,18 +562,17 @@ export default function RealtimeSession({ onNav }: Props) {
 
               {/* Confidence */}
               <div className="text-right flex-shrink-0">
-                <div className="text-[10px]" style={{ color: "rgba(255,255,255,0.4)" }}>
+                <div className="text-[10px] text-white/40">
                   Confidence
                 </div>
                 <div
-                  className="text-lg font-bold"
-                  style={{
-                    color: stats.avgAsr !== "—" && parseFloat(stats.avgAsr) >= 0.9
-                      ? "#4ade80"
+                  className={`text-lg font-bold ${
+                    stats.avgAsr !== "—" && parseFloat(stats.avgAsr) >= 0.9
+                      ? "text-green-400"
                       : stats.avgAsr !== "—" && parseFloat(stats.avgAsr) >= 0.7
-                        ? "#fbbf24"
-                        : "rgba(255,255,255,0.4)",
-                  }}
+                        ? "text-amber-400"
+                        : "text-white/40"
+                  }`}
                 >
                   {stats.avgAsr !== "—" ? `${Math.round(parseFloat(stats.avgAsr) * 100)}%` : "—"}
                 </div>
@@ -661,10 +581,7 @@ export default function RealtimeSession({ onNav }: Props) {
           </div>
 
           {/* ── Right sidebar ──────────────────────────────────────────────── */}
-          <div
-            className="w-52 flex flex-col gap-5 p-4 text-xs overflow-y-auto flex-shrink-0"
-            style={{ borderLeft: "1px solid rgba(255,255,255,0.06)" }}
-          >
+          <div className="w-52 flex flex-col gap-5 p-4 text-xs overflow-y-auto flex-shrink-0 border-l border-outline-variant/20 bg-surface-container-lowest/30">
 
             {/* Session Info */}
             <SidebarSection title="Session Info">
@@ -679,13 +596,12 @@ export default function RealtimeSession({ onNav }: Props) {
                   partner ? (
                     <span className="flex items-center gap-1">
                       <span
-                        className="w-2 h-2 rounded-full inline-block"
-                        style={{ background: partnerMuted ? "#f59e0b" : "#22c55e" }}
+                        className={`w-2 h-2 rounded-full inline-block ${partnerMuted ? "bg-amber-500" : "bg-green-500"}`}
                       />
                       {partner.name}
                     </span>
                   ) : (
-                    <span style={{ color: "rgba(255,255,255,0.3)" }}>—</span>
+                    <span className="text-white/30">—</span>
                   )
                 }
               />
@@ -694,15 +610,15 @@ export default function RealtimeSession({ onNav }: Props) {
             {/* Model Pipeline */}
             <SidebarSection title="Model Pipeline">
               {[
-                { name: "Silero VAD v4", color: "#22c55e" },
-                { name: "Faster-Whisper V3", color: "#22c55e" },
-                { name: "NLLB-200 1.3B", color: "#22c55e" },
-                { name: `Piper TTS (${partner?.language ?? myLanguage})`, color: "#22c55e" },
-                { name: "Llama 4 Vertex AI", color: "#f59e0b" },
+                { name: "Silero VAD v4", icon: "graphic_eq", color: "text-green-500" },
+                { name: "Faster-Whisper V3", icon: "mic", color: "text-green-500" },
+                { name: "NLLB-200 1.3B", icon: "translate", color: "text-green-500" },
+                { name: `Piper TTS (${partner?.language ?? myLanguage})`, icon: "record_voice_over", color: "text-green-500" },
+                { name: "Llama 4 Vertex AI", icon: "gavel", color: "text-amber-500" },
               ].map((m) => (
                 <div key={m.name} className="flex items-center gap-2 py-0.5">
-                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: m.color }} />
-                  <span style={{ color: "rgba(255,255,255,0.65)" }}>{m.name}</span>
+                  <span className={`material-symbols-outlined text-[10px] ${m.color}`}>{m.icon}</span>
+                  <span className="text-white/65">{m.name}</span>
                 </div>
               ))}
             </SidebarSection>
@@ -720,16 +636,14 @@ export default function RealtimeSession({ onNav }: Props) {
             {phase === "ready" && isCreator && (
               <button
                 onClick={handleStartSession}
-                className="w-full py-2 rounded-md text-xs font-semibold cursor-pointer"
-                style={{ background: "#166534", color: "#86efac", border: "none" }}
+                className="w-full py-2 rounded-md text-xs font-semibold cursor-pointer bg-green-900 text-green-300 border-none flex items-center justify-center gap-1.5"
               >
-                ▶ Start Session
+                <span className="material-symbols-outlined text-sm">play_arrow</span>
+                Start Session
               </button>
             )}
           </div>
         </div>
-
-        <ScreenLabel name="REAL-TIME SESSION — LIVE TRANSLATION" />
       </div>
     </>
   )

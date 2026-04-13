@@ -28,6 +28,9 @@ export const SCREENS = {
   DOC_RESULTS: "DOC_RESULTS",
   DOC_HISTORY: "DOC_HISTORY",
 
+  // Sessions (combined document + realtime history)
+  RECENT_SESSIONS: "RECENT_SESSIONS",
+
   // Forms library
   FORMS_LIBRARY: "FORMS_LIBRARY",
   FORM_DETAIL: "FORM_DETAIL",
