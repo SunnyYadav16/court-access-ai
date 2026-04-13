@@ -1,9 +1,16 @@
+/**
+ * screens/forms/FormsLibrary.tsx
+ *
+ * Government Forms Library — renders INSIDE AppShell.
+ * Dark-themed bento card grid with search, division & language filters,
+ * and pagination.
+ *
+ * Preserved logic: formsApi.list() with dynamic filters, debounced search,
+ * division dropdown, session-based form selection, pagination.
+ */
+
 import { useEffect, useState } from "react"
 import { ScreenId, SCREENS } from "@/lib/constants"
-import { Card, CardContent } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import TopBar from "@/components/shared/TopBar"
-import ScreenLabel from "@/components/shared/ScreenLabel"
 import { formsApi, FormResponse } from "@/services/api"
 import { formatDate } from "@/lib/utils"
 
@@ -91,31 +98,34 @@ export default function FormsLibrary({ onNav }: Props) {
   }
 
   return (
-    <div className="min-h-screen" style={{ background: "#F6F7F9" }}>
-      <TopBar onNav={onNav} />
-      <div className="max-w-2xl mx-auto px-5 py-8">
-        <h1
-          className="text-xl font-bold mb-1"
-          style={{ fontFamily: "Palatino, Georgia, serif", color: "#1A2332" }}
-        >
-          Government Forms Library
-        </h1>
-        <p className="text-xs mb-5" style={{ color: "#8494A7" }}>
-          Pre-translated Massachusetts court forms · {total} forms available
-        </p>
+    <div className="px-6 lg:px-12 py-8 max-w-7xl mx-auto relative overflow-hidden">
 
-        {/* Filters */}
-        <div className="flex gap-2 mb-4">
-          <div className="flex-1">
-            <Input
-              placeholder="🔍 Search forms..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
+      {/* Header */}
+      <header className="mb-10 relative z-10">
+        <h1 className="text-5xl font-headline text-on-surface mb-2">Government Forms Library</h1>
+        <p className="text-on-surface-variant font-body text-lg">
+          {total} forms available for immediate processing and AI-assisted filing.
+        </p>
+      </header>
+
+      {/* Filters — bento style row */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 mb-10 relative z-10">
+        {/* Search */}
+        <div className="lg:col-span-2 bg-surface-container-low p-4 rounded-xl flex items-center gap-3 border border-outline-variant/10">
+          <span className="material-symbols-outlined text-on-surface-variant">search</span>
+          <input
+            className="bg-transparent border-none focus:ring-0 text-on-surface w-full placeholder:text-on-surface-variant/50 outline-none"
+            placeholder="Search by form name or ID..."
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+
+        {/* Division filter */}
+        <div className="bg-surface-container-low p-4 rounded-xl border border-outline-variant/10 relative">
           <select
-            className="px-3 py-2 rounded-md text-xs"
-            style={{ border: "1.5px solid #E2E6EC", color: "#1A2332", background: "#fff" }}
+            className="bg-transparent border-none focus:ring-0 text-on-surface w-full appearance-none cursor-pointer outline-none"
             value={selectedDivision}
             onChange={(e) => handleDivisionChange(e.target.value)}
           >
@@ -124,147 +134,171 @@ export default function FormsLibrary({ onNav }: Props) {
               <option key={d} value={d}>{d}</option>
             ))}
           </select>
+          <span className="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-on-surface-variant text-sm">
+            expand_more
+          </span>
+        </div>
+
+        {/* Language filter */}
+        <div className="bg-surface-container-low p-4 rounded-xl border border-outline-variant/10 relative">
           <select
-            className="px-3 py-2 rounded-md text-xs"
-            style={{ border: "1.5px solid #E2E6EC", color: "#1A2332", background: "#fff" }}
+            className="bg-transparent border-none focus:ring-0 text-on-surface w-full appearance-none cursor-pointer outline-none"
             value={selectedLanguage}
             onChange={(e) => handleLanguageChange(e.target.value)}
           >
             <option value="">All Languages</option>
-            <option value="es">Spanish</option>
-            <option value="pt">Portuguese</option>
+            <option value="es">Spanish (ES)</option>
+            <option value="pt">Portuguese (PT)</option>
           </select>
+          <span className="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-on-surface-variant text-sm">
+            expand_more
+          </span>
         </div>
+      </div>
 
-        {/* Form list */}
-        {loading ? (
-          <div className="text-sm text-center py-12" style={{ color: "#8494A7" }}>
-            Loading forms...
-          </div>
-        ) : error ? (
-          <div className="text-sm text-center py-12" style={{ color: "#dc2626" }}>
-            {error}
-          </div>
-        ) : forms.length === 0 ? (
-          <div className="text-sm text-center py-12" style={{ color: "#8494A7" }}>
-            No forms match your search.
-          </div>
-        ) : (
-          <div className="flex flex-col gap-2">
+      {/* Loading state */}
+      {loading && (
+        <div className="flex flex-col items-center justify-center py-20">
+          <span className="material-symbols-outlined text-4xl text-secondary animate-spin mb-4">autorenew</span>
+          <p className="text-on-surface-variant text-sm">Loading forms…</p>
+        </div>
+      )}
+
+      {/* Error state */}
+      {!loading && error && (
+        <div className="bg-error-container/20 border border-error/30 rounded-xl p-8 text-center">
+          <span className="material-symbols-outlined text-error text-4xl mb-3 block">cloud_off</span>
+          <p className="text-error text-sm">{error}</p>
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!loading && !error && forms.length === 0 && (
+        <div className="bg-surface-container-low rounded-xl p-12 text-center border border-white/5">
+          <span className="material-symbols-outlined text-5xl text-on-surface-variant mb-4 block">search_off</span>
+          <p className="text-on-surface-variant">No forms match your search.</p>
+        </div>
+      )}
+
+      {/* Form cards grid */}
+      {!loading && !error && forms.length > 0 && (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 relative z-10">
             {forms.map((form) => {
               const latest = getLatestVersion(form)
               const division = form.appearances[0]?.division ?? "All Divisions"
               const hasEs = latest?.file_path_es != null
               const hasPt = latest?.file_path_pt != null
+
               return (
-                <Card
+                <div
                   key={form.form_id}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => handleFormClick(form)}
-                  className="cursor-pointer hover:shadow-md transition-shadow"
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleFormClick(form) } }}
+                  className="group bg-surface-container-low hover:bg-surface-container-high transition-all duration-300 p-6 rounded-xl border border-outline-variant/10 hover:border-secondary/30 flex flex-col justify-between cursor-pointer shadow-sm hover:shadow-xl hover:shadow-black/60"
                 >
-                  <CardContent className="p-4 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <span className="text-xl" style={{ color: "#8494A7" }}>📋</span>
-                      <div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-medium" style={{ color: "#1A2332" }}>
-                            {form.form_name}
-                          </span>
-                          {form.needs_human_review && (
-                            <span
-                              className="text-[10px] font-semibold px-2 py-0.5 rounded"
-                              style={{ background: "#FEF3C7", color: "#d97706" }}
-                            >
-                              PENDING REVIEW
-                            </span>
-                          )}
-                          {form.status === "archived" && (
-                            <span
-                              className="text-[10px] font-semibold px-2 py-0.5 rounded"
-                              style={{ background: "#FEE2E2", color: "#dc2626" }}
-                            >
-                              ARCHIVED
-                            </span>
-                          )}
-                        </div>
-                        <div
-                          className="text-[11px] mt-0.5 flex items-center gap-1 flex-wrap"
-                          style={{ color: "#8494A7" }}
-                        >
-                          <span>{division}</span>
-                          <span>·</span>
-                          <span>Updated {formatDate(form.last_scraped_at)}</span>
-                          <span>·</span>
-                          {hasEs && (
-                            <span
-                              className="px-1.5 py-0.5 rounded text-[10px] font-medium"
-                              style={{ background: "#E5E7EB", color: "#4A5568" }}
-                            >
-                              ES
-                            </span>
-                          )}
-                          {hasPt && (
-                            <span
-                              className="px-1.5 py-0.5 rounded text-[10px] font-medium"
-                              style={{ background: "#E5E7EB", color: "#4A5568" }}
-                            >
-                              PT
-                            </span>
-                          )}
-                          <span
-                            className="px-1.5 py-0.5 rounded text-[10px] font-medium"
-                            style={{ background: "#E5E7EB", color: "#4A5568" }}
-                          >
-                            {form.file_type.toUpperCase()}
-                          </span>
-                        </div>
+                  <div>
+                    {/* Top row: icon + chevron */}
+                    <div className="flex justify-between items-start mb-4">
+                      <div className="p-3 bg-primary-container rounded-lg text-secondary">
+                        <span className="material-symbols-outlined">assignment</span>
                       </div>
+                      <span className="material-symbols-outlined text-on-surface-variant/30 group-hover:text-secondary group-hover:translate-x-1 transition-all">
+                        chevron_right
+                      </span>
                     </div>
-                    <span style={{ color: "#8494A7" }}>›</span>
-                  </CardContent>
-                </Card>
+
+                    {/* Form name */}
+                    <h3 className="text-xl font-headline text-on-surface mb-1">{form.form_name}</h3>
+
+                    {/* Badges row */}
+                    <div className="flex flex-wrap gap-2 mb-6">
+                      {/* Division badge */}
+                      <span className="px-2 py-1 bg-primary-fixed/10 text-primary-fixed text-[10px] uppercase font-bold tracking-wider rounded">
+                        {division}
+                      </span>
+
+                      {/* Status badges */}
+                      {form.needs_human_review && (
+                        <span className="px-2 py-1 bg-secondary-container/20 text-secondary text-[10px] uppercase font-bold tracking-wider rounded">
+                          Pending Review
+                        </span>
+                      )}
+                      {form.status === "archived" && (
+                        <span className="px-2 py-1 bg-error-container/20 text-error text-[10px] uppercase font-bold tracking-wider rounded">
+                          Archived
+                        </span>
+                      )}
+
+                      {/* Language tags */}
+                      {hasEs && (
+                        <span className="px-2 py-1 bg-surface-container-highest text-on-surface-variant text-[10px] uppercase font-bold tracking-wider rounded">
+                          ES
+                        </span>
+                      )}
+                      {hasPt && (
+                        <span className="px-2 py-1 bg-surface-container-highest text-on-surface-variant text-[10px] uppercase font-bold tracking-wider rounded">
+                          PT
+                        </span>
+                      )}
+
+                      {/* File type */}
+                      <span className="px-2 py-1 bg-surface-container-highest text-on-surface-variant text-[10px] uppercase font-bold tracking-wider rounded">
+                        {form.file_type.toUpperCase()}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Footer */}
+                  <div className="flex justify-between items-center text-xs text-on-surface-variant/60 font-medium">
+                    <span>Updated {formatDate(form.last_scraped_at)}</span>
+                    <span className="flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[14px]">verified</span>
+                      {form.needs_human_review ? "Unverified" : "Verified"}
+                    </span>
+                  </div>
+                </div>
               )
             })}
           </div>
-        )}
 
-        {total > PAGE_SIZE && (
-          <div className="flex items-center justify-between mt-6">
-            <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page === 1}
-              className="text-xs font-medium px-3 py-1.5 rounded"
-              style={{
-                border: "1.5px solid #E2E6EC",
-                color: page === 1 ? "#8494A7" : "#1A2332",
-                background: "#fff",
-                cursor: page === 1 ? "default" : "pointer",
-                opacity: page === 1 ? 0.5 : 1,
-              }}
-            >
-              ← Previous
-            </button>
-            <span className="text-xs" style={{ color: "#8494A7" }}>
-              Page {page} of {totalPages}
-            </span>
-            <button
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page === totalPages}
-              className="text-xs font-medium px-3 py-1.5 rounded"
-              style={{
-                border: "1.5px solid #E2E6EC",
-                color: page === totalPages ? "#8494A7" : "#1A2332",
-                background: "#fff",
-                cursor: page === totalPages ? "default" : "pointer",
-                opacity: page === totalPages ? 0.5 : 1,
-              }}
-            >
-              Next →
-            </button>
-          </div>
-        )}
-      </div>
-      <ScreenLabel name="GOVERNMENT FORMS LIBRARY" />
+          {/* Pagination */}
+          {total > PAGE_SIZE && (
+            <div className="mt-12 flex justify-center items-center gap-4 relative z-10">
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page === 1}
+                className={`w-10 h-10 flex items-center justify-center rounded-lg transition-colors border-none cursor-pointer ${
+                  page === 1
+                    ? "bg-surface-container-low text-outline-variant opacity-50 cursor-default"
+                    : "bg-surface-container-low border border-outline-variant/10 text-on-surface-variant hover:bg-surface-container-high"
+                }`}
+              >
+                <span className="material-symbols-outlined">keyboard_arrow_left</span>
+              </button>
+              <span className="text-on-surface-variant text-sm">
+                Page {page} of {totalPages}
+              </span>
+              <button
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+                className={`w-10 h-10 flex items-center justify-center rounded-lg transition-colors border-none cursor-pointer ${
+                  page === totalPages
+                    ? "bg-surface-container-low text-outline-variant opacity-50 cursor-default"
+                    : "bg-surface-container-low border border-outline-variant/10 text-on-surface-variant hover:bg-surface-container-high"
+                }`}
+              >
+                <span className="material-symbols-outlined">keyboard_arrow_right</span>
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Decorative glow */}
+      <div className="fixed bottom-0 right-0 w-96 h-96 bg-secondary/5 blur-[120px] rounded-full -mr-48 -mb-48 pointer-events-none" />
     </div>
   )
 }

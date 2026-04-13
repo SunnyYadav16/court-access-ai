@@ -1,9 +1,16 @@
+/**
+ * screens/forms/FormDetail.tsx
+ *
+ * Form detail / download screen — renders INSIDE AppShell.
+ * Dark-themed with download rows, form metadata sidebar,
+ * and machine translation warning.
+ *
+ * Preserved logic: formsApi.get() via sessionStorage form_id,
+ * download signed URLs, version resolution.
+ */
+
 import { useEffect, useState } from "react"
 import { ScreenId, SCREENS } from "@/lib/constants"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
-import TopBar from "@/components/shared/TopBar"
-import ScreenLabel from "@/components/shared/ScreenLabel"
 import { formsApi, FormResponse, FormVersionResponse } from "@/services/api"
 import { formatDate } from "@/lib/utils"
 
@@ -16,18 +23,6 @@ function getHostname(url: string): string {
 function getLatestVersion(form: FormResponse): FormVersionResponse | null {
   if (!form.versions.length) return null
   return form.versions.reduce((a, b) => a.version > b.version ? a : b)
-}
-
-function BackButton({ onNav }: { onNav: (s: ScreenId) => void }) {
-  return (
-    <button
-      onClick={() => onNav(SCREENS.FORMS_LIBRARY)}
-      className="text-xs font-medium mb-4 flex items-center gap-1 cursor-pointer"
-      style={{ color: "#2563eb", background: "none", border: "none" }}
-    >
-      ← Back to Forms Library
-    </button>
-  )
 }
 
 export default function FormDetail({ onNav }: Props) {
@@ -58,34 +53,44 @@ export default function FormDetail({ onNav }: Props) {
     return () => { cancelled = true }
   }, [])
 
+  // ── Loading state ────────────────────────────────────────────────────────────
+
   if (loading) {
     return (
-      <div className="min-h-screen" style={{ background: "#F6F7F9" }}>
-        <TopBar onNav={onNav} />
-        <div className="max-w-lg mx-auto px-5 py-8">
-          <div className="text-sm text-center py-12" style={{ color: "#8494A7" }}>
-            Loading form...
-          </div>
+      <div className="px-6 lg:px-12 py-8 max-w-5xl mx-auto">
+        <div className="flex flex-col items-center justify-center py-20">
+          <span className="material-symbols-outlined text-4xl text-secondary animate-spin mb-4">autorenew</span>
+          <p className="text-on-surface-variant text-sm">Loading form…</p>
         </div>
-        <ScreenLabel name="FORM DETAIL — DOWNLOAD" />
       </div>
     )
   }
 
+  // ── Error state ──────────────────────────────────────────────────────────────
+
   if (error || !form) {
     return (
-      <div className="min-h-screen" style={{ background: "#F6F7F9" }}>
-        <TopBar onNav={onNav} />
-        <div className="max-w-lg mx-auto px-5 py-8">
-          <BackButton onNav={onNav} />
-          <div className="text-sm text-center py-12" style={{ color: "#dc2626" }}>
-            {error ?? "Form not found."}
-          </div>
+      <div className="px-6 lg:px-12 py-8 max-w-5xl mx-auto space-y-6">
+        {/* Back button */}
+        <button
+          onClick={() => onNav(SCREENS.FORMS_LIBRARY)}
+          className="flex items-center gap-2 text-on-surface-variant hover:text-secondary transition-colors text-sm group bg-transparent border-none cursor-pointer"
+        >
+          <span className="material-symbols-outlined text-[18px] group-hover:-translate-x-1 transition-transform">
+            arrow_back
+          </span>
+          Back to Forms Library
+        </button>
+
+        <div className="bg-error-container/20 border border-error/30 rounded-xl p-8 text-center">
+          <span className="material-symbols-outlined text-error text-4xl mb-3 block">error_outline</span>
+          <p className="text-error text-sm">{error ?? "Form not found."}</p>
         </div>
-        <ScreenLabel name="FORM DETAIL — DOWNLOAD" />
       </div>
     )
   }
+
+  // ── Data ──────────────────────────────────────────────────────────────────────
 
   const latest = getLatestVersion(form)
   const division = form.appearances[0]?.division ?? "—"
@@ -93,117 +98,177 @@ export default function FormDetail({ onNav }: Props) {
   const downloads = [
     {
       lang: "English (Original)",
-      flag: "🇺🇸",
+      icon: "description",
+      iconBg: "bg-primary-container",
+      iconColor: "text-primary",
       signedUrl: latest?.signed_url_original ?? null,
       label: latest ? `Download ${latest.file_type.toUpperCase()}` : "Download",
+      isPrimary: true,
     },
     {
       lang: "Spanish (Español)",
-      flag: "🇪🇸",
+      icon: "translate",
+      iconBg: "bg-tertiary-container",
+      iconColor: "text-tertiary",
       signedUrl: latest?.signed_url_es ?? null,
       label: latest?.file_type_es ? `Download ${latest.file_type_es.toUpperCase()}` : "Download",
+      isPrimary: false,
     },
     {
       lang: "Portuguese (Português)",
-      flag: "🇧🇷",
+      icon: "translate",
+      iconBg: "bg-tertiary-container",
+      iconColor: "text-tertiary",
       signedUrl: latest?.signed_url_pt ?? null,
       label: latest?.file_type_pt ? `Download ${latest.file_type_pt.toUpperCase()}` : "Download",
+      isPrimary: false,
     },
   ]
 
-  const details: [string, string][] = [
-    ["Source", getHostname(form.source_url)],
-    ["Division", division],
-    ["Version", String(form.current_version)],
-    ["Content Hash", `${form.content_hash.slice(0, 8)}...${form.content_hash.slice(-4)}`],
-    ["File Type", form.file_type.toUpperCase()],
-    ["First Added", formatDate(form.created_at)],
-    ["Last Updated", formatDate(form.last_scraped_at ?? form.created_at)],
-    ["Status", form.status.charAt(0).toUpperCase() + form.status.slice(1)],
+  const details: { label: string; value: string }[] = [
+    { label: "Source", value: getHostname(form.source_url) },
+    { label: "Division", value: division },
+    { label: "Version", value: String(form.current_version) },
+    { label: "Content Hash", value: `${form.content_hash.slice(0, 8)}…${form.content_hash.slice(-4)}` },
+    { label: "File Type", value: form.file_type.toUpperCase() },
+    { label: "First Added", value: formatDate(form.created_at) },
+    { label: "Last Updated", value: formatDate(form.last_scraped_at ?? form.created_at) },
+    { label: "Status", value: form.status.charAt(0).toUpperCase() + form.status.slice(1) },
   ]
 
   return (
-    <div className="min-h-screen" style={{ background: "#F6F7F9" }}>
-      <TopBar onNav={onNav} />
-      <div className="max-w-lg mx-auto px-5 py-8">
-        <BackButton onNav={onNav} />
+    <div className="px-6 lg:px-12 py-8 max-w-5xl mx-auto space-y-8 relative z-10">
 
-        <h1
-          className="text-xl font-bold mb-1"
-          style={{ fontFamily: "Palatino, Georgia, serif", color: "#1A2332" }}
-        >
+      {/* Back button */}
+      <button
+        onClick={() => onNav(SCREENS.FORMS_LIBRARY)}
+        className="flex items-center gap-2 text-on-surface-variant hover:text-secondary transition-colors text-sm group bg-transparent border-none cursor-pointer"
+      >
+        <span className="material-symbols-outlined text-[18px] group-hover:-translate-x-1 transition-transform">
+          arrow_back
+        </span>
+        Back to Forms Library
+      </button>
+
+      {/* Header */}
+      <div className="space-y-2">
+        <h1 className="text-4xl md:text-5xl font-headline font-bold text-on-surface tracking-tight">
           {form.form_name}
         </h1>
-        <p className="text-xs mb-5" style={{ color: "#8494A7" }}>
-          {division} · Version {form.current_version} · Last updated {formatDate(form.last_scraped_at)}
+        <p className="text-on-surface-variant font-body text-sm md:text-base">
+          {division} · Version {form.current_version} · Last updated {formatDate(form.last_scraped_at ?? form.created_at)}
         </p>
+      </div>
 
-        <Card className="mb-3">
-          <CardContent className="p-5">
-            {form.needs_human_review && (
-              <div
-                className="rounded-md p-3 mb-4"
-                style={{ background: "#FEF3C7", border: "1px solid #FDE68A" }}
+      {/* Bento grid layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+        {/* ── Main content (left column) ──────────────────────────────── */}
+        <div className="lg:col-span-8 space-y-6">
+
+          {/* Warning alert */}
+          {form.needs_human_review && (
+            <div className="bg-amber-500/10 border-l-4 border-amber-500 p-6 rounded-r-lg flex gap-4">
+              <span
+                className="material-symbols-outlined text-amber-500"
+                style={{ fontVariationSettings: "'FILL' 1" }}
               >
-                <p className="text-xs m-0" style={{ color: "#92400e" }}>
-                  <strong>⚠ Machine-translated</strong> — Pending human verification.
-                  Use with caution for legal proceedings.
+                warning
+              </span>
+              <div className="space-y-1">
+                <h4 className="text-amber-500 font-bold text-sm uppercase tracking-wider">
+                  Machine Translation Warning
+                </h4>
+                <p className="text-on-surface text-sm leading-relaxed">
+                  The Spanish and Portuguese versions are generated via AI analysis.
+                  While high-precision, these documents must be verified by a licensed
+                  legal professional for official court proceedings.
                 </p>
               </div>
-            )}
-
-            <div className="text-sm font-semibold mb-3" style={{ color: "#1A2332" }}>
-              Available Downloads
             </div>
-            <div className="flex flex-col gap-2">
+          )}
+
+          {/* Available Downloads */}
+          <div className="bg-surface-container-low rounded-xl overflow-hidden shadow-inner border border-white/5">
+            <div className="px-6 py-4 bg-surface-container-high flex items-center justify-between">
+              <h3 className="font-headline text-xl text-on-surface">Available Downloads</h3>
+              <span className="text-xs uppercase tracking-widest text-on-surface-variant font-bold">
+                {downloads.filter((d) => d.signedUrl).length} Available
+              </span>
+            </div>
+            <div className="divide-y divide-white/5">
               {downloads.map((d) => (
                 <div
                   key={d.lang}
-                  className="flex items-center justify-between px-3 py-2.5 rounded-md"
-                  style={{ border: "1px solid #E2E6EC" }}
+                  className="p-6 flex items-center justify-between hover:bg-surface-bright/20 transition-colors group"
                 >
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg">{d.flag}</span>
-                    <span className="text-sm" style={{ color: "#1A2332" }}>{d.lang}</span>
+                  <div className="flex items-center gap-4">
+                    <div className={`w-12 h-12 ${d.iconBg} rounded flex items-center justify-center ${d.iconColor} group-hover:scale-110 transition-transform`}>
+                      <span className="material-symbols-outlined text-3xl">{d.icon}</span>
+                    </div>
+                    <div>
+                      <p className="font-semibold text-on-surface">{d.lang}</p>
+                      <p className="text-xs text-on-surface-variant">
+                        {d.signedUrl ? (d.isPrimary ? "Standard Document" : "AI Translated") : "Not available"}
+                      </p>
+                    </div>
                   </div>
-                  {d.signedUrl
-                    ? (
-                      <Button
-                        size="sm"
-                        className="cursor-pointer"
-                        style={{ background: "#0B1D3A" }}
-                        onClick={() => window.open(d.signedUrl!, "_blank")}
-                      >
-                        ⬇ {d.label}
-                      </Button>
-                    )
-                    : (
-                      <span className="text-xs" style={{ color: "#8494A7" }}>Not available</span>
-                    )
-                  }
+                  {d.signedUrl ? (
+                    <button
+                      onClick={() => window.open(d.signedUrl!, "_blank")}
+                      className={`px-5 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2 transition-all border-none cursor-pointer ${
+                        d.isPrimary
+                          ? "bg-[#FFD700] text-[#0D1B2A] hover:brightness-110"
+                          : "border border-[#FFD700]/30 text-[#FFD700] hover:bg-[#FFD700]/10"
+                      }`}
+                      style={d.isPrimary ? undefined : { border: "1px solid rgba(255, 215, 0, 0.3)", background: "transparent" }}
+                    >
+                      <span className="material-symbols-outlined text-sm">download</span>
+                      {d.label}
+                    </button>
+                  ) : (
+                    <span className="text-xs text-on-surface-variant italic">Not available</span>
+                  )}
                 </div>
               ))}
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
 
-        <Card>
-          <CardContent className="p-5">
-            <div className="text-sm font-semibold mb-3" style={{ color: "#1A2332" }}>Form Details</div>
-            {details.map(([k, v], i) => (
-              <div
-                key={k}
-                className="flex justify-between text-xs py-1.5"
-                style={{ borderTop: i ? "1px solid #E2E6EC" : "none" }}
+        {/* ── Sidebar (right column) ──────────────────────────────────── */}
+        <div className="lg:col-span-4 space-y-6">
+
+          {/* Form Details */}
+          <div className="bg-surface-container-low p-8 rounded-xl border border-white/5 space-y-8">
+            <h3 className="font-headline text-2xl text-on-surface">Form Details</h3>
+            <div className="space-y-5">
+              {details.map((d) => (
+                <div key={d.label} className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-[0.2em] text-on-surface-variant font-bold">
+                    {d.label}
+                  </label>
+                  <p className="text-on-surface font-medium text-sm">{d.value}</p>
+                </div>
+              ))}
+            </div>
+            <hr className="border-white/5" />
+            <div className="space-y-4">
+              <p className="text-xs text-on-surface-variant leading-relaxed">
+                Documents are scanned for security. Hash: {form.content_hash.slice(0, 6)}…{form.content_hash.slice(-4)}
+              </p>
+              <a
+                href={form.source_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full text-[#FFD700] text-xs font-bold uppercase tracking-widest flex items-center justify-center gap-2 hover:underline"
               >
-                <span style={{ color: "#8494A7" }}>{k}</span>
-                <span style={{ color: "#1A2332" }}>{v}</span>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
+                <span className="material-symbols-outlined text-sm">open_in_new</span>
+                View Original Source
+              </a>
+            </div>
+          </div>
+        </div>
       </div>
-      <ScreenLabel name="FORM DETAIL — DOWNLOAD" />
     </div>
   )
 }

@@ -1,84 +1,119 @@
+/**
+ * screens/home/HomePublic.tsx
+ *
+ * Public user home dashboard — renders INSIDE AppShell.
+ * Dark-themed, matching the new design system.
+ *
+ * Preserved logic: useAuth for user greeting, onNav for navigation.
+ */
+
 import { ScreenId, SCREENS } from "@/lib/constants"
-import { Card, CardContent } from "@/components/ui/card"
-import TopBar from "@/components/shared/TopBar"
-import ScreenLabel from "@/components/shared/ScreenLabel"
-import WelcomeBanner from "@/components/shared/WelcomeBanner"
 import { useAuth } from "@/hooks/useAuth"
 import { getFirstName } from "@/lib/utils"
 
 interface Props { onNav: (s: ScreenId) => void }
 
-const FeatureCard = ({ icon, title, desc, badge, onClick }: {
-  icon: string, title: string, desc: string, badge?: string, onClick: () => void
-}) => (
-  <Card onClick={onClick} className="cursor-pointer hover:shadow-md transition-shadow">
-    <CardContent className="p-4 flex items-center gap-4">
-      <div className="w-12 h-12 rounded-lg flex items-center justify-center text-2xl flex-shrink-0"
-        style={{ background: "#F5EDE0" }}>
-        {icon}
-      </div>
-      <div className="flex-1">
-        <div className="flex items-center gap-2">
-          <h3 className="text-sm font-semibold" style={{ color: "#1A2332" }}>{title}</h3>
-          {badge && (
-            <span className="text-[10px] font-semibold px-2 py-0.5 rounded tracking-wide"
-              style={{ background: "#F5EDE0", color: "#C8963E" }}>
-              {badge}
-            </span>
-          )}
-        </div>
-        <p className="text-xs mt-0.5 leading-relaxed" style={{ color: "#4A5568" }}>{desc}</p>
-      </div>
-      <span className="text-lg" style={{ color: "#8494A7" }}>›</span>
-    </CardContent>
-  </Card>
-)
+const features = [
+  {
+    icon: "upload_file",
+    title: "Upload Document",
+    desc: "Securely process subpoenas, contracts, or court orders for instant multi-language analysis.",
+    cta: "Start Upload",
+    screen: SCREENS.DOC_UPLOAD,
+  },
+  {
+    icon: "account_balance",
+    title: "Government Forms",
+    desc: "Assisted walkthroughs for federal and state filings with real-time legal term clarification.",
+    cta: "Browse Forms",
+    screen: SCREENS.FORMS_LIBRARY,
+  },
+  {
+    icon: "history_edu",
+    title: "My Translations",
+    desc: "Access your secure archive of processed documents and verified digital transcripts.",
+    cta: "View Archive",
+    screen: SCREENS.DOC_HISTORY,
+  },
+]
 
 export default function HomePublic({ onNav }: Props) {
   const { backendUser } = useAuth()
   const firstName = getFirstName(backendUser?.name, backendUser?.email)
 
   return (
-    <div className="min-h-screen" style={{ background: "#F6F7F9" }}>
-      <TopBar onNav={onNav} />
+    <div className="px-6 lg:px-8 py-8 max-w-7xl mx-auto space-y-10">
 
-      <WelcomeBanner
-        firstName={firstName}
-        roleDescription="As a public user, you can upload legal documents for translation or browse pre-translated court forms in Spanish and Portuguese using the services below."
-      />
-
-      <div className="max-w-7xl mx-auto px-5 py-8">
-        <h1 className="text-2xl font-bold mb-1"
-          style={{ fontFamily: "Palatino, Georgia, serif", color: "#1A2332" }}>
-          Document Translation
-        </h1>
-        <p className="text-sm mb-6" style={{ color: "#4A5568" }}>
-          Translate legal documents into Spanish or Portuguese
-        </p>
-
-        <div className="flex flex-col gap-3">
-          <FeatureCard icon="📄" title="Upload Document"
-            desc="Upload a legal PDF document for AI-powered translation"
-            onClick={() => onNav(SCREENS.DOC_UPLOAD)} />
-          <FeatureCard icon="🏛" title="Government Forms"
-            desc="Browse pre-translated Massachusetts court forms"
-            onClick={() => onNav(SCREENS.FORMS_LIBRARY)} />
-          <FeatureCard icon="📜" title="My Translations"
-            desc="View your document translation history"
-            onClick={() => onNav(SCREENS.DOC_HISTORY)} />
+      {/* Welcome Banner */}
+      <section className="relative overflow-hidden rounded-xl p-8 lg:p-12 bg-gradient-to-br from-primary-container to-surface-container-lowest">
+        <div className="absolute top-0 right-0 w-1/2 h-full opacity-10 pointer-events-none">
+          <div className="w-full h-full bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-secondary via-transparent to-transparent" />
         </div>
+        <div className="relative z-10">
+          <h1 className="font-headline text-5xl lg:text-7xl text-white mb-4 tracking-tight">
+            Welcome, {firstName}
+          </h1>
+          <div className="inline-flex items-center gap-2 px-3 py-1 bg-primary-fixed/10 border border-primary-fixed/20 rounded-full">
+            <span className="w-2 h-2 rounded-full bg-primary shadow-[0_0_8px_rgba(186,200,220,0.5)]" />
+            <span className="text-xs font-label uppercase tracking-widest text-primary-fixed">
+              Public User
+            </span>
+          </div>
+          <p className="mt-6 text-on-surface-variant max-w-xl text-lg leading-relaxed">
+            Access high-fidelity legal document translations and government form assistance,
+            powered by specialized neural justice networks.
+          </p>
+        </div>
+      </section>
 
-        <Card className="mt-6" style={{ background: "#F5EDE0", border: "1px solid rgba(200,150,62,0.2)" }}>
-          <CardContent className="p-4">
-            <p className="text-xs leading-relaxed" style={{ color: "#4A5568" }}>
-              <strong style={{ color: "#1A2332" }}>⚠ Important Notice:</strong> All translations are
-              machine-generated for convenience only. They are NOT legal advice and NOT the official
-              court record. Always verify with a qualified interpreter for legal proceedings.
+      {/* Feature Cards */}
+      <section>
+        <h2 className="font-headline text-3xl text-on-surface mb-8">Document Translation</h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {features.map((f) => (
+            <div
+              key={f.title}
+              role="button"
+              tabIndex={0}
+              onClick={() => onNav(f.screen)}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onNav(f.screen) } }}
+              className="group relative bg-surface-container-low p-8 rounded-xl transition-all duration-300 hover:bg-surface-container-high cursor-pointer"
+            >
+              <div className="mb-6 w-14 h-14 rounded-lg bg-primary-container flex items-center justify-center text-secondary transition-transform group-hover:scale-110">
+                <span className="material-symbols-outlined text-3xl">{f.icon}</span>
+              </div>
+              <h3 className="text-xl font-headline text-white mb-3">{f.title}</h3>
+              <p className="text-on-surface-variant text-sm mb-6 leading-relaxed">{f.desc}</p>
+              <div className="flex items-center text-secondary font-label text-sm font-medium">
+                {f.cta}
+                <span className="material-symbols-outlined ml-2 text-base transition-transform group-hover:translate-x-1">
+                  chevron_right
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Important Notice */}
+      <section>
+        <div className="bg-secondary-container/5 border border-secondary-fixed/20 rounded-xl p-6 flex flex-col md:flex-row items-start gap-6">
+          <div className="bg-secondary-container p-3 rounded-lg">
+            <span className="material-symbols-outlined text-on-secondary-container text-2xl">error</span>
+          </div>
+          <div>
+            <h4 className="text-secondary font-label text-sm font-bold uppercase tracking-widest mb-2">
+              Important Notice
+            </h4>
+            <p className="text-on-surface-variant text-sm leading-relaxed max-w-4xl">
+              This service uses AI-powered neural networks to assist in document processing and translation.
+              CourtAccess AI does not provide formal legal advice. Please consult with a qualified attorney
+              for specific legal guidance. Automated translations should be verified by a certified human
+              translator for official court proceedings.
             </p>
-          </CardContent>
-        </Card>
-      </div>
-      <ScreenLabel name="HOME — PUBLIC USER" />
+          </div>
+        </div>
+      </section>
     </div>
   )
 }

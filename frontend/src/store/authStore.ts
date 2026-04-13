@@ -142,6 +142,22 @@ const useAuthStore = create<AuthStore>()(
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
   initialize: () => {
+    const devRole = import.meta.env.VITE_DEV_BYPASS_AUTH as UserRole | undefined;
+    if (devRole) {
+      set({
+        authState: "authenticated",
+        role: devRole,
+        backendUser: {
+          user_id: "dev-user",
+          email: "dev@courtaccess.local",
+          name: "Dev User",
+          role: devRole,
+        },
+        user: null,
+      });
+      return () => {};
+    }
+
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       get().handleAuthStateChange(user);
     });

@@ -2,7 +2,7 @@ import { useCallback, useState, useEffect } from "react"
 import { Route, Routes, useNavigate } from "react-router-dom"
 
 import { SCREENS, SCREEN_TO_PATH, ScreenId, UserRole } from "@/lib/constants"
-import ScreenNavigator from "@/components/shared/ScreenNavigator"
+import AppShell from "@/components/layout/AppShell"
 import AuthModal from "@/components/auth/AuthModal"
 import useAuth from "@/hooks/useAuth"
 
@@ -32,8 +32,12 @@ import JoinRoomScreen from "@/screens/realtime/JoinRoomScreen"
 // Documents
 import DocUpload from "@/screens/documents/DocUpload"
 import DocProcessing from "@/screens/documents/DocProcessing"
-import DocResults from "@/screens/documents/DocResults"
+// DocResults is now merged into DocProcessing — kept as alias for backward compat
+
 import DocHistory from "@/screens/documents/DocHistory"
+
+// Sessions
+import RecentSessions from "@/screens/sessions/RecentSessions"
 
 // Forms
 import FormsLibrary from "@/screens/forms/FormsLibrary"
@@ -60,6 +64,7 @@ const ROLE_SCREENS: Record<UserRole, Set<ScreenId>> = {
     SCREENS.VERIFY_EMAIL, SCREENS.MFA,
     SCREENS.HOME_PUBLIC,
     SCREENS.DOC_UPLOAD, SCREENS.DOC_PROCESSING, SCREENS.DOC_RESULTS, SCREENS.DOC_HISTORY,
+    SCREENS.RECENT_SESSIONS,
     SCREENS.FORMS_LIBRARY, SCREENS.FORM_DETAIL,
     SCREENS.SETTINGS,
     SCREENS.REALTIME_SESSION, // guests enter via JoinRoomScreen (room-code auth)
@@ -71,6 +76,7 @@ const ROLE_SCREENS: Record<UserRole, Set<ScreenId>> = {
     SCREENS.HOME_OFFICIAL,
     SCREENS.REALTIME_SETUP, SCREENS.REALTIME_LOBBY, SCREENS.REALTIME_SESSION,
     SCREENS.DOC_UPLOAD, SCREENS.DOC_PROCESSING, SCREENS.DOC_RESULTS, SCREENS.DOC_HISTORY,
+    SCREENS.RECENT_SESSIONS,
     SCREENS.FORMS_LIBRARY, SCREENS.FORM_DETAIL,
     SCREENS.SETTINGS,
   ]),
@@ -81,6 +87,7 @@ const ROLE_SCREENS: Record<UserRole, Set<ScreenId>> = {
     SCREENS.HOME_INTERPRETER,
     SCREENS.INTERPRETER_REVIEW,
     SCREENS.DOC_UPLOAD, SCREENS.DOC_PROCESSING, SCREENS.DOC_RESULTS, SCREENS.DOC_HISTORY,
+    SCREENS.RECENT_SESSIONS,
     SCREENS.FORMS_LIBRARY, SCREENS.FORM_DETAIL,
     SCREENS.SETTINGS,
   ]),
@@ -237,8 +244,10 @@ function ProtectedApp() {
       // Documents
       case SCREENS.DOC_UPLOAD:         return <DocUpload onNav={onNav} />
       case SCREENS.DOC_PROCESSING:     return <DocProcessing onNav={onNav} />
-      case SCREENS.DOC_RESULTS:        return <DocResults onNav={onNav} />
+      case SCREENS.DOC_RESULTS:        return <DocProcessing onNav={onNav} />
       case SCREENS.DOC_HISTORY:        return <DocHistory onNav={onNav} />
+      // Sessions
+      case SCREENS.RECENT_SESSIONS:   return <RecentSessions onNav={onNav} />
       // Forms
       case SCREENS.FORMS_LIBRARY:      return <FormsLibrary onNav={onNav} />
       case SCREENS.FORM_DETAIL:        return <FormDetail onNav={onNav} />
@@ -272,12 +281,9 @@ function ProtectedApp() {
 
   if (authState === "authenticated") {
     return (
-      <div className="flex min-h-screen">
-        <ScreenNavigator current={screen} onNav={onNav} />
-        <div className="ml-44 flex-1">
-          {renderScreen()}
-        </div>
-      </div>
+      <AppShell current={screen} onNav={onNav} role={role}>
+        {renderScreen()}
+      </AppShell>
     )
   }
 

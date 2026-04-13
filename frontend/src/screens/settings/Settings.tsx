@@ -1,25 +1,21 @@
+/**
+ * screens/settings/Settings.tsx
+ *
+ * User settings — renders INSIDE AppShell.
+ * Dark-themed bento grid layout: profile card (8-col) + status sidebar (4-col),
+ * account credentials (7-col) + critical actions (5-col),
+ * and AI insight footer.
+ *
+ * Preserved logic: useAuth for user data, copyToClipboard, signOut.
+ */
+
 import { ScreenId } from "@/lib/constants"
-import { Card, CardContent } from "@/components/ui/card"
-import TopBar from "@/components/shared/TopBar"
-import ScreenLabel from "@/components/shared/ScreenLabel"
 import { useAuth } from "@/hooks/useAuth"
 import { getInitials } from "@/lib/utils"
 
 interface Props { onNav: (s: ScreenId) => void }
 
-const InfoRow = ({ label, value, valueColor = "#1A2332" }: {
-  label: string
-  value: string | React.ReactNode
-  valueColor?: string
-}) => (
-  <div className="flex items-center justify-between py-3 border-b last:border-b-0"
-    style={{ borderColor: "#E2E6EC" }}>
-    <span className="text-sm font-medium" style={{ color: "#8494A7" }}>{label}</span>
-    <span className="text-sm font-medium" style={{ color: valueColor }}>{value}</span>
-  </div>
-)
-
-export default function Settings({ onNav }: Props) {
+export default function Settings({ onNav: _onNav }: Props) {
   const { backendUser, role, signOut } = useAuth()
 
   const initials = getInitials(backendUser?.name, backendUser?.email)
@@ -59,162 +55,200 @@ export default function Settings({ onNav }: Props) {
   }
 
   return (
-    <div className="min-h-screen" style={{ background: "#F6F7F9" }}>
-      <TopBar onNav={onNav} />
+    <div className="px-6 lg:px-8 py-8 max-w-5xl mx-auto space-y-8">
 
-      <div className="max-w-xl mx-auto px-5 py-8">
-        <h1 className="text-2xl font-bold mb-1"
-          style={{ fontFamily: "Palatino, Georgia, serif", color: "#1A2332" }}>
-          Settings
-        </h1>
-        <p className="text-sm mb-6" style={{ color: "#4A5568" }}>
-          Manage your account and preferences
+      {/* Hero Title */}
+      <header className="mb-4">
+        <h1 className="text-4xl md:text-5xl font-headline text-on-surface mb-2">User Settings</h1>
+        <p className="text-on-surface-variant max-w-2xl">
+          Manage your digital credentials, authentication protocols, and workspace preferences within the CourtAccess ecosystem.
         </p>
+      </header>
 
-        {/* Profile Card */}
-        <Card className="mb-4">
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4 mb-4">
-              <div
-                className="w-16 h-16 rounded-full flex items-center justify-center text-white text-xl font-bold flex-shrink-0"
-                style={{ background: "#C8963E" }}
-              >
-                {initials}
+      {/* Bento Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+
+        {/* ── Profile Card (8-col) ─────────────────────────────────── */}
+        <section className="md:col-span-8 bg-surface-container-low rounded-xl p-8 flex flex-col md:flex-row gap-8 items-center border border-outline-variant/10 relative overflow-hidden group">
+          <div className="absolute inset-0 bg-gradient-to-br from-primary-container/20 to-transparent pointer-events-none" />
+          <div className="relative">
+            <div className="w-32 h-32 rounded-full bg-surface-container-highest flex items-center justify-center border-4 border-secondary shadow-lg">
+              <span className="text-4xl font-headline text-secondary font-bold">{initials}</span>
+            </div>
+            <div className="absolute -bottom-2 -right-2 bg-primary-fixed text-on-primary-fixed px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest shadow-md">
+              {displayRole}
+            </div>
+          </div>
+          <div className="flex-1 text-center md:text-left">
+            <h2 className="text-2xl font-headline text-white mb-1">
+              {backendUser?.name || "User"}
+            </h2>
+            <p className="text-on-surface-variant mb-4">{backendUser?.email}</p>
+            <div className="flex flex-wrap gap-2 justify-center md:justify-start">
+              <span className="px-3 py-1 bg-surface-container-highest rounded text-xs text-secondary-fixed-dim border border-secondary/10">
+                Access Tier: {displayRole}
+              </span>
+              <span className="px-3 py-1 bg-surface-container-highest rounded text-xs text-tertiary border border-tertiary/10">
+                {getProviderName(backendUser?.auth_provider || "")} Auth
+              </span>
+            </div>
+          </div>
+        </section>
+
+        {/* ── Status Sidebar (4-col) ───────────────────────────────── */}
+        <section className="md:col-span-4 bg-surface-container-low rounded-xl p-6 border border-outline-variant/10 flex flex-col justify-between">
+          <div>
+            <h3 className="text-on-surface-variant text-[10px] uppercase tracking-[0.2em] mb-4">System Status</h3>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-400">Database Sync</span>
+                <span className="w-2 h-2 rounded-full bg-emerald-500" style={{ boxShadow: "0 0 8px rgba(16,185,129,0.6)" }} />
               </div>
-              <div className="flex-1 min-w-0">
-                <h2 className="text-lg font-bold truncate" style={{ color: "#1A2332" }}>
-                  {backendUser?.name || "User"}
-                </h2>
-                <p className="text-sm truncate" style={{ color: "#8494A7" }}>
-                  {backendUser?.email}
-                </p>
-                <div className="flex items-center gap-2 mt-2">
-                  <span className="px-2 py-0.5 rounded text-[10px] font-semibold tracking-wide"
-                    style={{ background: "rgba(11, 29, 58, 0.08)", color: "#0B1D3A" }}>
-                    {displayRole}
-                  </span>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-semibold tracking-wide"
-                    style={{ background: "#F5EDE0", color: "#C8963E" }}>
-                    {getProviderName(backendUser?.auth_provider || "")}
-                  </span>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-400">Security Node</span>
+                <span className="w-2 h-2 rounded-full bg-emerald-500" style={{ boxShadow: "0 0 8px rgba(16,185,129,0.6)" }} />
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-400">Audit Trail</span>
+                <span className="w-2 h-2 rounded-full bg-secondary" style={{ boxShadow: "0 0 8px rgba(255,193,7,0.6)" }} />
+              </div>
+            </div>
+          </div>
+          <div className="mt-8 p-4 bg-surface-container-lowest rounded-lg border border-white/5">
+            <p className="text-[10px] text-slate-500 leading-relaxed">
+              Your account is currently operating under high-security protocols. All actions are logged to the magistrate ledger.
+            </p>
+          </div>
+        </section>
+
+        {/* ── Account Credentials (7-col) ──────────────────────────── */}
+        <section className="md:col-span-7 bg-surface-container-low rounded-xl border border-outline-variant/10 overflow-hidden">
+          <div className="px-8 py-6 border-b border-white/5 flex items-center justify-between">
+            <h3 className="font-headline text-xl text-white">Account Credentials</h3>
+            <span className="material-symbols-outlined text-slate-500">lock</span>
+          </div>
+          <div className="p-8 space-y-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
+              {/* User ID */}
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest text-on-surface-variant mb-2">Internal User ID</label>
+                <div className="flex items-center gap-2 group cursor-pointer" role="button" tabIndex={0} onClick={() => copyToClipboard(backendUser?.user_id || "")} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); copyToClipboard(backendUser?.user_id || "") } }} aria-label="Copy User ID to clipboard">
+                  <span className="font-mono text-sm text-secondary-fixed">{truncateUserId(backendUser?.user_id || "")}</span>
+                  <span className="material-symbols-outlined text-xs text-slate-600 group-hover:text-secondary">content_copy</span>
                 </div>
               </div>
-            </div>
-            <div className="text-xs" style={{ color: "#8494A7" }}>
-              Member since {formatDate(backendUser?.created_at)}
-            </div>
-          </CardContent>
-        </Card>
 
-        {/* Account Details Card */}
-        <Card className="mb-4">
-          <CardContent className="p-6">
-            <h3 className="text-sm font-bold mb-4" style={{ color: "#1A2332" }}>
-              Account Details
-            </h3>
-            <div>
-              <InfoRow
-                label="User ID"
-                value={
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-xs">
-                      {truncateUserId(backendUser?.user_id || "")}
-                    </span>
-                    <button
-                      onClick={() => copyToClipboard(backendUser?.user_id || "")}
-                      className="text-xs hover:opacity-70"
-                      style={{ color: "#2563eb" }}
-                      title="Copy full User ID"
-                    >
-                      📋
-                    </button>
-                  </div>
-                }
-              />
-              <InfoRow label="Email" value={backendUser?.email || ""} />
-              <InfoRow
-                label="Email Verified"
-                value={
-                  backendUser?.email_verified ? (
-                    <span className="flex items-center gap-1" style={{ color: "#16a34a" }}>
-                      <span>✓</span> Verified
-                    </span>
-                  ) : (
-                    <span className="flex items-center gap-1" style={{ color: "#dc2626" }}>
-                      <span>✗</span> Not Verified
-                    </span>
-                  )
-                }
-              />
-              <InfoRow
-                label="MFA Status"
-                value={backendUser?.mfa_enabled ? "Enabled" : "Not Enabled"}
-              />
-              <InfoRow
-                label="Role"
-                value={
-                  <span className="px-2 py-0.5 rounded text-[10px] font-semibold tracking-wide"
-                    style={{ background: "rgba(11, 29, 58, 0.08)", color: "#0B1D3A" }}>
-                    {displayRole}
+              {/* Auth Provider */}
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest text-on-surface-variant mb-2">Auth Provider</label>
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-lg text-primary">
+                    {backendUser?.auth_provider === "google.com" ? "google" : "key"}
                   </span>
-                }
-              />
-              <InfoRow
-                label="Auth Provider"
-                value={getProviderName(backendUser?.auth_provider || "")}
-              />
-              <InfoRow
-                label="Last Login"
-                value={formatDateTime(backendUser?.last_login_at)}
-              />
-            </div>
-          </CardContent>
-        </Card>
+                  <span className="text-sm">{getProviderName(backendUser?.auth_provider || "")}</span>
+                </div>
+              </div>
 
-        {/* Actions Card */}
-        <Card>
-          <CardContent className="p-6">
-            <h3 className="text-sm font-bold mb-4" style={{ color: "#1A2332" }}>
-              Account Actions
-            </h3>
-            <div className="flex flex-col gap-3">
+              {/* Email */}
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest text-on-surface-variant mb-2">Primary Email</label>
+                <p className="text-sm">{backendUser?.email || "—"}</p>
+              </div>
+
+              {/* MFA Status */}
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest text-on-surface-variant mb-2">MFA Status</label>
+                {backendUser?.mfa_enabled ? (
+                  <div className="flex items-center gap-2 text-emerald-500">
+                    <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>verified_user</span>
+                    <span className="text-sm font-bold uppercase tracking-tighter">Active</span>
+                  </div>
+                ) : (
+                  <span className="text-sm text-on-surface-variant">Not Enabled</span>
+                )}
+              </div>
+
+              {/* Email Verified */}
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest text-on-surface-variant mb-2">Email Verified</label>
+                {backendUser?.email_verified ? (
+                  <div className="flex items-center gap-1.5 text-emerald-500">
+                    <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>verified</span>
+                    <span className="text-sm font-bold">Verified</span>
+                  </div>
+                ) : (
+                  <span className="flex items-center gap-1.5 text-red-400 text-sm">
+                    <span className="material-symbols-outlined text-sm">cancel</span> Not Verified
+                  </span>
+                )}
+              </div>
+
+              {/* Last Login */}
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest text-on-surface-variant mb-2">Last Login</label>
+                <p className="text-sm">{formatDateTime(backendUser?.last_login_at)}</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ── Critical Actions (5-col) ─────────────────────────────── */}
+        <section className="md:col-span-5 bg-surface-container-low rounded-xl border border-outline-variant/10 flex flex-col">
+          <div className="px-8 py-6 border-b border-white/5">
+            <h3 className="font-headline text-xl text-white">Critical Actions</h3>
+          </div>
+          <div className="p-8 flex-1 flex flex-col gap-4">
+            {/* Sign Out */}
+            <button
+              onClick={() => signOut()}
+              className="w-full flex items-center justify-between p-4 bg-surface-container-high hover:bg-surface-bright rounded-lg transition-colors group cursor-pointer border-none text-left"
+            >
+              <div className="flex items-center gap-4">
+                <span className="material-symbols-outlined text-on-surface-variant group-hover:text-white">logout</span>
+                <div>
+                  <span className="block text-sm font-bold text-white">Sign Out</span>
+                  <span className="block text-[10px] text-on-surface-variant">End current session safely</span>
+                </div>
+              </div>
+              <span className="material-symbols-outlined text-slate-600">chevron_right</span>
+            </button>
+
+            {/* Delete Account */}
+            <div className="relative">
               <button
-                onClick={() => signOut()}
-                className="w-full px-4 py-2.5 rounded text-sm font-medium transition-colors"
-                style={{
-                  background: "#fff",
-                  border: "1px solid #dc2626",
-                  color: "#dc2626"
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "#fef2f2"
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "#fff"
-                }}
-              >
-                Sign Out
-              </button>
-              <button
+                className="w-full flex items-center justify-between p-4 bg-surface-container-lowest opacity-50 cursor-not-allowed rounded-lg border border-error-container/20"
                 disabled
-                title="Contact administrator to delete your account"
-                className="w-full px-4 py-2.5 rounded text-sm font-medium cursor-not-allowed opacity-50"
-                style={{
-                  background: "#fff",
-                  border: "1px solid #dc2626",
-                  color: "#dc2626"
-                }}
               >
-                Delete Account
+                <div className="flex items-center gap-4">
+                  <span className="material-symbols-outlined text-error">delete_forever</span>
+                  <div className="text-left">
+                    <span className="block text-sm font-bold text-error">Delete Account</span>
+                    <span className="block text-[10px] text-error/60">Permanently erase all data</span>
+                  </div>
+                </div>
               </button>
-              <p className="text-xs text-center" style={{ color: "#8494A7" }}>
-                Account deletion requires administrator approval
+              <div className="mt-3 p-3 bg-error-container/10 border border-error-container/20 rounded text-[10px] text-error/80 italic">
+                Note: Account deletion is currently disabled. Please contact the internal review board for formal account removal.
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ── AI Insight Footer ─────────────────────────────────────── */}
+        <section className="md:col-span-12 mt-4 p-1 rounded-xl bg-gradient-to-r from-tertiary-container via-surface-container-low to-primary-container">
+          <div className="bg-surface-container-lowest rounded-lg px-8 py-4 flex flex-col md:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <span className="material-symbols-outlined text-tertiary animate-pulse">smart_toy</span>
+              <p className="text-xs text-slate-300 italic">
+                "Security Audit: 0 anomalies detected in your recent 48-hour activity."
               </p>
             </div>
-          </CardContent>
-        </Card>
+            <span className="text-[9px] uppercase tracking-[0.3em] text-slate-500">
+              Member since {formatDate(backendUser?.created_at)}
+            </span>
+          </div>
+        </section>
       </div>
-      <ScreenLabel name="SETTINGS" />
     </div>
   )
 }

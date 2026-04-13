@@ -1,54 +1,91 @@
+/**
+ * screens/documents/DocHistory.tsx
+ *
+ * Translation History — renders INSIDE AppShell.
+ * Table-based layout showing all document translation sessions
+ * with status badges, language info, and pagination.
+ *
+ * Preserved logic: documentsApi.list() with pagination, document session
+ * state management, navigation to processing/results screens.
+ */
+
 import { useEffect, useState } from "react"
 import { ScreenId, SCREENS } from "@/lib/constants"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
-import TopBar from "@/components/shared/TopBar"
-import ScreenLabel from "@/components/shared/ScreenLabel"
 import { documentsApi, type DocumentStatus } from "@/services/api"
 import useAuthStore from "@/store/authStore"
-import { formatDate } from "@/lib/utils"
 
 interface Props { onNav: (s: ScreenId) => void }
 
 const PAGE_SIZE = 20
 
-const FLAG: Record<string, string> = { es: "🇪🇸", pt: "🇧🇷" }
 const LANG_LABEL: Record<string, string> = { es: "Spanish", pt: "Portuguese" }
+const LANG_CODE: Record<string, string> = { es: "ES", pt: "PT" }
 
-function timeAgo(iso: string): string {
-  const diffMs = Date.now() - new Date(iso).getTime()
-  const mins = Math.floor(diffMs / 60_000)
-  if (mins < 1)  return "just now"
-  if (mins < 60) return `${mins} min ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24)  return `${hrs}h ago`
-  return `${Math.floor(hrs / 24)}d ago`
+function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
 }
 
+// ── Status badges matching the design system ──────────────────────────────
+
 function StatusBadge({ status }: { status: string }) {
-  const isProcessing = status === "processing" || status === "pending"
-  const isSuccess    = status === "translated" || status === "completed"
-  const style = isProcessing
-    ? { background: "#FEF3C7", color: "#d97706" }
-    : isSuccess
-    ? { background: "#DCFCE7", color: "#16a34a" }
-    : { background: "#FEE2E2", color: "#dc2626" }
+  if (status === "processing") {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-secondary-container/20 text-secondary-fixed border border-secondary/20">
+        <span className="w-1.5 h-1.5 rounded-full bg-secondary animate-pulse" />
+        In Progress
+      </span>
+    )
+  }
+
+  if (status === "translated" || status === "completed") {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-tertiary-container/30 text-tertiary-fixed border border-tertiary/20">
+        <span
+          className="material-symbols-outlined text-[12px]"
+          style={{ fontVariationSettings: "'FILL' 1" }}
+        >
+          check_circle
+        </span>
+        Translated
+      </span>
+    )
+  }
+
+  if (status === "pending") {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-surface-container-highest text-on-surface-variant border border-outline-variant/30">
+        <span className="material-symbols-outlined text-[12px]">schedule</span>
+        Pending Review
+      </span>
+    )
+  }
+
+  // error / rejected
   return (
-    <span className="text-[10px] font-semibold px-2 py-0.5 rounded uppercase" style={style}>
-      {status}
+    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-red-900/30 text-red-400 border border-red-500/20">
+      <span className="material-symbols-outlined text-[12px]">error</span>
+      {status === "rejected" ? "Rejected" : "Failed"}
     </span>
   )
 }
+
+// ── Component ─────────────────────────────────────────────────────────────
 
 export default function DocHistory({ onNav }: Props) {
   const setDocumentSession = useAuthStore((s) => s.setDocumentSession)
   const setDocumentResult  = useAuthStore((s) => s.setDocumentResult)
 
-  const [items, setItems]   = useState<DocumentStatus[]>([])
-  const [total, setTotal]   = useState(0)
-  const [page, setPage]     = useState(1)
+  const [items, setItems]     = useState<DocumentStatus[]>([])
+  const [total, setTotal]     = useState(0)
+  const [page, setPage]       = useState(1)
   const [loading, setLoading] = useState(true)
-  const [error, setError]   = useState<string | null>(null)
+  const [error, setError]     = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -72,184 +109,155 @@ export default function DocHistory({ onNav }: Props) {
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
 
-  function handleViewProgress(row: DocumentStatus) {
+  function handleRowClick(row: DocumentStatus) {
     setDocumentSession({ sessionId: row.session_id, targetLanguage: row.target_language })
+
+    if (row.status === "translated" || row.status === "completed") {
+      setDocumentResult(row)
+    }
+
     onNav(SCREENS.DOC_PROCESSING)
   }
 
-  function handleViewResults(row: DocumentStatus) {
-    setDocumentSession({ sessionId: row.session_id, targetLanguage: row.target_language })
-    setDocumentResult(row)
-    onNav(SCREENS.DOC_RESULTS)
-  }
-
   return (
-    <div className="min-h-screen" style={{ background: "#F6F7F9" }}>
-      <TopBar onNav={onNav} />
-      <div className="max-w-2xl mx-auto px-5 py-8">
-        <h1
-          className="text-xl font-bold mb-1"
-          style={{ fontFamily: "Palatino, Georgia, serif", color: "#1A2332" }}
-        >
-          My Translations
-        </h1>
-        <p className="text-xs mb-5" style={{ color: "#8494A7" }}>
-          {total} translation{total !== 1 ? "s" : ""} · tap a row to continue or download
+    <div className="px-6 lg:px-10 py-8 max-w-7xl mx-auto">
+
+      {/* Header */}
+      <section className="mb-10">
+        <h1 className="font-headline text-4xl text-on-surface mb-2">Translation History</h1>
+        <p className="text-on-surface-variant max-w-2xl">
+          A comprehensive ledger of all cross-jurisdictional legal document translations
+          processed by Court Access AI.
         </p>
+      </section>
 
-        {loading ? (
-          <div className="text-sm text-center py-12" style={{ color: "#8494A7" }}>
-            Loading history…
-          </div>
-        ) : error ? (
-          <div className="text-sm text-center py-12" style={{ color: "#dc2626" }}>
-            {error}
-          </div>
-        ) : items.length === 0 ? (
-          <Card>
-            <CardContent className="p-8 text-center">
-              <p className="text-sm mb-4" style={{ color: "#8494A7" }}>
-                No translations yet.
-              </p>
-              <Button
-                size="sm"
-                className="cursor-pointer"
-                style={{ background: "#0B1D3A" }}
-                onClick={() => onNav(SCREENS.DOC_UPLOAD)}
-              >
-                📄 Upload a Document
-              </Button>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {items.map((row) => {
-              const isProcessing = row.status === "processing" || row.status === "pending"
-              const isSuccess    = row.status === "translated" || row.status === "completed"
-              const isFailed     = !isProcessing && !isSuccess
+      {/* Loading state */}
+      {loading && (
+        <div className="flex flex-col items-center justify-center py-20">
+          <span className="material-symbols-outlined text-4xl text-secondary animate-spin mb-4">autorenew</span>
+          <p className="text-on-surface-variant text-sm">Loading history…</p>
+        </div>
+      )}
 
-              return (
-                <Card key={row.session_id} className="hover:shadow-md transition-shadow">
-                  <CardContent className="p-4 flex items-center justify-between gap-3">
+      {/* Error state */}
+      {!loading && error && (
+        <div className="bg-error-container/20 border border-error/30 rounded-xl p-8 text-center">
+          <span className="material-symbols-outlined text-error text-4xl mb-3 block">cloud_off</span>
+          <p className="text-error text-sm">{error}</p>
+        </div>
+      )}
 
-                    {/* Left — flag + info */}
-                    <div className="flex items-center gap-3 min-w-0">
-                      <span className="text-2xl flex-shrink-0">
-                        {FLAG[row.target_language] ?? "🌐"}
-                      </span>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-medium" style={{ color: "#1A2332" }}>
-                            {LANG_LABEL[row.target_language] ?? row.target_language}
-                          </span>
-                          <StatusBadge status={row.status} />
-                        </div>
-                        <div className="text-[11px] mt-0.5" style={{ color: "#8494A7" }}>
-                          Translating to {LANG_LABEL[row.target_language] ?? row.target_language}
-                          {" · "}Started {timeAgo(row.created_at)}
-                          {" · "}{formatDate(row.created_at)}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Right — action */}
-                    <div className="flex-shrink-0">
-                      {isProcessing && (
-                        <Button
-                          size="sm"
-                          className="cursor-pointer"
-                          style={{ background: "#0B1D3A" }}
-                          onClick={() => handleViewProgress(row)}
-                        >
-                          View Progress
-                        </Button>
-                      )}
-                      {isSuccess && row.signed_url && (
-                        <Button
-                          size="sm"
-                          className="cursor-pointer"
-                          style={{ background: "#0B1D3A" }}
-                          onClick={() => window.open(row.signed_url!, "_blank")}
-                        >
-                          ⬇ Download
-                        </Button>
-                      )}
-                      {isSuccess && !row.signed_url && (
-                        <Button
-                          size="sm"
-                          className="cursor-pointer"
-                          style={{ background: "#0B1D3A" }}
-                          onClick={() => handleViewResults(row)}
-                        >
-                          View Results
-                        </Button>
-                      )}
-                      {isFailed && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="cursor-pointer"
-                          onClick={() => onNav(SCREENS.DOC_UPLOAD)}
-                        >
-                          Try Again
-                        </Button>
-                      )}
-                    </div>
-
-                  </CardContent>
-                </Card>
-              )
-            })}
-          </div>
-        )}
-
-        {total > PAGE_SIZE && (
-          <div className="flex items-center justify-between mt-6">
-            <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page === 1}
-              className="text-xs font-medium px-3 py-1.5 rounded"
-              style={{
-                border: "1.5px solid #E2E6EC",
-                color: page === 1 ? "#8494A7" : "#1A2332",
-                background: "#fff",
-                cursor: page === 1 ? "default" : "pointer",
-                opacity: page === 1 ? 0.5 : 1,
-              }}
-            >
-              ← Previous
-            </button>
-            <span className="text-xs" style={{ color: "#8494A7" }}>
-              Page {page} of {totalPages}
-            </span>
-            <button
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page === totalPages}
-              className="text-xs font-medium px-3 py-1.5 rounded"
-              style={{
-                border: "1.5px solid #E2E6EC",
-                color: page === totalPages ? "#8494A7" : "#1A2332",
-                background: "#fff",
-                cursor: page === totalPages ? "default" : "pointer",
-                opacity: page === totalPages ? 0.5 : 1,
-              }}
-            >
-              Next →
-            </button>
-          </div>
-        )}
-
-        <div className="mt-6">
-          <Button
-            variant="outline"
-            className="cursor-pointer"
+      {/* Empty state */}
+      {!loading && !error && items.length === 0 && (
+        <div className="bg-surface-container-low rounded-xl p-12 text-center border border-white/5">
+          <span className="material-symbols-outlined text-5xl text-on-surface-variant mb-4 block">
+            folder_open
+          </span>
+          <p className="text-on-surface-variant mb-6">No translations yet.</p>
+          <button
+            className="px-6 py-3 bg-[#FFD700] text-[#0D1B2A] rounded-lg font-bold text-sm hover:scale-105 transition-transform active:scale-95 border-none cursor-pointer flex items-center gap-2 mx-auto"
             onClick={() => onNav(SCREENS.DOC_UPLOAD)}
           >
-            📄 Upload New Document
-          </Button>
+            <span className="material-symbols-outlined text-lg">upload_file</span>
+            Upload a Document
+          </button>
         </div>
-      </div>
-      <ScreenLabel name="DOCUMENT HISTORY" />
+      )}
+
+      {/* Translation history table */}
+      {!loading && !error && items.length > 0 && (
+        <section className="bg-surface-container-low rounded-xl overflow-hidden border border-white/5 shadow-2xl">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-surface-container-high border-b border-white/5">
+                  <th className="px-6 py-4 text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">
+                    Document Name
+                  </th>
+                  <th className="px-6 py-4 text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">
+                    Target Language
+                  </th>
+                  <th className="px-6 py-4 text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">
+                    Processing Status
+                  </th>
+                  <th className="px-6 py-4 text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">
+                    Date Initiated
+                  </th>
+                  <th className="px-6 py-4" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {items.map((row) => (
+                  <tr
+                    key={row.session_id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => handleRowClick(row)}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleRowClick(row) } }}
+                    className="hover:bg-primary/5 cursor-pointer transition-colors group"
+                  >
+                    <td className="px-6 py-5">
+                      <div className="flex items-center gap-3">
+                        <span className="material-symbols-outlined text-secondary-fixed">description</span>
+                        <div>
+                          <p className="text-sm font-medium text-on-surface">
+                            {LANG_LABEL[row.target_language] ?? row.target_language} Translation
+                          </p>
+                          <p className="text-[10px] text-on-surface-variant uppercase tracking-tighter">
+                            Session #{row.session_id.slice(0, 8).toUpperCase()}
+                          </p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-6 py-5">
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined text-primary text-sm">translate</span>
+                        <span className="text-sm">
+                          {LANG_LABEL[row.target_language] ?? row.target_language} ({LANG_CODE[row.target_language] ?? row.target_language.toUpperCase()})
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-5">
+                      <StatusBadge status={row.status} />
+                    </td>
+                    <td className="px-6 py-5 text-sm text-on-surface-variant">
+                      {formatDateTime(row.created_at)}
+                    </td>
+                    <td className="px-6 py-5 text-right">
+                      <span className="material-symbols-outlined text-on-surface-variant group-hover:text-secondary transition-colors">
+                        arrow_forward_ios
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination footer */}
+          <div className="px-6 py-4 bg-surface-container-high/50 flex justify-between items-center text-[11px] text-on-surface-variant font-medium">
+            <p>Showing {items.length} of {total} document translation{total !== 1 ? "s" : ""}</p>
+            <div className="flex gap-4">
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page === 1}
+                className="hover:text-on-surface transition-colors flex items-center gap-1 disabled:opacity-50 bg-transparent border-none text-on-surface-variant cursor-pointer disabled:cursor-default"
+              >
+                <span className="material-symbols-outlined text-sm">chevron_left</span>
+                Previous
+              </button>
+              <button
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+                className="hover:text-on-surface transition-colors flex items-center gap-1 disabled:opacity-50 bg-transparent border-none text-on-surface-variant cursor-pointer disabled:cursor-default"
+              >
+                Next
+                <span className="material-symbols-outlined text-sm">chevron_right</span>
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
     </div>
   )
 }

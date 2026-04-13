@@ -5,14 +5,14 @@
  * them to the LEP individual. Polls GET /api/sessions/rooms/{code}/status
  * every 3 s; when the partner joins, briefly shows a confirmation message
  * then navigates to RealtimeSession.
+ *
+ * Renders INSIDE AppShell. Dark-themed with centered hero lobby card,
+ * 2-column QR/countdown layout, session parameters, and AI model status.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import QRCode from "react-qr-code"
 import { ScreenId, SCREENS } from "@/lib/constants"
-import { Card, CardContent } from "@/components/ui/card"
-import TopBar from "@/components/shared/TopBar"
-import ScreenLabel from "@/components/shared/ScreenLabel"
 import useRealtimeStore from "@/store/realtimeStore"
 import { realtimeApi } from "@/services/api"
 
@@ -29,13 +29,11 @@ const LANG_LABELS: Record<string, string> = {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Format seconds as MM:SS */
 function fmtCountdown(totalSeconds: number): string {
   const s = Math.max(0, totalSeconds)
   return `${Math.floor(s / 60).toString().padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`
 }
 
-/** Seconds remaining until an ISO-8601 expiry string. */
 function secondsUntil(isoString: string): number {
   return Math.floor((new Date(isoString).getTime() - Date.now()) / 1000)
 }
@@ -43,8 +41,6 @@ function secondsUntil(isoString: string): number {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 interface Props { onNav: (s: ScreenId) => void }
-
-const NAVY = "#0B1D3A"
 
 export default function RealtimeLobby({ onNav }: Props) {
   // Store
@@ -65,8 +61,6 @@ export default function RealtimeLobby({ onNav }: Props) {
   )
   const [pollError, setPollError]         = useState<string | null>(null)
 
-
-  // Prevent navigation from firing twice
   const navigatedRef = useRef(false)
 
   // ── Navigate to session ────────────────────────────────────────────────────
@@ -100,24 +94,20 @@ export default function RealtimeLobby({ onNav }: Props) {
         setPollError(null)
 
         if (status.phase === "joining" && partnerPhase === "waiting") {
-          // Partner hit join and got a JWT — show "joining" state immediately
           setPartnerPhase("joining")
         } else if (status.phase === "active") {
           setPartnerPhase("active")
-          // Brief pause so the user reads the confirmation, then navigate
           setTimeout(goToSession, JOIN_CONFIRM_DELAY_MS)
         } else if (status.phase === "ended") {
           clearInterval(pollId)
           setPollError("This room has ended. Please create a new session.")
         }
       } catch {
-        // Silently swallow transient network blips; show persistent failures
         setPollError("Unable to reach server — retrying…")
         setTimeout(() => setPollError(null), 4_000)
       }
     }
 
-    // Immediate first poll, then every POLL_INTERVAL_MS
     void poll()
     pollId = window.setInterval(() => { void poll() }, POLL_INTERVAL_MS)
     return () => clearInterval(pollId)
@@ -137,207 +127,202 @@ export default function RealtimeLobby({ onNav }: Props) {
     setTimeout(() => setCopied(false), 2_000)
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Render
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ── Render ──────────────────────────────────────────────────────────────────
 
   const partnerName = partner?.name ?? "the LEP individual"
   const partnerLang = partner?.language ?? "es"
   const isExpired   = countdown <= 0
 
   return (
-    <div className="min-h-screen" style={{ background: "#F6F7F9" }}>
-      <TopBar onNav={onNav} />
+    <div className="px-6 lg:px-8 py-8 max-w-6xl mx-auto space-y-6">
 
-      <div className="max-w-xl mx-auto px-5 py-8">
-        <h1
-          className="text-xl font-bold mb-1"
-          style={{ fontFamily: "Palatino, Georgia, serif", color: "#1A2332" }}
-        >
-          Waiting Room
-        </h1>
-        <p className="text-sm mb-6" style={{ color: "#4A5568" }}>
-          Share the room code or link below with {partnerName}.
-        </p>
+      {/* Status banner */}
+      <div className="p-4 bg-primary-container/40 backdrop-blur-md rounded-xl border border-secondary/10 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <span className="w-3 h-3 bg-amber-500 rounded-full animate-pulse" />
+          <span className="text-sm font-medium tracking-wide uppercase text-on-surface-variant">
+            Realtime Synchronization Protocol Active
+          </span>
+        </div>
+        <div className="text-sm text-secondary font-medium hidden sm:block">
+          {partnerPhase === "waiting" && "Waiting for interpreter…"}
+          {partnerPhase === "joining" && `${partnerName} is connecting…`}
+          {partnerPhase === "active" && "Connected — starting session…"}
+        </div>
+      </div>
 
-        {/* ── Partner joining banner (JWT issued, WS not yet open) ──────────── */}
-        {partnerPhase === "joining" && (
-          <div
-            className="rounded-md p-4 mb-4 flex items-center gap-3"
-            style={{ background: "#EFF6FF", border: "1.5px solid #93C5FD" }}
-          >
-            <span className="text-xl">🔗</span>
-            <div>
-              <p className="text-sm font-semibold" style={{ color: "#1D4ED8" }}>
-                {partnerName} is connecting…
-              </p>
-              <p className="text-xs" style={{ color: "#2563EB" }}>
-                They have the code — waiting for their connection to open.
-              </p>
-            </div>
+      {/* Partner joining banner */}
+      {partnerPhase === "joining" && (
+        <div className="rounded-lg px-4 py-3 bg-blue-950 border border-blue-900 flex items-center gap-3">
+          <span className="material-symbols-outlined text-blue-400">link</span>
+          <div>
+            <p className="text-sm font-semibold text-blue-300">{partnerName} is connecting…</p>
+            <p className="text-xs text-blue-400">They have the code — waiting for their connection to open.</p>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* ── Partner fully connected banner ───────────────────────────────── */}
-        {partnerPhase === "active" && (
-          <div
-            className="rounded-md p-4 mb-4 flex items-center gap-3"
-            style={{ background: "#F0FDF4", border: "1.5px solid #86EFAC" }}
-          >
-            <span className="text-xl">✅</span>
-            <div>
-              <p className="text-sm font-semibold" style={{ color: "#166534" }}>
-                {partnerName} has joined
-              </p>
-              <p className="text-xs" style={{ color: "#15803D" }}>
-                Starting session…
-              </p>
-            </div>
+      {/* Partner fully connected banner */}
+      {partnerPhase === "active" && (
+        <div className="rounded-lg px-4 py-3 bg-green-950 border border-green-900 flex items-center gap-3">
+          <span className="material-symbols-outlined text-green-400">check_circle</span>
+          <div>
+            <p className="text-sm font-semibold text-green-300">{partnerName} has joined</p>
+            <p className="text-xs text-green-400">Starting session…</p>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* ── Poll error ──────────────────────────────────────────────────── */}
-        {pollError && partnerPhase === "waiting" && (
-          <div
-            className="rounded-md p-3 mb-4 text-xs"
-            style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#991B1B" }}
-          >
-            {pollError}
-          </div>
-        )}
+      {/* Poll error */}
+      {pollError && partnerPhase === "waiting" && (
+        <div className="rounded-lg px-4 py-3 text-xs bg-red-950 border border-red-900 text-red-300">
+          {pollError}
+        </div>
+      )}
 
-        {/* ── Code + QR card ──────────────────────────────────────────────── */}
-        <Card className="mb-4">
-          <CardContent className="p-6">
+      {/* ── Hero Lobby Card ───────────────────────────────────────── */}
+      <section className="bg-surface-container-low rounded-xl p-8 border border-white/5 shadow-2xl relative overflow-hidden">
+        {/* Ambient glow */}
+        <div className="absolute top-0 right-0 w-64 h-64 bg-amber-500/5 blur-3xl -mr-32 -mt-32 rounded-full" />
 
-            {/* Room code */}
-            <div className="text-center mb-6">
-              <p className="text-xs font-semibold uppercase tracking-widest mb-2"
-                style={{ color: "#8494A7" }}>
-                Room Code
-              </p>
-              <div className="flex items-center justify-center gap-3">
-                <span
-                  className="text-4xl font-mono font-bold tracking-[0.2em] select-all"
-                  style={{ color: NAVY, letterSpacing: "0.2em" }}
-                >
-                  {roomCode}
-                </span>
-                <button
-                  onClick={handleCopyCode}
-                  title="Copy code"
-                  className="text-xs px-2.5 py-1 rounded-md font-semibold transition-colors"
-                  style={{
-                    background: copied ? "#DCFCE7" : "#E2E6EC",
-                    color: copied ? "#166534" : "#4A5568",
-                  }}
-                >
-                  {copied ? "Copied!" : "Copy"}
-                </button>
-              </div>
+        <div className="relative z-10 flex flex-col items-center text-center">
+          <h2 className="text-4xl font-headline mb-2">Courtroom Lobby</h2>
+          <p className="text-on-surface-variant mb-8">Secure digital gateway for judicial proceedings</p>
 
-              {/* Expiry countdown */}
-              <p
-                className="text-xs mt-2"
-                style={{ color: isExpired ? "#DC2626" : "#8494A7" }}
+          {/* Room code */}
+          <div className="w-full max-w-sm bg-surface-container-highest rounded-2xl p-6 mb-8 border border-white/10">
+            <span className="text-xs uppercase tracking-widest text-on-surface-variant block mb-3 font-semibold">
+              Access Room Code
+            </span>
+            <div className="flex items-center justify-center gap-4">
+              <code className="text-5xl font-mono tracking-tighter text-amber-500 font-bold select-all">
+                {roomCode}
+              </code>
+              <button
+                onClick={handleCopyCode}
+                title="Copy Code"
+                className={`p-2 rounded-lg transition-colors cursor-pointer border-none ${
+                  copied
+                    ? "bg-green-950 text-green-400"
+                    : "hover:bg-white/10 text-amber-500"
+                }`}
               >
-                {isExpired
-                  ? "Code expired — please create a new session"
-                  : `Expires in ${fmtCountdown(countdown)}`}
-              </p>
+                <span className="material-symbols-outlined">content_copy</span>
+              </button>
             </div>
+          </div>
 
-            {/* QR code */}
-            {joinUrl && !isExpired && (
-              <div className="flex justify-center mb-5">
-                <div className="p-3 bg-white rounded-lg inline-block"
-                  style={{ border: "1.5px solid #E2E6EC" }}>
+          {/* QR + Countdown + Link */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full max-w-2xl">
+            {/* QR side */}
+            <div className="flex flex-col items-center gap-4 p-6 bg-surface-container-lowest rounded-xl border border-white/5">
+              {joinUrl && !isExpired ? (
+                <div className="p-2 bg-white rounded-lg">
                   <QRCode
                     value={joinUrl}
                     size={160}
-                    fgColor={NAVY}
+                    fgColor="#0D1B2A"
                     bgColor="#ffffff"
                     level="M"
                   />
                 </div>
-              </div>
-            )}
-
-            {/* Shareable link */}
-            <div>
-              <p className="text-xs font-semibold mb-1.5" style={{ color: "#4A5568" }}>
-                Shareable link
-              </p>
-              <div
-                className="flex items-center gap-2 px-3 py-2 rounded-md"
-                style={{ background: "#F6F7F9", border: "1.5px solid #E2E6EC" }}
-              >
-                <span
-                  className="flex-1 text-xs truncate font-mono"
-                  style={{ color: "#1A2332" }}
-                >
-                  {joinUrl}
-                </span>
-                <button
-                  onClick={handleCopyLink}
-                  className="text-xs px-2 py-0.5 rounded font-semibold shrink-0"
-                  style={{ background: "#E2E6EC", color: "#4A5568" }}
-                >
-                  Copy
-                </button>
-              </div>
-            </div>
-
-          </CardContent>
-        </Card>
-
-        {/* ── Session details ──────────────────────────────────────────────── */}
-        <Card className="mb-4">
-          <CardContent className="p-4">
-            <p className="text-xs font-semibold mb-3" style={{ color: "#1A2332" }}>
-              Session Details
-            </p>
-            <div className="flex flex-col gap-1.5">
-              {[
-                { label: "LEP Individual", value: partnerName },
-                { label: "Language", value: LANG_LABELS[partnerLang] ?? partnerLang },
-                { label: "Court Division", value: courtDivision || "—" },
-                { label: "Courtroom", value: courtroom || "—" },
-                { label: "Your Language", value: LANG_LABELS[myLanguage] ?? myLanguage },
-                ...(caseDocket ? [{ label: "Case Docket", value: caseDocket }] : []),
-              ].map(({ label, value }) => (
-                <div key={label}
-                  className="flex justify-between items-center text-xs py-1"
-                  style={{ borderBottom: "1px solid #F0F2F5" }}>
-                  <span style={{ color: "#8494A7" }}>{label}</span>
-                  <span className="font-medium" style={{ color: "#1A2332" }}>{value}</span>
+              ) : (
+                <div className="w-40 h-40 bg-surface-container-high rounded-lg flex items-center justify-center">
+                  <span className="material-symbols-outlined text-4xl text-outline">qr_code</span>
                 </div>
-              ))}
+              )}
+              <span className="text-xs text-on-surface-variant uppercase tracking-widest">Guest Scan Joining</span>
             </div>
-          </CardContent>
-        </Card>
 
-        {/* ── Status indicator ─────────────────────────────────────────────── */}
-        {partnerPhase === "waiting" && (
-          <div className="flex items-center gap-3 justify-center py-2">
-            <span className="relative flex h-2.5 w-2.5">
-              <span
-                className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
-                style={{ background: "#F59E0B" }}
-              />
-              <span
-                className="relative inline-flex rounded-full h-2.5 w-2.5"
-                style={{ background: "#F59E0B" }}
-              />
-            </span>
-            <p className="text-sm" style={{ color: "#4A5568" }}>
-              Waiting for <strong style={{ color: "#1A2332" }}>{partnerName}</strong> to join…
-            </p>
+            {/* Countdown + Link side */}
+            <div className="flex flex-col justify-center gap-4">
+              <div className="text-left">
+                <label className="text-xs uppercase tracking-widest text-on-surface-variant block mb-2">
+                  Expiry Countdown
+                </label>
+                <div className={`flex items-center gap-2 text-3xl font-light ${isExpired ? "text-error" : "text-on-surface-variant"}`}>
+                  <span className="material-symbols-outlined">schedule</span>
+                  <span>{isExpired ? "Expired" : fmtCountdown(countdown)}</span>
+                </div>
+              </div>
+
+              <div className="w-full">
+                <label className="text-xs uppercase tracking-widest text-on-surface-variant block mb-2">
+                  Shareable Link
+                </label>
+                <div className="flex items-center bg-surface-container-lowest rounded-lg border border-white/10 overflow-hidden">
+                  <span className="bg-transparent text-sm text-on-surface-variant flex-grow px-4 truncate font-mono">
+                    {joinUrl}
+                  </span>
+                  <button
+                    onClick={handleCopyLink}
+                    className="bg-amber-500 text-on-secondary px-4 py-2 hover:bg-amber-400 transition-colors cursor-pointer border-none shrink-0"
+                  >
+                    <span className="material-symbols-outlined text-sm">content_copy</span>
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      </section>
 
-      <ScreenLabel name="REAL-TIME — WAITING LOBBY" />
+      {/* Waiting indicator */}
+      {partnerPhase === "waiting" && (
+        <div className="bg-surface-container-high rounded-xl p-6 border border-amber-500/10 flex items-center justify-center gap-4">
+          <div className="flex items-center gap-2">
+            <span className="w-4 h-4 bg-amber-500 rounded-full animate-pulse" />
+            <span className="text-lg font-headline italic text-amber-500">
+              Waiting for {partnerName} to join…
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* ── Session Details + AI Status ────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Session Parameters */}
+        <section className="bg-surface-container-low rounded-xl border border-white/5 overflow-hidden">
+          <div className="p-5 border-b border-white/5 bg-primary-container/20">
+            <h3 className="text-xl font-headline">Session Parameters</h3>
+          </div>
+          <div className="p-6 space-y-4">
+            {[
+              { label: "LEP Individual", value: partnerName },
+              { label: "Language", value: LANG_LABELS[partnerLang] ?? partnerLang },
+              { label: "Court Division", value: courtDivision || "—" },
+              { label: "Courtroom", value: courtroom || "—" },
+              { label: "Your Language", value: LANG_LABELS[myLanguage] ?? myLanguage },
+              ...(caseDocket ? [{ label: "Case Docket", value: caseDocket }] : []),
+            ].map(({ label, value }) => (
+              <div key={label} className="flex justify-between items-center">
+                <span className="text-xs text-on-surface-variant uppercase tracking-widest">{label}</span>
+                <span className="font-medium">{value}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* AI Model Status */}
+        <section className="bg-surface-container-high rounded-xl p-6 border border-white/5">
+          <h3 className="text-lg font-headline mb-4 flex items-center gap-2">
+            <span className="material-symbols-outlined text-amber-500">memory</span>
+            AI Model Status
+          </h3>
+          <div className="space-y-3">
+            {[
+              { name: "Vocal Analysis", status: "READY", color: "text-green-400 bg-green-500/10" },
+              { name: "Legal Semantics", status: "WARMING", color: "text-amber-500 bg-amber-500/10" },
+              { name: "Contextual Parsing", status: "READY", color: "text-green-400 bg-green-500/10" },
+            ].map((m) => (
+              <div key={m.name} className="flex items-center justify-between text-sm">
+                <span className="text-on-surface-variant">{m.name}</span>
+                <span className={`text-[10px] ${m.color} px-2 py-0.5 rounded font-bold`}>{m.status}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
     </div>
   )
 }

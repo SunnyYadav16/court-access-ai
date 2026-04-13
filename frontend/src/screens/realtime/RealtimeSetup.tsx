@@ -1,10 +1,15 @@
+/**
+ * screens/realtime/RealtimeSetup.tsx
+ *
+ * Realtime session setup — renders INSIDE AppShell.
+ * Dark-themed 2-column layout: form card (8-col) + sidebar info (4-col).
+ *
+ * Preserved logic: realtimeApi.createRoom(), realtimeStore state,
+ * form validation, consent checkbox, navigation to lobby.
+ */
+
 import { useState } from "react"
 import { ScreenId, SCREENS } from "@/lib/constants"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Card, CardContent } from "@/components/ui/card"
-import TopBar from "@/components/shared/TopBar"
-import ScreenLabel from "@/components/shared/ScreenLabel"
 import useRealtimeStore from "@/store/realtimeStore"
 import { realtimeApi } from "@/services/api"
 import { useAuth } from "@/hooks/useAuth"
@@ -36,41 +41,6 @@ const COURTROOMS = [
   "Courtroom 12",
   "Courtroom 14B",
 ]
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function Field({ label, required, children }: {
-  label: string
-  required?: boolean
-  children: React.ReactNode
-}) {
-  return (
-    <div>
-      <label className="text-xs font-semibold block mb-1.5" style={{ color: "#4A5568" }}>
-        {label}
-        {required && <span className="ml-0.5" style={{ color: "#DC2626" }}>*</span>}
-      </label>
-      {children}
-    </div>
-  )
-}
-
-function StyledSelect({ value, onChange, children }: {
-  value: string
-  onChange: (v: string) => void
-  children: React.ReactNode
-}) {
-  return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="w-full px-3 py-2.5 rounded-md text-sm"
-      style={{ border: "1.5px solid #E2E6EC", color: "#1A2332", background: "#fff" }}
-    >
-      {children}
-    </select>
-  )
-}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -123,7 +93,6 @@ export default function RealtimeSetup({ onNav }: Props) {
         consent_acknowledged: true,
       })
 
-      // Seed store so the lobby and session screens have the correct context
       setMyName(backendUser?.name ?? officialName)
       setMyLanguage("en")
       setCourtInfo(division, courtroom, docket.trim())
@@ -141,128 +110,186 @@ export default function RealtimeSetup({ onNav }: Props) {
     }
   }
 
+  // ── Shared input classes ─────────────────────────────────────────────────────
+
+  const inputCls = "w-full bg-surface-container-highest border-none rounded-lg p-3 text-white focus:ring-2 focus:ring-amber-500 transition-all placeholder:text-slate-600 outline-none"
+  const selectCls = "w-full bg-surface-container-highest border-none rounded-lg p-3 text-white focus:ring-2 focus:ring-amber-500 transition-all appearance-none outline-none"
+
   // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen" style={{ background: "#F6F7F9" }}>
-      <TopBar onNav={onNav} />
+    <div className="px-6 lg:px-10 py-8 max-w-4xl mx-auto space-y-8">
 
-      <div className="max-w-lg mx-auto px-5 py-8">
-        <h1
-          className="text-xl font-bold mb-1"
-          style={{ fontFamily: "Palatino, Georgia, serif", color: "#1A2332" }}
-        >
-          Start Interpretation Session
-        </h1>
-        <p className="text-sm mb-6" style={{ color: "#4A5568" }}>
-          Fill in the session details. A join code will be generated for the LEP individual.
+      {/* Header */}
+      <header className="mb-4">
+        <h1 className="text-4xl font-headline font-bold text-white mb-2">Realtime Session Setup</h1>
+        <p className="text-on-surface-variant text-lg">
+          Configure the digital infrastructure for upcoming proceedings.
         </p>
+      </header>
 
-        {/* Error banner */}
-        {error && (
-          <div
-            className="rounded-md p-3 mb-4 text-sm"
-            style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#991B1B" }}
-          >
-            {error}
+      {/* Error banner */}
+      {error && (
+        <div className="rounded-lg px-4 py-3 text-sm bg-red-950 border border-red-900 text-red-300">
+          {error}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-8">
+
+        {/* ── Session Configuration Card (8-col) ─────────────────────── */}
+        <section className="md:col-span-8 bg-surface-container-low rounded-xl p-8 shadow-xl space-y-8">
+
+          {/* Notice bar */}
+          <div className="flex items-center gap-4 bg-primary-container/40 p-4 rounded-lg border border-primary-container/60">
+            <span className="material-symbols-outlined text-primary">info</span>
+            <p className="text-primary text-sm font-medium">
+              Microphone required for both participants. Court official (you) will speak English.
+            </p>
           </div>
-        )}
 
-        <Card>
-          <CardContent className="p-6 flex flex-col gap-5">
-
-            {/* LEP Individual's Name */}
-            <Field label="LEP Individual's Name" required>
-              <Input
+          {/* Row: Name + Language */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label htmlFor="partner-name" className="block text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-2">
+                LEP Individual's Name <span className="text-red-400">*</span>
+              </label>
+              <input
+                id="partner-name"
+                type="text"
                 value={partnerName}
                 onChange={(e) => setPartnerName(e.target.value)}
-                placeholder="e.g. Maria García"
+                placeholder="Full Legal Name"
                 maxLength={100}
                 disabled={loading}
+                className={inputCls}
               />
-            </Field>
-
-            {/* Partner language */}
-            <Field label="LEP Individual's Language" required>
-              <StyledSelect value={partnerLang} onChange={(v) => setPartnerLang(v as PartnerLang)}>
+            </div>
+            <div>
+              <label htmlFor="partner-language" className="block text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-2">
+                Primary Language <span className="text-red-400">*</span>
+              </label>
+              <select
+                id="partner-language"
+                value={partnerLang}
+                onChange={(e) => setPartnerLang(e.target.value as PartnerLang)}
+                className={selectCls}
+              >
                 {PARTNER_LANGUAGES.map((l) => (
                   <option key={l.value} value={l.value}>{l.label}</option>
                 ))}
-              </StyledSelect>
-              <p className="text-[11px] mt-1" style={{ color: "#8494A7" }}>
-                Court official (you) will speak English.
-              </p>
-            </Field>
+              </select>
+            </div>
+          </div>
 
-            {/* Court Division */}
-            <Field label="Court Division" required>
-              <StyledSelect value={division} onChange={setDivision}>
+          {/* Row: Division + Courtroom */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label htmlFor="court-division" className="block text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-2">
+                Court Division <span className="text-red-400">*</span>
+              </label>
+              <select
+                id="court-division"
+                value={division}
+                onChange={(e) => setDivision(e.target.value)}
+                className={selectCls}
+              >
                 {COURT_DIVISIONS.map((d) => (
                   <option key={d} value={d}>{d}</option>
                 ))}
-              </StyledSelect>
-            </Field>
-
-            {/* Courtroom */}
-            <Field label="Courtroom" required>
-              <StyledSelect value={courtroom} onChange={setCourtroom}>
+              </select>
+            </div>
+            <div>
+              <label htmlFor="courtroom-select" className="block text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-2">
+                Courtroom <span className="text-red-400">*</span>
+              </label>
+              <select
+                id="courtroom-select"
+                value={courtroom}
+                onChange={(e) => setCourtroom(e.target.value)}
+                className={selectCls}
+              >
                 {COURTROOMS.map((c) => (
                   <option key={c} value={c}>{c}</option>
                 ))}
-              </StyledSelect>
-            </Field>
+              </select>
+            </div>
+          </div>
 
-            {/* Case Docket */}
-            <Field label="Case Docket (optional)">
-              <Input
-                value={docket}
-                onChange={(e) => setDocket(e.target.value)}
-                placeholder="e.g. 2026-CR-001234"
-                maxLength={50}
-                disabled={loading}
-              />
-            </Field>
-
-            {/* Consent */}
-            <label className="flex items-start gap-2.5 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                className="mt-0.5 accent-slate-800"
-                checked={consent}
-                onChange={(e) => setConsent(e.target.checked)}
-                disabled={loading}
-              />
-              <span className="text-xs leading-relaxed" style={{ color: "#4A5568" }}>
-                Both parties have been informed this session uses AI-assisted interpretation
-                and have consented to its use for court proceedings.
-              </span>
+          {/* Case Docket */}
+          <div>
+            <label htmlFor="case-docket" className="block text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-2">
+              Case Docket (Optional)
             </label>
-
-            <Button
-              className="w-full cursor-pointer"
-              style={{ background: "#0B1D3A" }}
-              onClick={handleSubmit}
+            <input
+              id="case-docket"
+              type="text"
+              value={docket}
+              onChange={(e) => setDocket(e.target.value)}
+              placeholder="e.g. 2026-CR-001234"
+              maxLength={50}
               disabled={loading}
-            >
-              {loading ? "Creating session…" : "Create Session"}
-            </Button>
+              className={inputCls}
+            />
+          </div>
 
-          </CardContent>
-        </Card>
+          {/* Consent */}
+          <div className="flex items-start gap-3 pt-4 border-t border-white/5">
+            <input
+              id="consent-checkbox"
+              type="checkbox"
+              className="mt-1 bg-surface-container-highest border-none rounded text-amber-500 focus:ring-amber-500 cursor-pointer"
+              checked={consent}
+              onChange={(e) => setConsent(e.target.checked)}
+              disabled={loading}
+            />
+            <label htmlFor="consent-checkbox" className="text-sm text-on-surface-variant leading-relaxed cursor-pointer">
+              Both parties informed of digital transcription and translation assistance.
+              Recorded session will be securely stored in accordance with district protocol.
+            </label>
+          </div>
 
-        {/* Mic notice */}
-        <div
-          className="mt-4 rounded-md p-3"
-          style={{ background: "#EFF6FF", border: "1px solid #BFDBFE" }}
-        >
-          <p className="text-xs leading-relaxed" style={{ color: "#1e40af" }}>
-            <strong>Microphone required.</strong> After creating the session, grant browser mic
-            permission when prompted. Both participants need a working microphone and speakers.
-          </p>
-        </div>
+          {/* Submit */}
+          <button
+            className="w-full py-4 bg-amber-500 text-on-secondary font-bold text-lg rounded-lg shadow-lg shadow-amber-500/20 active:scale-[0.98] transition-all flex items-center justify-center gap-3 cursor-pointer disabled:opacity-50 border-none"
+            onClick={handleSubmit}
+            disabled={loading}
+          >
+            <span className="material-symbols-outlined">bolt</span>
+            {loading ? "Creating session…" : "Create Session"}
+          </button>
+        </section>
+
+        {/* ── Sidebar (4-col) ─────────────────────────────────────────── */}
+        <aside className="md:col-span-4 space-y-6">
+          {/* Integrity Guard */}
+          <div className="bg-surface-container-low p-6 rounded-xl border-l-4 border-amber-500/30">
+            <h4 className="font-headline text-xl text-white mb-4">Integrity Guard</h4>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-8 h-8 rounded-full bg-primary-container flex items-center justify-center text-primary">
+                <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>lock</span>
+              </div>
+              <p className="text-xs font-medium text-slate-300">End-to-end encrypted session</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-primary-container flex items-center justify-center text-primary">
+                <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>verified_user</span>
+              </div>
+              <p className="text-xs font-medium text-slate-300">Justice Ledger Verified AI</p>
+            </div>
+          </div>
+
+          {/* Decorative quote card */}
+          <div className="bg-surface-container-lowest overflow-hidden rounded-xl h-64 relative group">
+            <div className="absolute inset-0 bg-gradient-to-t from-[#0D1B2A] to-transparent" />
+            <div className="absolute inset-0 bg-primary-container/30" />
+            <div className="absolute inset-0 flex flex-col justify-end p-6">
+              <p className="text-amber-400 font-headline italic text-lg">"Justice delayed is justice denied."</p>
+              <p className="text-slate-400 text-xs mt-2">— William E. Gladstone</p>
+            </div>
+          </div>
+        </aside>
       </div>
-
-      <ScreenLabel name="REAL-TIME — SESSION SETUP" />
     </div>
   )
 }

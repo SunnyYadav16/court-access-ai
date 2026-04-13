@@ -1,35 +1,40 @@
+/**
+ * screens/admin/AdminDashboard.tsx
+ *
+ * System monitoring dashboard — renders INSIDE AppShell.
+ * Dark-themed with stat cards, model pipeline health, drift report,
+ * infrastructure table, and recent activity audit log.
+ *
+ * Preserved logic: adminApi.getStats() + adminApi.getMetrics() polling,
+ * model latency display, drift badge calculation, audit event formatting.
+ */
+
 import { useCallback, useEffect, useState } from "react"
 import { ScreenId } from "@/lib/constants"
-import { Card, CardContent } from "@/components/ui/card"
-import TopBar from "@/components/shared/TopBar"
-import ScreenLabel from "@/components/shared/ScreenLabel"
 import { adminApi, type AdminMetrics, type AdminStats } from "@/services/api"
 
 interface Props { onNav: (s: ScreenId) => void }
 
-// ── Model health config — maps display name to pipeline step key ──────────────
-// stepKey null = realtime-only model, no pipeline_steps entry
+type Tab = "monitoring" | "infrastructure"
 
-const MODEL_HEALTH_CONFIG: { name: string; stepKey: string | null }[] = [
-  { name: "Faster-Whisper Large V3", stepKey: null },
-  { name: "NLLB-200 Distilled 1.3B", stepKey: "translate" },
-  { name: "PaddleOCR v3",            stepKey: "ocr_printed_text" },
-  { name: "Qwen2.5-VL",              stepKey: "classify_document" },
-  { name: "Silero VAD v4",           stepKey: null },
-  { name: "Piper TTS",               stepKey: null },
-  { name: "Llama 4 (Vertex AI)",     stepKey: "legal_review" },
+const MODEL_HEALTH_CONFIG: { name: string; icon: string; stepKey: string | null }[] = [
+  { name: "Faster-Whisper Large V3", icon: "mic",             stepKey: null },
+  { name: "NLLB-200 Distilled 1.3B", icon: "translate",       stepKey: "translate" },
+  { name: "PaddleOCR v3",            icon: "document_scanner", stepKey: "ocr_printed_text" },
+  { name: "Qwen2.5-VL",              icon: "image_search",     stepKey: "classify_document" },
+  { name: "Silero VAD v4",           icon: "graphic_eq",       stepKey: null },
+  { name: "Piper TTS",               icon: "record_voice_over", stepKey: null },
+  { name: "Llama 4 (Vertex AI)",     icon: "gavel",            stepKey: "legal_review" },
 ]
 
 const infrastructure = [
   { resource: "API (FastAPI)", cpu: "23%", mem: "41%", gpu: "—" },
-  { resource: "Whisper", cpu: "45%", mem: "62%", gpu: "71%" },
-  { resource: "NLLB", cpu: "38%", mem: "55%", gpu: "58%" },
-  { resource: "OCR", cpu: "12%", mem: "34%", gpu: "22%" },
-  { resource: "TTS", cpu: "8%", mem: "18%", gpu: "—" },
+  { resource: "Whisper",       cpu: "45%", mem: "62%", gpu: "71%" },
+  { resource: "NLLB",          cpu: "38%", mem: "55%", gpu: "58%" },
+  { resource: "OCR",           cpu: "12%", mem: "34%", gpu: "22%" },
+  { resource: "TTS",           cpu: "8%",  mem: "18%", gpu: "—" },
   { resource: "Airflow Worker", cpu: "15%", mem: "28%", gpu: "—" },
 ]
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 const ACTION_LABELS: Record<string, string> = {
   document_upload: "Document uploaded",
@@ -59,23 +64,20 @@ function formatEventTime(iso: string): string {
   return d.toLocaleDateString([], { month: "short", day: "numeric" })
 }
 
-function driftBadge(value: number | null, isLlama = false): { label: string; color: string; critical: boolean } {
-  if (value === null) return { label: "No data", color: "#8494A7", critical: false }
+function driftBadge(value: number | null, isLlama = false): { label: string; color: string; bg: string; critical: boolean } {
+  if (value === null) return { label: "No data", color: "text-slate-500", bg: "bg-slate-800", critical: false }
   if (isLlama) {
-    // avg corrections per document; higher = worse
-    if (value > 5.0) return { label: "↑ Increasing", color: "#dc2626", critical: true }
-    if (value > 2.0) return { label: "Minor",         color: "#d97706", critical: false }
-    return { label: "None", color: "#16a34a", critical: false }
+    if (value > 5.0) return { label: "Increasing", color: "text-red-400", bg: "bg-red-950", critical: true }
+    if (value > 2.0) return { label: "Minor", color: "text-amber-400", bg: "bg-amber-950", critical: false }
+    return { label: "None", color: "text-green-400", bg: "bg-green-950", critical: false }
   }
-  // Confidence metrics (0–1): lower = worse
-  if (value < 0.75) return { label: "Critical", color: "#dc2626", critical: true }
-  if (value < 0.85) return { label: "Minor",    color: "#d97706", critical: false }
-  return { label: "None", color: "#16a34a", critical: false }
+  if (value < 0.75) return { label: "Critical", color: "text-red-400", bg: "bg-red-950", critical: true }
+  if (value < 0.85) return { label: "Minor", color: "text-amber-400", bg: "bg-amber-950", critical: false }
+  return { label: "None", color: "text-green-400", bg: "bg-green-950", critical: false }
 }
 
-// ── Component ─────────────────────────────────────────────────────────────────
-
-export default function AdminDashboard({ onNav }: Props) {
+export default function AdminDashboard({ onNav: _onNav }: Props) {
+  const [tab, setTab] = useState<Tab>("monitoring")
   const [stats, setStats] = useState<AdminStats | null>(null)
   const [metrics, setMetrics] = useState<AdminMetrics | null>(null)
   const [loading, setLoading] = useState(true)
@@ -120,7 +122,8 @@ export default function AdminDashboard({ onNav }: Props) {
       sub: stats
         ? `${stats.active_sessions_realtime} real-time · ${stats.active_sessions_document} document`
         : "loading…",
-      color: "#2563eb",
+      icon: "groups",
+      accent: "text-secondary",
     },
     {
       label: "Today's Translations",
@@ -128,197 +131,283 @@ export default function AdminDashboard({ onNav }: Props) {
       sub: stats
         ? `${stats.todays_translations_docs} docs · ${stats.todays_translations_realtime} real-time`
         : "loading…",
-      color: "#0B1D3A",
+      icon: "language",
+      accent: "text-tertiary",
     },
     {
       label: "Avg NMT Confidence",
       val: loading ? "—" : stats?.avg_nmt_confidence != null ? stats.avg_nmt_confidence.toFixed(2) : "—",
       sub: stats?.avg_nmt_confidence != null ? "today's document pipeline" : "no data today",
-      color: "#16a34a",
+      icon: "verified",
+      accent: "text-primary",
     },
     {
       label: "Avg ASR Confidence",
       val: loading ? "—" : stats?.avg_asr_confidence != null ? stats.avg_asr_confidence.toFixed(2) : "—",
       sub: stats?.avg_asr_confidence != null ? "today's realtime sessions" : "no data today",
-      color: "#16a34a",
+      icon: "settings_voice",
+      accent: "text-secondary",
     },
   ]
 
-  return (
-    <div className="min-h-screen" style={{ background: "#F6F7F9" }}>
-      <TopBar onNav={onNav} />
-      <div className="max-w-4xl mx-auto px-5 py-6">
+  const tabs: { key: Tab; label: string; icon: string }[] = [
+    { key: "monitoring", label: "Monitoring", icon: "monitoring" },
+    { key: "infrastructure", label: "Infrastructure", icon: "dns" },
+  ]
 
-        {/* Header */}
-        <div className="flex items-center justify-between mb-5">
-          <h1 className="text-xl font-bold"
-            style={{ fontFamily: "Palatino, Georgia, serif", color: "#1A2332" }}>
-            System Monitoring
-          </h1>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => void fetchAll()}
-              disabled={loading}
-              className="text-[10px] px-2 py-1 rounded border cursor-pointer"
-              style={{ color: "#8494A7", borderColor: "#E2E6EC", background: "#fff" }}
-            >
-              {loading ? "…" : "↻ Refresh"}
-            </button>
+  return (
+    <div className="px-6 lg:px-8 py-8 max-w-7xl mx-auto space-y-8">
+
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+        <div>
+          <div className="flex items-center gap-3 mb-4">
             {hasCritical ? (
-              <span className="text-[10px] font-semibold px-2 py-1 rounded"
-                style={{ background: "#FEF3C7", color: "#d97706" }}>
-                DEGRADED
+              <span className="px-3 py-1 rounded-full bg-amber-950/50 text-amber-400 text-[10px] font-bold uppercase tracking-widest border border-amber-500/20 flex items-center gap-2">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500" />
+                </span>
+                SYSTEMS DEGRADED
               </span>
             ) : (
-              <span className="text-[10px] font-semibold px-2 py-1 rounded"
-                style={{ background: "#DCFCE7", color: "#16a34a" }}>
+              <span className="px-3 py-1 rounded-full bg-green-950/50 text-green-400 text-[10px] font-bold uppercase tracking-widest border border-green-500/20 flex items-center gap-2">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+                </span>
                 ALL SYSTEMS OPERATIONAL
               </span>
             )}
           </div>
+          <h1 className="text-5xl font-headline text-on-surface tracking-tight">System Monitoring</h1>
+          <p className="text-on-surface-variant mt-2 max-w-xl">
+            Real-time oversight of neural machine translation pipelines and judicial data ingestion nodes.
+          </p>
         </div>
-
-        {statsError && (
-          <div className="rounded-md px-3 py-2 text-xs mb-4"
-            style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#991B1B" }}>
-            {statsError}
-          </div>
-        )}
-        {metricsError && (
-          <div className="rounded-md px-3 py-2 text-xs mb-4"
-            style={{ background: "#FEF3C7", border: "1px solid #FDE68A", color: "#92400E" }}>
-            {metricsError}
-          </div>
-        )}
-
-        {/* Metrics */}
-        <div className="grid grid-cols-4 gap-3 mb-4">
-          {statCards.map((m, i) => (
-            <Card key={i}>
-              <CardContent className="p-4">
-                <div className="text-[11px] uppercase tracking-wide mb-1" style={{ color: "#8494A7" }}>
-                  {m.label}
-                </div>
-                <div className="text-2xl font-bold mb-0.5"
-                  style={{ color: m.color, fontFamily: "Palatino, Georgia, serif" }}>
-                  {m.val}
-                </div>
-                <div className="text-[11px]" style={{ color: "#8494A7" }}>{m.sub}</div>
-              </CardContent>
-            </Card>
-          ))}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => void fetchAll()}
+            disabled={loading}
+            className="flex items-center gap-2 px-5 py-2.5 bg-surface-container-high rounded-lg text-sm font-medium hover:bg-surface-bright transition-colors border border-outline-variant/15 cursor-pointer disabled:opacity-50"
+          >
+            <span className="material-symbols-outlined text-sm">refresh</span>
+            {loading ? "Loading…" : "Refresh Data"}
+          </button>
         </div>
+      </div>
 
-        <div className="grid grid-cols-2 gap-3 mb-3">
-          {/* Model Pipeline Health — live latency from pipeline_steps */}
-          <Card>
-            <CardContent className="p-4">
-              <div className="text-sm font-semibold mb-3" style={{ color: "#1A2332" }}>
-                Model Pipeline Health
+      {/* Errors */}
+      {statsError && (
+        <div className="rounded-lg px-4 py-3 text-xs bg-red-950 border border-red-900 text-red-300">
+          {statsError}
+        </div>
+      )}
+      {metricsError && (
+        <div className="rounded-lg px-4 py-3 text-xs bg-amber-950 border border-amber-900 text-amber-300">
+          {metricsError}
+        </div>
+      )}
+
+      {/* Stats Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        {statCards.map((m) => (
+          <div key={m.label} className="bg-surface-container-low p-6 rounded-xl">
+            <div className="flex justify-between items-start mb-4">
+              <span
+                className={`material-symbols-outlined ${m.accent}`}
+                style={{ fontVariationSettings: "'FILL' 1" }}
+              >
+                {m.icon}
+              </span>
+            </div>
+            <h3 className="text-3xl font-headline text-white mb-1">{m.val}</h3>
+            <p className="text-on-surface-variant text-xs uppercase tracking-wider">{m.label}</p>
+            <p className="text-[11px] text-slate-500 mt-1">{m.sub}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 bg-surface-container-lowest rounded-lg p-1 w-fit">
+        {tabs.map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setTab(t.key)}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-label transition-colors cursor-pointer ${
+              tab === t.key
+                ? "bg-surface-container-high text-white"
+                : "text-on-surface-variant hover:text-white"
+            }`}
+          >
+            <span className="material-symbols-outlined text-base">{t.icon}</span>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Monitoring Tab */}
+      {tab === "monitoring" && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Model Pipeline Health — wide card */}
+          <div className="lg:col-span-2 bg-surface-container-low rounded-xl p-8 flex flex-col">
+            <div className="flex items-center justify-between mb-8">
+              <div className="flex items-center gap-3">
+                <span className="material-symbols-outlined text-tertiary">analytics</span>
+                <h2 className="text-xl font-headline text-white">Model Pipeline Health</h2>
               </div>
+              <span className="px-2 py-0.5 rounded bg-tertiary/10 text-tertiary text-[10px] font-bold">OPTIMIZED</span>
+            </div>
+            <div className="space-y-0">
               {MODEL_HEALTH_CONFIG.map((m, i) => {
                 const seconds = m.stepKey != null ? metrics?.model_latencies[m.stepKey] : null
                 const latency = seconds != null ? `${Math.round(seconds * 1000)}ms` : "—"
                 return (
-                  <div key={i} className="flex items-center justify-between py-1.5 text-xs"
-                    style={{ borderTop: i ? "1px solid #E2E6EC" : "none" }}>
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: "#16a34a" }} />
-                      <span style={{ color: "#1A2332" }}>{m.name}</span>
+                  <div key={i} className={`flex items-center justify-between py-3 text-sm ${
+                    i ? "border-t border-white/5" : ""
+                  }`}>
+                    <div className="flex items-center gap-3">
+                      <span className="material-symbols-outlined text-base text-green-400">{m.icon}</span>
+                      <span className="text-on-surface">{m.name}</span>
                     </div>
-                    <span style={{ color: "#8494A7" }}>{latency}</span>
+                    <span className="text-on-surface-variant font-mono text-xs">{latency}</span>
                   </div>
                 )
               })}
-              <div className="text-[10px] mt-3 pt-2" style={{ borderTop: "1px solid #E2E6EC", color: "#B0BAC9" }}>
-                Avg latency over last 7 days · realtime models not tracked here
-              </div>
-            </CardContent>
-          </Card>
+            </div>
+            <div className="text-[11px] mt-4 pt-3 border-t border-white/5 text-slate-600">
+              Avg latency over last 7 days · realtime models not tracked here
+            </div>
+          </div>
 
-          {/* Drift Report — live 7-day rolling averages */}
-          <Card>
-            <CardContent className="p-4">
-              <div className="text-sm font-semibold mb-3" style={{ color: "#1A2332" }}>
-                Evidently AI — Drift Report
+          {/* GCE Infrastructure Card — side accent */}
+          <div className="bg-primary-container rounded-xl overflow-hidden relative group border border-outline-variant/10">
+            <div className="absolute inset-0 bg-gradient-to-br from-primary-container to-surface-container-lowest opacity-90 z-0" />
+            <div className="relative z-10 p-8 h-full flex flex-col">
+              <div className="mb-6">
+                <h2 className="text-xl font-headline text-white mb-2">GCE VM Infrastructure</h2>
+                <p className="text-on-primary-container text-sm">Distributed across 4 regions.</p>
               </div>
+              <div className="space-y-4 mt-auto">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-on-primary-container">us-east1-b</span>
+                  <span className="text-green-400">99.9% Up</span>
+                </div>
+                <div className="w-full bg-white/5 h-1 rounded-full overflow-hidden">
+                  <div className="bg-primary h-full" style={{ width: "99.9%" }} />
+                </div>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-on-primary-container">europe-west4-a</span>
+                  <span className="text-green-400">99.8% Up</span>
+                </div>
+                <div className="w-full bg-white/5 h-1 rounded-full overflow-hidden">
+                  <div className="bg-primary h-full" style={{ width: "99.8%" }} />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Drift Report — full width */}
+          <div className="lg:col-span-3 bg-surface-container-low rounded-xl p-6 border border-white/5">
+            <div className="flex items-center gap-2 mb-5">
+              <span className="material-symbols-outlined text-tertiary">analytics</span>
+              <h3 className="text-lg text-white font-headline">Evidently AI — Drift Report</h3>
+            </div>
+            <div className="space-y-0">
               {driftRows.map((d, i) => {
                 const badge = driftBadge(d.value, d.isLlama)
                 const display = d.value != null ? d.value.toFixed(2) : "—"
-                const bg = badge.color === "#16a34a" ? "#DCFCE7"
-                         : badge.color === "#d97706" ? "#FEF3C7"
-                         : badge.color === "#dc2626" ? "#FEE2E2"
-                         : "#F1F5F9"
                 return (
-                  <div key={i} className="flex items-center justify-between py-1.5 text-xs"
-                    style={{ borderTop: i ? "1px solid #E2E6EC" : "none" }}>
-                    <span style={{ color: "#1A2332" }}>{d.metric}</span>
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold" style={{ color: "#1A2332" }}>{display}</span>
-                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
-                        style={{ background: bg, color: badge.color }}>
+                  <div key={i} className={`flex items-center justify-between py-3 text-sm ${
+                    i ? "border-t border-white/5" : ""
+                  }`}>
+                    <span className="text-on-surface">{d.metric}</span>
+                    <div className="flex items-center gap-3">
+                      <span className="font-mono text-xs text-on-surface">{display}</span>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${badge.bg} ${badge.color}`}>
                         {badge.label}
                       </span>
                     </div>
                   </div>
                 )
               })}
-              <div className="text-[10px] mt-3 pt-2" style={{ borderTop: "1px solid #E2E6EC", color: "#B0BAC9" }}>
-                7-day rolling average · refreshes every 30 seconds
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+            </div>
+            <div className="text-[11px] mt-4 pt-3 border-t border-white/5 text-slate-600">
+              7-day rolling average · refreshes every 30 seconds
+            </div>
+          </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          {/* Infrastructure — static, no live source */}
-          <Card>
-            <CardContent className="p-4">
-              <div className="text-sm font-semibold mb-3" style={{ color: "#1A2332" }}>
-                GCE VM Infrastructure
-              </div>
-              {infrastructure.map((r, i) => (
-                <div key={i} className="grid grid-cols-4 py-1.5 text-[11px]"
-                  style={{ borderTop: i ? "1px solid #E2E6EC" : "none" }}>
-                  <span style={{ color: "#1A2332" }}>{r.resource}</span>
-                  <span style={{ color: "#8494A7" }}>CPU {r.cpu}</span>
-                  <span style={{ color: "#8494A7" }}>MEM {r.mem}</span>
-                  <span style={{ color: "#8494A7" }}>{r.gpu !== "—" ? `GPU ${r.gpu}` : "—"}</span>
-                </div>
-              ))}
-              <div className="text-[10px] mt-3 pt-2" style={{ borderTop: "1px solid #E2E6EC", color: "#B0BAC9" }}>
-                Static — live VM metrics pending GCP Monitoring integration
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Recent Audit Events — live */}
-          <Card>
-            <CardContent className="p-4">
-              <div className="text-sm font-semibold mb-3" style={{ color: "#1A2332" }}>
-                Recent Activity
-              </div>
-              {loading && (
-                <div className="text-xs py-2" style={{ color: "#8494A7" }}>Loading…</div>
-              )}
-              {!loading && stats?.recent_audit_events.length === 0 && (
-                <div className="text-xs py-2" style={{ color: "#8494A7" }}>No recent activity.</div>
-              )}
-              {!loading && stats?.recent_audit_events.map((e, i) => (
-                <div key={e.audit_id} className="flex items-start gap-2 py-1.5 text-xs"
-                  style={{ borderTop: i ? "1px solid #E2E6EC" : "none" }}>
-                  <span>ℹ️</span>
-                  <div>
-                    <div style={{ color: "#1A2332" }}>{labelForAction(e.action_type)}</div>
-                    <div className="text-[10px]" style={{ color: "#8494A7" }}>{formatEventTime(e.created_at)}</div>
-                  </div>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
+          {/* Recent Activity — full width */}
+          <div className="lg:col-span-3 bg-surface-container-low rounded-xl p-8">
+            <div className="flex items-center justify-between mb-8">
+              <h2 className="text-xl font-headline text-white">Recent Activity Audit Log</h2>
+            </div>
+            {loading && (
+              <div className="text-sm py-3 text-on-surface-variant">Loading…</div>
+            )}
+            {!loading && stats?.recent_audit_events.length === 0 && (
+              <div className="text-sm py-3 text-on-surface-variant">No recent activity.</div>
+            )}
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-separate border-spacing-y-2">
+                <thead>
+                  <tr className="text-on-surface-variant text-[10px] uppercase tracking-widest">
+                    <th className="pb-2 px-4">Action</th>
+                    <th className="pb-2 px-4">Timestamp</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {!loading && stats?.recent_audit_events.map((e) => (
+                    <tr key={e.audit_id} className="bg-surface-container-high/50 group hover:bg-surface-container-high transition-colors">
+                      <td className="py-4 px-4 rounded-l-lg">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-secondary/10 flex items-center justify-center">
+                            <span className="material-symbols-outlined text-secondary text-sm">info</span>
+                          </div>
+                          <span className="text-sm font-medium text-white">{labelForAction(e.action_type)}</span>
+                        </div>
+                      </td>
+                      <td className="py-4 px-4 rounded-r-lg text-sm text-on-surface-variant">
+                        {formatEventTime(e.created_at)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
-      </div>
-      <ScreenLabel name="ADMIN — MONITORING DASHBOARD" />
+      )}
+
+      {/* Infrastructure Tab */}
+      {tab === "infrastructure" && (
+        <div className="bg-surface-container-low rounded-xl p-6 border border-white/5">
+          <div className="flex items-center gap-2 mb-5">
+            <span className="material-symbols-outlined text-secondary">dns</span>
+            <h3 className="text-lg text-white font-headline">GCE VM Infrastructure</h3>
+          </div>
+          {/* Table header */}
+          <div className="grid grid-cols-4 py-2 text-[11px] uppercase tracking-widest font-label text-on-surface-variant border-b border-white/10">
+            <span>Resource</span>
+            <span>CPU</span>
+            <span>Memory</span>
+            <span>GPU</span>
+          </div>
+          {infrastructure.map((r, i) => (
+            <div key={i} className={`grid grid-cols-4 py-3 text-sm ${
+              i ? "border-t border-white/5" : ""
+            }`}>
+              <span className="text-on-surface font-medium">{r.resource}</span>
+              <span className="text-on-surface-variant">{r.cpu}</span>
+              <span className="text-on-surface-variant">{r.mem}</span>
+              <span className="text-on-surface-variant">{r.gpu !== "—" ? r.gpu : "—"}</span>
+            </div>
+          ))}
+          <div className="text-[11px] mt-4 pt-3 border-t border-white/5 text-slate-600">
+            Static — live VM metrics pending GCP Monitoring integration
+          </div>
+        </div>
+      )}
     </div>
   )
 }

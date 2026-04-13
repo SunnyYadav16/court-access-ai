@@ -29,7 +29,7 @@ export default function MFAScreen({ onNav }: Props) {
             </p>
 
             <div className="flex gap-2 justify-center mb-2">
-              {["1","2","3","4","5","6"].map((d, i) => (
+              {["1", "2", "3", "4", "5", "6"].map((d, i) => (
                 <input key={i} readOnly value={d} maxLength={1}
                   className="w-10 h-12 text-center text-lg font-bold rounded-md outline-none"
                   style={{ border: "1.5px solid #0B1D3A", fontFamily: "sans-serif", color: "#1A2332" }} />

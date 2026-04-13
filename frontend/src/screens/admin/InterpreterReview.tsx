@@ -1,95 +1,205 @@
+/**
+ * screens/admin/InterpreterReview.tsx
+ *
+ * Translation review queue — renders INSIDE AppShell.
+ * Dark-themed with side-by-side original/translation panels,
+ * corrections textarea, action buttons, and contextual stats.
+ *
+ * Static mock — no backend integration yet.
+ */
+
 import { ScreenId } from "@/lib/constants"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
-import TopBar from "@/components/shared/TopBar"
-import ScreenLabel from "@/components/shared/ScreenLabel"
 
 interface Props { onNav: (s: ScreenId) => void }
 
-export default function InterpreterReview({ onNav }: Props) {
+export default function InterpreterReview({ onNav: _onNav }: Props) {
   return (
-    <div className="min-h-screen" style={{ background: "#F6F7F9" }}>
-      <TopBar onNav={onNav} />
-      <div className="max-w-3xl mx-auto px-5 py-6">
-        <h1 className="text-xl font-bold mb-1"
-          style={{ fontFamily: "Palatino, Georgia, serif", color: "#1A2332" }}>
-          Translation Review Queue
-        </h1>
-        <p className="text-xs mb-5" style={{ color: "#8494A7" }}>
-          Review AI translations and provide corrections to improve system accuracy
-        </p>
+    <div className="px-6 lg:px-8 py-8 max-w-6xl mx-auto space-y-8">
 
-        <Card>
-          <CardContent className="p-5">
-            {/* Side by side */}
-            <div className="grid grid-cols-2 gap-4 mb-4">
-              <div>
-                <div className="text-[11px] font-semibold uppercase tracking-wider mb-2"
-                  style={{ color: "#8494A7" }}>
-                  Original (English)
-                </div>
-                <div className="rounded-md p-4 text-sm leading-relaxed"
-                  style={{ background: "#F9FAFB", border: "1px solid #E2E6EC", color: "#1A2332" }}>
-                  The Court hereby orders that the Defendant shall appear before this Court on
-                  March 15, 2026 at 9:00 AM for a <strong>pretrial conference</strong>. Failure
-                  to appear may result in the issuance of a <strong>default judgment</strong> or
-                  a <strong>capias warrant</strong>.
-                </div>
-              </div>
-              <div>
-                <div className="text-[11px] font-semibold uppercase tracking-wider mb-2"
-                  style={{ color: "#8494A7" }}>
-                  AI Translation (Spanish)
-                </div>
-                <div className="rounded-md p-4 text-sm leading-relaxed"
-                  style={{ background: "#F5EDE0", border: "1px solid rgba(200,150,62,0.25)", color: "#1A2332" }}>
-                  El Tribunal por la presente ordena que el Acusado deberá comparecer ante este
-                  Tribunal el 15 de marzo de 2026 a las 9:00 AM para una{" "}
-                  <strong className="px-0.5 rounded" style={{ background: "#FEF3C7" }}>
-                    conferencia previa al juicio
-                  </strong>. La falta de comparecencia puede resultar en la emisión de un{" "}
-                  <strong className="px-0.5 rounded" style={{ background: "#FEF3C7" }}>
-                    sentencia en rebeldía
-                  </strong>{" "}
-                  o una{" "}
-                  <strong className="px-0.5 rounded" style={{ background: "#FEF3C7" }}>
-                    orden de capias
-                  </strong>.
-                </div>
-              </div>
-            </div>
+      {/* Header */}
+      <header className="space-y-4">
+        <div className="flex items-center gap-3">
+          <span className="bg-secondary text-on-secondary px-3 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider">
+            Interpreter Role
+          </span>
+          <span className="px-2 py-1 bg-primary-container text-on-primary-container text-[10px] font-bold tracking-widest uppercase rounded">
+            Priority Review
+          </span>
+          <span className="text-tertiary font-medium text-sm flex items-center gap-1">
+            <span className="material-symbols-outlined text-xs" style={{ fontVariationSettings: "'FILL' 1" }}>bolt</span>
+            AI Analysis Active
+          </span>
+        </div>
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
+          <div>
+            <h1 className="font-headline text-4xl text-on-surface mb-2">Translation Review Queue</h1>
+            <p className="text-on-surface-variant max-w-2xl">
+              Audit pending AI-assisted transcripts and legal documents for linguistic precision and legal preservation.
+            </p>
+          </div>
+        </div>
+      </header>
 
-            {/* Corrections */}
-            <div className="rounded-md p-4 mb-4"
-              style={{ background: "#F9FAFB", border: "1px solid #E2E6EC" }}>
-              <div className="text-[11px] font-semibold uppercase tracking-wider mb-2"
-                style={{ color: "#8494A7" }}>
-                Your Corrections
-              </div>
-              <textarea
-                placeholder="Enter corrections or notes about the translation..."
-                className="w-full text-xs p-2 rounded resize-y outline-none"
-                rows={3}
-                style={{ border: "1px solid #E2E6EC", fontFamily: "inherit", color: "#1A2332" }}
-              />
-            </div>
-
-            {/* Actions */}
-            <div className="flex items-center justify-between">
-              <Button variant="outline" size="sm" className="cursor-pointer">Skip</Button>
-              <div className="flex gap-2">
-                <Button size="sm" variant="outline" className="cursor-pointer">
-                  ✏️ Submit Corrections
-                </Button>
-                <Button size="sm" className="cursor-pointer" style={{ background: "#0B1D3A" }}>
-                  ✅ Approve Translation
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      {/* Metadata bar */}
+      <div className="flex items-center justify-between px-4 py-3 bg-surface-container rounded-lg border border-outline-variant/5">
+        <div className="flex items-center gap-4">
+          <span className="material-symbols-outlined text-secondary">description</span>
+          <div>
+            <p className="text-xs font-bold text-on-surface">Order_of_Remand_CR2024.pdf</p>
+            <p className="text-[10px] text-outline uppercase tracking-wider">Court Order • PDF Document</p>
+          </div>
+        </div>
+        <span className="text-[10px] uppercase tracking-tighter text-outline hidden sm:inline">
+          Document ID: #CR-2024-0082
+        </span>
       </div>
-      <ScreenLabel name="INTERPRETER — TRANSLATION REVIEW" />
+
+      {/* Side-by-side panels */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* Original */}
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center justify-between px-4">
+            <span className="font-headline italic text-lg text-primary">Original Text (English)</span>
+            <span className="flex items-center gap-1 text-[10px] uppercase text-outline">
+              <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+              Source
+            </span>
+          </div>
+          <div className="bg-surface-container-low p-8 rounded-xl min-h-[400px] border border-outline-variant/10 leading-relaxed text-on-surface shadow-inner">
+            <p className="mb-6 font-semibold">IT IS HEREBY ORDERED:</p>
+            <p className="mb-4">
+              1. The defendant shall be remanded to the custody of the Sheriff pending the outcome of the
+              preliminary hearing scheduled for November 14th.
+            </p>
+            <p className="mb-4">
+              2. Bail is set at $250,000.00, to be posted in cash or by corporate surety bond.
+            </p>
+            <p className="mb-4">
+              3. The defendant is prohibited from contacting the victim, either directly or through a third
+              party, while this order remains in effect.
+            </p>
+            <p className="mb-4 italic">
+              Failure to comply with these conditions may result in immediate revocation of release status
+              and additional criminal charges.
+            </p>
+          </div>
+        </div>
+
+        {/* Translation */}
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center justify-between px-4">
+            <span className="font-headline italic text-lg text-secondary">AI Translation (Spanish)</span>
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-secondary animate-pulse" />
+              <span className="text-[10px] uppercase tracking-tighter text-on-surface-variant font-bold">
+                Certification Active
+              </span>
+            </div>
+          </div>
+          <div className="bg-surface-container-high p-8 rounded-xl min-h-[400px] border border-secondary/20 leading-relaxed text-on-surface relative overflow-hidden"
+               style={{ boxShadow: "0px 12px 32px rgba(0, 0, 0, 0.4)" }}
+          >
+            <div className="absolute top-0 right-0 p-4 opacity-10">
+              <span className="material-symbols-outlined text-6xl">gavel</span>
+            </div>
+            <p className="mb-6 font-semibold">POR LA PRESENTE SE ORDENA:</p>
+            <p className="mb-4">
+              1. El acusado será{" "}
+              <span className="bg-secondary-container/20 border-b border-secondary-container text-secondary font-medium px-0.5 rounded-t-sm">
+                puesto bajo custodia
+              </span>{" "}
+              del Sheriff a la espera del resultado de la audiencia preliminar programada para el 14 de noviembre.
+            </p>
+            <p className="mb-4">
+              2. La fianza se fija en $250,000.00, a ser depositada en efectivo o mediante{" "}
+              <span className="bg-secondary-container/20 border-b border-secondary-container text-secondary font-medium px-0.5 rounded-t-sm">
+                fianza de una compañía de seguros
+              </span>.
+            </p>
+            <p className="mb-4">
+              3. Se prohíbe al acusado ponerse en contacto con la víctima, ya sea directamente o a través de un
+              tercero, mientras esta orden permanezca{" "}
+              <span className="bg-secondary-container/20 border-b border-secondary-container text-secondary font-medium px-0.5 rounded-t-sm">
+                vigente
+              </span>.
+            </p>
+            <p className="mb-4 italic">
+              El incumplimiento de estas condiciones puede dar lugar a la{" "}
+              <span className="bg-secondary-container/20 border-b border-secondary-container text-secondary font-medium px-0.5 rounded-t-sm">
+                revocación inmediata
+              </span>{" "}
+              del estatus de libertad y cargos penales adicionales.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Corrections & Actions */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-end">
+        <div className="lg:col-span-7 flex flex-col gap-3">
+          <label htmlFor="corrections-notes" className="font-sans text-xs uppercase tracking-widest text-outline ml-1">
+            Manual Corrections / Translator Notes
+          </label>
+          <div className="relative group">
+            <textarea
+              id="corrections-notes"
+              className="w-full bg-surface-container-highest border-none rounded-xl p-4 text-on-surface placeholder:text-outline/50 focus:ring-2 focus:ring-secondary/50 min-h-[100px] resize-y transition-all duration-300 outline-none"
+              placeholder="e.g., 'Update clause 2 to use specific jurisdictional terminology for surety.'"
+            />
+            <div className="absolute bottom-3 right-3 text-[10px] text-outline pointer-events-none group-focus-within:opacity-100 opacity-40 transition-opacity">
+              CMD + Enter to quick-submit
+            </div>
+          </div>
+        </div>
+        <div className="lg:col-span-5 flex flex-col gap-3">
+          <button
+            className="w-full h-12 bg-secondary text-on-secondary font-bold rounded-lg flex items-center justify-center gap-2 hover:brightness-110 active:scale-[0.98] transition-all cursor-pointer border-none"
+            style={{ boxShadow: "0px 12px 32px rgba(0, 0, 0, 0.4)" }}
+          >
+            <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>verified_user</span>
+            Approve & Certify Translation
+          </button>
+          <button className="w-full h-12 bg-surface-container-low text-secondary border border-secondary/20 font-bold rounded-lg flex items-center justify-center gap-2 hover:bg-secondary/5 active:scale-[0.98] transition-all cursor-pointer">
+            <span className="material-symbols-outlined">edit_note</span>
+            Submit Manual Corrections
+          </button>
+        </div>
+      </div>
+
+      {/* Contextual Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-surface-container-low p-5 rounded-lg border-l-4 border-tertiary flex items-center gap-4">
+          <div className="w-10 h-10 rounded-full bg-tertiary-container flex items-center justify-center">
+            <span className="material-symbols-outlined text-tertiary">psychology</span>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase text-outline tracking-wider">AI Confidence Score</p>
+            <p className="text-xl font-bold text-on-surface">
+              98.4% <span className="text-xs font-normal text-tertiary">High</span>
+            </p>
+          </div>
+        </div>
+        <div className="bg-surface-container-low p-5 rounded-lg border-l-4 border-secondary flex items-center gap-4">
+          <div className="w-10 h-10 rounded-full bg-secondary-container/10 flex items-center justify-center">
+            <span className="material-symbols-outlined text-secondary">gavel</span>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase text-outline tracking-wider">Legal Terms Flagged</p>
+            <p className="text-xl font-bold text-on-surface">4 Matches</p>
+          </div>
+        </div>
+        <div className="bg-surface-container-low p-5 rounded-lg border-l-4 border-primary flex items-center gap-4">
+          <div className="w-10 h-10 rounded-full bg-primary-container flex items-center justify-center">
+            <span className="material-symbols-outlined text-primary">timer</span>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase text-outline tracking-wider">Queue Position</p>
+            <p className="text-xl font-bold text-on-surface">
+              1 / 12 <span className="text-xs font-normal text-primary">Pending</span>
+            </p>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
