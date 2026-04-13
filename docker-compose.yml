@@ -488,6 +488,7 @@ services:
     build:
       context: .
       dockerfile: gpu.Dockerfile
+      target: api
     profiles: [gpu]
     deploy:
       resources:

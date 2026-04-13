@@ -52,6 +52,7 @@ from airflow.providers.standard.operators.python import PythonOperator
 from sqlalchemy.orm import Session
 
 from courtaccess.core import gcs
+from dags.gpu_pool import GPU_POOL_NAME
 from db.database import get_sync_engine
 from db.queries import forms as form_queries
 
@@ -365,13 +366,16 @@ def task_translate_docx(**context) -> dict:
 
     output_path = str(Path(meta["work_dir"]) / f"output_{target_lang}.docx")
 
-    summary = translate_docx(
-        input_path=meta["local_docx"],
-        output_path=output_path,
-        translator=translator,
-        reviewer=reviewer,
-        nllb_target=nllb_target,
-    )
+    try:
+        summary = translate_docx(
+            input_path=meta["local_docx"],
+            output_path=output_path,
+            translator=translator,
+            reviewer=reviewer,
+            nllb_target=nllb_target,
+        )
+    finally:
+        translator.unload()
 
     # Copy output to mounted data dir for inspection (dev only)
     if os.getenv("APP_ENV") == "development":
@@ -704,7 +708,7 @@ with DAG(
     tags=["courtaccess", "documents", "docx", "translation"],
 ) as dag:
     t1 = PythonOperator(task_id="validate_upload", python_callable=task_validate_upload)
-    t2 = PythonOperator(task_id="translate_docx", python_callable=task_translate_docx)
+    t2 = PythonOperator(task_id="translate_docx", python_callable=task_translate_docx, pool=GPU_POOL_NAME)
     t3 = PythonOperator(task_id="upload_to_gcs", python_callable=task_upload_to_gcs)
     t4 = PythonOperator(task_id="finalize", python_callable=task_finalize)
     t5 = PythonOperator(task_id="log_summary", python_callable=task_log_summary)
