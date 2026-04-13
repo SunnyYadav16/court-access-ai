@@ -28,7 +28,7 @@ export default function TopBar({ onNav }: TopBarProps) {
         style={{ background: "#0B1D3A", color: "#fff" }}>
         <div className="flex items-center gap-2 cursor-pointer"
           onClick={() => onNav(homeScreen())}>
-          <img src={courtaccessLogo} alt="CourtAccess AI" className="h-8 w-auto block" />
+          <img src={courtaccessLogo} alt="CourtAccess AI" className="h-9 w-auto block" />
           <span className="text-[10px] font-semibold px-2 py-0.5 rounded tracking-wide"
             style={{ background: "rgba(200,150,62,0.25)", color: "#C8963E" }}>BETA</span>
         </div>

@@ -94,11 +94,22 @@ function formatDetail(stepName: string, detail: string): string {
 
 function friendlyError(raw: string | null): string {
   if (!raw) return "Translation failed. Please try again."
-  if (/validate_upload|invalid|corrupt/i.test(raw)) return "The file could not be processed. Please check it and try again."
-  if (/classify|non.legal|rejected/i.test(raw)) return "This document was not recognised as a legal filing and cannot be translated."
-  if (/upload_to_gcs|signed|gcs/i.test(raw)) return "Translation completed but the download link could not be generated. Please try again."
-  if (/ocr/i.test(raw)) return "Text extraction failed. The document may be scanned at too low a resolution."
-  if (/translate|nllb/i.test(raw)) return "Translation service unavailable. Please try again in a few minutes."
+  // Match on the task name embedded by _on_dag_failure ("Pipeline failed at 'X': ..."),
+  // not on exception text — words like "invalid" appear in unrelated errors.
+  if (/Pipeline failed at 'validate_upload'/i.test(raw))
+    return "The file could not be processed. Please check it and try again."
+  if (/Pipeline failed at 'classify_document'|non.legal|rejected/i.test(raw))
+    return "This document was not recognised as a legal filing and cannot be translated."
+  if (/Pipeline failed at 'ocr_printed_text'/i.test(raw))
+    return "Text extraction failed. The document may be scanned at too low a resolution."
+  if (/Pipeline failed at 'translate'/i.test(raw))
+    return "Translation service unavailable. Please try again in a few minutes."
+  if (/Pipeline failed at 'legal_review'/i.test(raw))
+    return "Legal review step failed. The translated document may still be available."
+  if (/Pipeline failed at 'reconstruct_pdf'/i.test(raw))
+    return "PDF reconstruction failed. Please try uploading again."
+  if (/Pipeline failed at 'upload_to_gcs'|signed|gcs/i.test(raw))
+    return "Translation completed but the download link could not be generated. Please try again."
   return "Translation failed. Please try uploading again."
 }
 
