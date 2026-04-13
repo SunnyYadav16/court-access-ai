@@ -697,6 +697,8 @@ with DAG(
     start_date=datetime(2024, 1, 1),
     default_args=DEFAULT_ARGS,
     catchup=False,
+    max_active_runs=1,
+    is_paused_upon_creation=False,
     on_failure_callback=_on_dag_failure,
     render_template_as_native_obj=True,
     tags=["courtaccess", "documents", "docx", "translation"],

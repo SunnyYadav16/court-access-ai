@@ -434,43 +434,52 @@ def task_ocr_printed_text(**context) -> dict:
     ti = context["ti"]
     meta = ti.xcom_pull(task_ids="validate_upload", key="upload_meta")
     session_id = meta["session_id"]
+    request_id = meta["request_id"]
 
     _write_step(session_id, "ocr_printed_text", "running", "Extracting text regions")
 
-    engine = OCREngine().load()
-    result = engine.extract_text_from_pdf(meta["local_pdf"])
-    regions = result["regions"]
+    try:
+        engine = OCREngine().load()
+        result = engine.extract_text_from_pdf(meta["local_pdf"])
+        regions = result["regions"]
 
-    total = len(regions)
-    translatable = sum(1 for r in regions if not r.get("preserve", False))
-    preserved = total - translatable
-    avg_conf = sum(r.get("confidence", 1.0) for r in regions) / max(total, 1)
-    engine_label = "PaddleOCR" if str(os.getenv("USE_REAL_OCR")).lower() == "true" else "PyMuPDF"
+        total = len(regions)
+        translatable = sum(1 for r in regions if not r.get("preserve", False))
+        preserved = total - translatable
+        avg_conf = sum(r.get("confidence", 1.0) for r in regions) / max(total, 1)
+        engine_label = "PaddleOCR" if str(os.getenv("USE_REAL_OCR")).lower() == "true" else "PyMuPDF"
 
-    _write_step(
-        session_id,
-        "ocr_printed_text",
-        "success",
-        f"{engine_label}: {total} regions · {translatable} translatable · avg {avg_conf:.2f} conf",
-        {
+        _write_step(
+            session_id,
+            "ocr_printed_text",
+            "success",
+            f"{engine_label}: {total} regions · {translatable} translatable · avg {avg_conf:.2f} conf",
+            {
+                "total_regions": total,
+                "translatable": translatable,
+                "preserved": preserved,
+                "avg_confidence": round(avg_conf, 3),
+                "engine": engine_label,
+            },
+        )
+
+        regions_path = _dump(meta["work_dir"], "regions", regions)
+        summary = {
             "total_regions": total,
             "translatable": translatable,
-            "preserved": preserved,
             "avg_confidence": round(avg_conf, 3),
-            "engine": engine_label,
-        },
-    )
-
-    regions_path = _dump(meta["work_dir"], "regions", regions)
-    summary = {
-        "total_regions": total,
-        "translatable": translatable,
-        "avg_confidence": round(avg_conf, 3),
-        "full_text": result["full_text"],
-    }
-    ti.xcom_push(key="regions_path", value=regions_path)
-    ti.xcom_push(key="ocr_summary", value=summary)
-    return summary
+            "full_text": result["full_text"],
+        }
+        ti.xcom_push(key="regions_path", value=regions_path)
+        ti.xcom_push(key="ocr_summary", value=summary)
+        return summary
+    except AirflowFailException:
+        raise
+    except Exception as exc:
+        msg = str(exc)
+        _write_step(session_id, "ocr_printed_text", "failed", msg)
+        _update_request(request_id, status="failed", error_message=msg[:500])
+        raise AirflowFailException(msg) from exc
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -499,6 +508,7 @@ def task_translate(**context) -> dict:
     meta = ti.xcom_pull(task_ids="validate_upload", key="upload_meta")
     regions_path = ti.xcom_pull(task_ids="ocr_printed_text", key="regions_path")
     session_id = meta["session_id"]
+    request_id = meta["request_id"]
     target_lang = meta["target_lang"]
     nllb_target = meta["nllb_target"]
     lang_label = "Spanish" if target_lang == "es" else "Portuguese"
@@ -514,46 +524,54 @@ def task_translate(**context) -> dict:
         {"total_regions": len(translatable), "target_lang": target_lang},
     )
 
-    config = _lang_config(target_lang)
-    translator = Translator(config).load()
-    texts = [r["text"] for r in translatable]
+    try:
+        config = _lang_config(target_lang)
+        translator = Translator(config).load()
+        texts = [r["text"] for r in translatable]
 
-    t0 = time.time()
-    nllb_out = translator.batch_translate(texts, nllb_target)
-    elapsed = round(time.time() - t0, 1)
+        t0 = time.time()
+        nllb_out = translator.batch_translate(texts, nllb_target)
+        elapsed = round(time.time() - t0, 1)
 
-    # Count regions where NLLB actually changed the text (same logic as test script)
-    nllb_changed = sum(1 for o, n in zip(texts, nllb_out, strict=False) if o != n)
+        # Count regions where NLLB actually changed the text (same logic as test script)
+        nllb_changed = sum(1 for o, n in zip(texts, nllb_out, strict=False) if o != n)
 
-    # Build lookup: original text → translated text
-    text_to_trans = dict(zip(texts, nllb_out, strict=False))
+        # Build lookup: original text → translated text
+        text_to_trans = dict(zip(texts, nllb_out, strict=False))
 
-    # Enrich every region with translated_text
-    translated_regions = []
-    for region in regions:
-        if region.get("preserve", False) or not region.get("text", "").strip():
-            translated_regions.append({**region, "translated_text": region.get("text", "")})
-        else:
-            translated_regions.append(
-                {
-                    **region,
-                    "translated_text": text_to_trans.get(region["text"], region["text"]),
-                }
-            )
+        # Enrich every region with translated_text
+        translated_regions = []
+        for region in regions:
+            if region.get("preserve", False) or not region.get("text", "").strip():
+                translated_regions.append({**region, "translated_text": region.get("text", "")})
+            else:
+                translated_regions.append(
+                    {
+                        **region,
+                        "translated_text": text_to_trans.get(region["text"], region["text"]),
+                    }
+                )
 
-    _write_step(
-        session_id,
-        "translate",
-        "success",
-        f"NLLB-200: {nllb_changed}/{len(translatable)} regions changed in {elapsed}s",
-        {"regions_changed": nllb_changed, "total_sent": len(translatable), "elapsed_seconds": elapsed},
-    )
+        _write_step(
+            session_id,
+            "translate",
+            "success",
+            f"NLLB-200: {nllb_changed}/{len(translatable)} regions changed in {elapsed}s",
+            {"regions_changed": nllb_changed, "total_sent": len(translatable), "elapsed_seconds": elapsed},
+        )
 
-    path = _dump(meta["work_dir"], "translated_regions", translated_regions)
-    summary = {"regions_translated": nllb_changed, "total_sent": len(translatable), "elapsed_seconds": elapsed}
-    ti.xcom_push(key="translated_regions_path", value=path)
-    ti.xcom_push(key="translate_summary", value=summary)
-    return summary
+        path = _dump(meta["work_dir"], "translated_regions", translated_regions)
+        summary = {"regions_translated": nllb_changed, "total_sent": len(translatable), "elapsed_seconds": elapsed}
+        ti.xcom_push(key="translated_regions_path", value=path)
+        ti.xcom_push(key="translate_summary", value=summary)
+        return summary
+    except AirflowFailException:
+        raise
+    except Exception as exc:
+        msg = str(exc)
+        _write_step(session_id, "translate", "failed", msg)
+        _update_request(request_id, status="failed", error_message=msg[:500])
+        raise AirflowFailException(msg) from exc
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -582,6 +600,7 @@ def task_legal_review(**context) -> dict:
     meta = ti.xcom_pull(task_ids="validate_upload", key="upload_meta")
     translated_regions_path = ti.xcom_pull(task_ids="translate", key="translated_regions_path")
     session_id = meta["session_id"]
+    request_id = meta["request_id"]
     target_lang = meta["target_lang"]
     lang_label = "Spanish" if target_lang == "es" else "Portuguese"
 
@@ -599,53 +618,61 @@ def task_legal_review(**context) -> dict:
         f"Llama: verifying {len(reviewable)} spans in {lang_label}",
     )
 
-    config = _lang_config(target_lang)
-    import json
-    from pathlib import Path
+    try:
+        config = _lang_config(target_lang)
+        import json
+        from pathlib import Path
 
-    _glossary_path = Path("/opt/airflow") / config.glossary_path
-    _glossary = json.loads(_glossary_path.read_text()) if _glossary_path.exists() else {}
-    reviewer = LegalReviewer(config, glossary=_glossary, verification_mode="document")
+        _glossary_path = Path("/opt/airflow") / config.glossary_path
+        _glossary = json.loads(_glossary_path.read_text()) if _glossary_path.exists() else {}
+        reviewer = LegalReviewer(config, glossary=_glossary, verification_mode="document")
 
-    t0 = time.time()
-    verified_texts = reviewer.verify_batch(orig_texts, trans_texts, batch_size=16)
-    elapsed = round(time.time() - t0, 1)
+        t0 = time.time()
+        verified_texts = reviewer.verify_batch(orig_texts, trans_texts, batch_size=16)
+        elapsed = round(time.time() - t0, 1)
 
-    corrections = sum(1 for t, v in zip(trans_texts, verified_texts, strict=False) if t != v)
-    not_verified = sum(1 for v in verified_texts if v.startswith("[NOT VERIFIED"))
+        corrections = sum(1 for t, v in zip(trans_texts, verified_texts, strict=False) if t != v)
+        not_verified = sum(1 for v in verified_texts if v.startswith("[NOT VERIFIED"))
 
-    # Merge verified texts back into the full region list
-    verified_iter = iter(verified_texts)
-    verified_regions = []
-    for region in translated_regions:
-        if region.get("preserve", False):
-            verified_regions.append(region)
-        else:
-            verified_regions.append({**region, "translated_text": next(verified_iter)})
+        # Merge verified texts back into the full region list
+        verified_iter = iter(verified_texts)
+        verified_regions = []
+        for region in translated_regions:
+            if region.get("preserve", False):
+                verified_regions.append(region)
+            else:
+                verified_regions.append({**region, "translated_text": next(verified_iter)})
 
-    _write_step(
-        session_id,
-        "legal_review",
-        "success",
-        f"Llama: {corrections} correction(s) on {len(reviewable)} spans in {elapsed}s"
-        + (f" · {not_verified} NOT VERIFIED (Vertex unavailable)" if not_verified else ""),
-        {
+        _write_step(
+            session_id,
+            "legal_review",
+            "success",
+            f"Llama: {corrections} correction(s) on {len(reviewable)} spans in {elapsed}s"
+            + (f" · {not_verified} NOT VERIFIED (Vertex unavailable)" if not_verified else ""),
+            {
+                "corrections_count": corrections,
+                "spans_reviewed": len(reviewable),
+                "not_verified": not_verified,
+                "elapsed_seconds": elapsed,
+            },
+        )
+
+        path = _dump(meta["work_dir"], "verified_regions", verified_regions)
+        summary = {
+            "status": "ok",
             "corrections_count": corrections,
-            "spans_reviewed": len(reviewable),
             "not_verified": not_verified,
-            "elapsed_seconds": elapsed,
-        },
-    )
-
-    path = _dump(meta["work_dir"], "verified_regions", verified_regions)
-    summary = {
-        "status": "ok",
-        "corrections_count": corrections,
-        "not_verified": not_verified,
-    }
-    ti.xcom_push(key="verified_regions_path", value=path)
-    ti.xcom_push(key="legal_summary", value=summary)
-    return summary
+        }
+        ti.xcom_push(key="verified_regions_path", value=path)
+        ti.xcom_push(key="legal_summary", value=summary)
+        return summary
+    except AirflowFailException:
+        raise
+    except Exception as exc:
+        msg = str(exc)
+        _write_step(session_id, "legal_review", "failed", msg)
+        _update_request(request_id, status="failed", error_message=msg[:500])
+        raise AirflowFailException(msg) from exc
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -672,6 +699,7 @@ def task_reconstruct_pdf(**context) -> dict:
     meta = ti.xcom_pull(task_ids="validate_upload", key="upload_meta")
     verified_regions_path = ti.xcom_pull(task_ids="legal_review", key="verified_regions_path")
     session_id = meta["session_id"]
+    request_id = meta["request_id"]
     target_lang = meta["target_lang"]
 
     verified_regions = _load(verified_regions_path)
@@ -679,26 +707,34 @@ def task_reconstruct_pdf(**context) -> dict:
 
     _write_step(session_id, "reconstruct_pdf", "running", "Rebuilding PDF with translated text")
 
-    reconstruct_pdf(
-        original_path=meta["local_pdf"],
-        translated_regions=verified_regions,
-        output_path=output_path,
-    )
+    try:
+        reconstruct_pdf(
+            original_path=meta["local_pdf"],
+            translated_regions=verified_regions,
+            output_path=output_path,
+        )
 
-    # Copy output to mounted data dir for inspection (dev only)
-    if os.getenv("APP_ENV") == "development":
-        shutil.copy2(output_path, f"/opt/airflow/data/output_{target_lang}.pdf")
+        # Copy output to mounted data dir for inspection (dev only)
+        if os.getenv("APP_ENV") == "development":
+            shutil.copy2(output_path, f"/opt/airflow/data/output_{target_lang}.pdf")
 
-    size_mb = round(Path(output_path).stat().st_size / 1_048_576, 2)
-    _write_step(
-        session_id,
-        "reconstruct_pdf",
-        "success",
-        f"PDF rebuilt · {size_mb} MB",
-        {"output_size_mb": size_mb},
-    )
-    ti.xcom_push(key="output_path", value=output_path)
-    return {"output_path": output_path, "size_mb": size_mb}
+        size_mb = round(Path(output_path).stat().st_size / 1_048_576, 2)
+        _write_step(
+            session_id,
+            "reconstruct_pdf",
+            "success",
+            f"PDF rebuilt · {size_mb} MB",
+            {"output_size_mb": size_mb},
+        )
+        ti.xcom_push(key="output_path", value=output_path)
+        return {"output_path": output_path, "size_mb": size_mb}
+    except AirflowFailException:
+        raise
+    except Exception as exc:
+        msg = str(exc)
+        _write_step(session_id, "reconstruct_pdf", "failed", msg)
+        _update_request(request_id, status="failed", error_message=msg[:500])
+        raise AirflowFailException(msg) from exc
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -727,8 +763,14 @@ def task_upload_to_gcs(**context) -> dict:
     gcs_uri_str = f"gs://{_GCS_BUCKET_TRANSLATED}/{session_id}/output_{target_lang}.pdf"
 
     _write_step(session_id, "upload_to_gcs", "running", f"Uploading to {gcs_uri_str}")
-    b, bl = gcs.parse_gcs_uri(gcs_uri_str)
-    gcs.upload_file(output_path, b, bl)
+    try:
+        b, bl = gcs.parse_gcs_uri(gcs_uri_str)
+        gcs.upload_file(output_path, b, bl)
+    except Exception as exc:
+        msg = str(exc)
+        _write_step(session_id, "upload_to_gcs", "failed", msg)
+        _update_request(request_id, status="failed", error_message=msg[:500])
+        raise AirflowFailException(msg) from exc
 
     # Signed URL generation can fail independently of the upload (e.g. the VM
     # service account lacks roles/iam.serviceAccountTokenCreator on itself).
