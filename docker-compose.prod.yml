@@ -432,7 +432,8 @@ services:
       - |
         mkdir -p /opt/airflow/data/forms /opt/airflow/forms /opt/airflow/models /opt/airflow/logs
         chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/data /opt/airflow/forms /opt/airflow/models /opt/airflow/logs
-        exec /entrypoint airflow version
+        /entrypoint airflow version
+        airflow pools set gpu_inference 1 "Limits concurrent GPU-heavy tasks (NLLB translation, OCR, DOCX translation) to prevent VRAM OOM when multiple DAGs run in parallel."
     environment:
       <<: *airflow-common-env
       _AIRFLOW_DB_MIGRATE: 'true'
@@ -459,6 +460,7 @@ services:
     environment:
       <<: *airflow-common-env
       MODEL_LOADER_MODE: prod
+      DVC_NO_ANALYTICS: '1'
     volumes:
       - shared-models:/opt/airflow/models
     user: "0:0"

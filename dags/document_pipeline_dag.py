@@ -56,6 +56,7 @@ from airflow.exceptions import AirflowFailException
 from airflow.providers.standard.operators.python import PythonOperator
 
 from courtaccess.core import gcs
+from dags.gpu_pool import GPU_POOL_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -527,11 +528,14 @@ def task_translate(**context) -> dict:
     try:
         config = _lang_config(target_lang)
         translator = Translator(config).load()
-        texts = [r["text"] for r in translatable]
+        try:
+            texts = [r["text"] for r in translatable]
 
-        t0 = time.time()
-        nllb_out = translator.batch_translate(texts, nllb_target)
-        elapsed = round(time.time() - t0, 1)
+            t0 = time.time()
+            nllb_out = translator.batch_translate(texts, nllb_target)
+            elapsed = round(time.time() - t0, 1)
+        finally:
+            translator.unload()
 
         # Count regions where NLLB actually changed the text (same logic as test script)
         nllb_changed = sum(1 for o, n in zip(texts, nllb_out, strict=False) if o != n)
@@ -954,8 +958,8 @@ with DAG(
 ) as dag:
     t1 = PythonOperator(task_id="validate_upload", python_callable=task_validate_upload)
     t2 = PythonOperator(task_id="classify_document", python_callable=task_classify_document)
-    t3 = PythonOperator(task_id="ocr_printed_text", python_callable=task_ocr_printed_text)
-    t4 = PythonOperator(task_id="translate", python_callable=task_translate)
+    t3 = PythonOperator(task_id="ocr_printed_text", python_callable=task_ocr_printed_text, pool=GPU_POOL_NAME)
+    t4 = PythonOperator(task_id="translate", python_callable=task_translate, pool=GPU_POOL_NAME)
     t5 = PythonOperator(task_id="legal_review", python_callable=task_legal_review)
     t6 = PythonOperator(task_id="reconstruct_pdf", python_callable=task_reconstruct_pdf)
     t7 = PythonOperator(task_id="upload_to_gcs", python_callable=task_upload_to_gcs)
