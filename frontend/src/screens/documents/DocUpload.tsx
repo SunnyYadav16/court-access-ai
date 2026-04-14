@@ -69,6 +69,8 @@ export default function DocUpload({ onNav }: Props) {
 
   function onInputChange(e: ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]
+    // Reset value so re-opening the picker after cancel fires onChange again
+    if (inputRef.current) inputRef.current.value = ""
     if (f) handleFile(f)
   }
 
@@ -118,7 +120,6 @@ export default function DocUpload({ onNav }: Props) {
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
-  const langLabel = targetLanguage === "es" ? "Spanish (Español)" : "Portuguese (Português)"
 
   return (
     <div className="px-6 lg:px-12 py-8 max-w-7xl mx-auto">
@@ -174,10 +175,10 @@ export default function DocUpload({ onNav }: Props) {
               onDragOver={onDragOver}
               onDragLeave={onDragLeave}
               className={`flex-1 flex flex-col items-center justify-center border-2 border-dashed rounded-lg m-4 transition-all cursor-pointer ${dragOver
-                  ? "border-[#FFD700]/60 bg-[#FFD700]/5"
-                  : file
-                    ? "border-secondary/40 bg-surface-container/30"
-                    : "border-outline/20 hover:border-[#FFD700]/40 bg-surface-container/30"
+                ? "border-[#FFD700]/60 bg-[#FFD700]/5"
+                : file
+                  ? "border-secondary/40 bg-surface-container/30"
+                  : "border-outline/20 hover:border-[#FFD700]/40 bg-surface-container/30"
                 }`}
               style={{ cursor: busy ? "not-allowed" : "pointer" }}
             >
@@ -194,7 +195,7 @@ export default function DocUpload({ onNav }: Props) {
                 <>
                   <h3 className="text-2xl font-headline mb-2 text-on-surface">{file.name}</h3>
                   <p className="text-on-surface-variant text-center max-w-md mb-2">
-                    {(file.size / 1024 / 1024).toFixed(2)} MB · {langLabel}
+                    {(file.size / 1024 / 1024).toFixed(2)} MB
                   </p>
                   {!busy && (
                     <button

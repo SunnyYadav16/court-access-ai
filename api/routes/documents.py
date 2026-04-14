@@ -54,13 +54,30 @@ settings = get_settings()
 
 
 async def _get_airflow_token(client: httpx.AsyncClient) -> str:
-    """Exchange Airflow credentials for a JWT (required by Airflow 3.x REST API)."""
-    token_resp = await client.post(
-        f"{settings.airflow_base_url}/auth/token",
-        json={"username": settings.airflow_username, "password": settings.airflow_password},
-    )
-    token_resp.raise_for_status()
-    return token_resp.json()["access_token"]
+    """Exchange Airflow credentials for a JWT (required by Airflow 3.x REST API).
+
+    Retries up to 3 times with a 1-second delay to handle transient 500 errors
+    caused by stale DB connections in FabAuthManager on startup or under load.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            token_resp = await client.post(
+                f"{settings.airflow_base_url}/auth/token",
+                json={"username": settings.airflow_username, "password": settings.airflow_password},
+            )
+            token_resp.raise_for_status()
+            return token_resp.json()["access_token"]
+        except Exception as exc:
+            last_exc = exc
+            if attempt < 2:
+                logger.warning(
+                    "Airflow /auth/token attempt %d/3 failed: %s — retrying in 1s",
+                    attempt + 1,
+                    exc,
+                )
+                await asyncio.sleep(1)
+    raise last_exc  # type: ignore[misc]
 
 
 async def _unpause_for_trigger(client: httpx.AsyncClient, dag_id: str, token: str) -> None:
@@ -366,7 +383,7 @@ async def upload_document(
     # so even if the trigger call fails the user can retry via the Airflow UI
     # or a re-trigger endpoint. We log the error but don't fail the upload.
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=20.0) as client:
             airflow_token = await _get_airflow_token(client)
             await _unpause_for_trigger(client, dag_id, airflow_token)
             resp = await client.post(
@@ -784,7 +801,7 @@ async def retranslate_document(
 
     # ── Trigger Airflow DAG ────────────────────────────────────────────────
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=20.0) as client:
             airflow_token = await _get_airflow_token(client)
             await _unpause_for_trigger(client, "document_pipeline_dag", airflow_token)
             resp = await client.post(
