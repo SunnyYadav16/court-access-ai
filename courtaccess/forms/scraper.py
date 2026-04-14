@@ -85,17 +85,17 @@ COURT_FORM_PAGES = [
     # Appellate Courts
     {"division": "Appeals Court", "url": "https://www.mass.gov/lists/appeals-court-forms"},
     # Trial Court Departments
-    # {"division": "Boston Municipal Court", "url": "https://www.mass.gov/lists/boston-municipal-court-forms"},
-    # {"division": "District Court", "url": "https://www.mass.gov/lists/district-court-forms"},
-    # {"division": "Housing Court", "url": "https://www.mass.gov/lists/housing-court-forms"},
-    # {"division": "Juvenile Court", "url": "https://www.mass.gov/lists/juvenile-court-forms"},
-    # {"division": "Land Court", "url": "https://www.mass.gov/lists/land-court-forms"},
-    # {"division": "Superior Court", "url": "https://www.mass.gov/lists/superior-court-forms"},
+    {"division": "Boston Municipal Court", "url": "https://www.mass.gov/lists/boston-municipal-court-forms"},
+    {"division": "District Court", "url": "https://www.mass.gov/lists/district-court-forms"},
+    {"division": "Housing Court", "url": "https://www.mass.gov/lists/housing-court-forms"},
+    {"division": "Juvenile Court", "url": "https://www.mass.gov/lists/juvenile-court-forms"},
+    {"division": "Land Court", "url": "https://www.mass.gov/lists/land-court-forms"},
+    {"division": "Superior Court", "url": "https://www.mass.gov/lists/superior-court-forms"},
     # Cross-department form collections
-    # {"division": "Attorney Forms", "url": "https://www.mass.gov/lists/attorney-court-forms"},
-    # {"division": "Criminal Matter Forms", "url": "https://www.mass.gov/lists/court-forms-for-criminal-matters"},
-    # {"division": "Criminal Records Forms", "url": "https://www.mass.gov/lists/court-forms-for-criminal-records"},
-    # {"division": "Trial Court eFiling Forms", "url": "https://www.mass.gov/lists/trial-court-efiling-forms"},
+    {"division": "Attorney Forms", "url": "https://www.mass.gov/lists/attorney-court-forms"},
+    {"division": "Criminal Matter Forms", "url": "https://www.mass.gov/lists/court-forms-for-criminal-matters"},
+    {"division": "Criminal Records Forms", "url": "https://www.mass.gov/lists/court-forms-for-criminal-records"},
+    {"division": "Trial Court eFiling Forms", "url": "https://www.mass.gov/lists/trial-court-efiling-forms"},
 ]
 
 
