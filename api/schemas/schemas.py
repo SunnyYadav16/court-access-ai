@@ -272,6 +272,33 @@ class DocumentListResponse(BaseModel):
     page_size: int
 
 
+class RealtimeSessionSummary(BaseModel):
+    """One row in the realtime session history list."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    session_id: uuid.UUID
+    status: str  # waiting | active | ended
+    target_language: str  # es | pt
+    court_division: str | None = None
+    courtroom: str | None = None
+    case_docket: str | None = None
+    partner_name: str | None = None
+    total_utterances: int = 0
+    duration_seconds: float | None = None
+    created_at: datetime
+    completed_at: datetime | None = None
+
+
+class RealtimeSessionListResponse(BaseModel):
+    """Paginated list of realtime sessions for the current user."""
+
+    items: list[RealtimeSessionSummary]
+    total: int
+    page: int
+    page_size: int
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Session schemas
 # ══════════════════════════════════════════════════════════════════════════════

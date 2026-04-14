@@ -329,6 +329,27 @@ export interface RoomCreateResponse {
   join_url: string;
 }
 
+export interface RealtimeSessionSummary {
+  session_id: string;
+  status: string;           // waiting | active | ended
+  target_language: string;  // es | pt
+  court_division: string | null;
+  courtroom: string | null;
+  case_docket: string | null;
+  partner_name: string | null;
+  total_utterances: number;
+  duration_seconds: number | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface RealtimeSessionListResponse {
+  items: RealtimeSessionSummary[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 export interface RoomPreviewResponse {
   phase: "waiting" | "joining" | "active" | "ended";
   target_language: string;
@@ -361,6 +382,10 @@ export const realtimeApi = {
   /** End a room session (creator only). Idempotent — 204 if already ended. */
   endRoom: (sessionId: string): Promise<void> =>
     api.post(`/sessions/rooms/${sessionId}/end`).then(() => undefined),
+
+  /** List current user's realtime session history (paginated). */
+  history: (page = 1, pageSize = 20): Promise<RealtimeSessionListResponse> =>
+    api.get<RealtimeSessionListResponse>("/sessions/history", { params: { page, page_size: pageSize } }).then((r) => r.data),
 };
 
 export const sessionsApi = {

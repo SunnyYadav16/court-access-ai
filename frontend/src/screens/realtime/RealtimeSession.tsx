@@ -9,6 +9,78 @@ import { realtimeApi } from "@/services/api"
 
 const TOAST_SESSION_ENDED = "Session ended. Transcript saved."
 
+// ── Word-level diff ──────────────────────────────────────────────────────────
+
+/**
+ * Compute a simple word-level diff between the original NLLB translation and
+ * the Llama-verified translation.  Returns an array of segments, each marked
+ * as "same", "added" (new word from verifier), or "removed" (dropped by verifier).
+ *
+ * Uses the classic LCS (Longest Common Subsequence) approach on whitespace-
+ * tokenised words.  Good enough for short legal utterances — O(n*m) where n
+ * and m are word counts (typically <40).
+ */
+type DiffSegment = { text: string; type: "same" | "added" | "removed" }
+
+function diffWords(original: string, verified: string): DiffSegment[] {
+  const a = original.split(/\s+/).filter(Boolean)
+  const b = verified.split(/\s+/).filter(Boolean)
+
+  // Build LCS table
+  const m = a.length
+  const n = b.length
+  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0))
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1])
+
+  // Back-trace to build diff
+  const segments: DiffSegment[] = []
+  let i = m, j = n
+  const raw: DiffSegment[] = []
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
+      raw.push({ text: a[i - 1], type: "same" })
+      i--; j--
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      raw.push({ text: b[j - 1], type: "added" })
+      j--
+    } else {
+      raw.push({ text: a[i - 1], type: "removed" })
+      i--
+    }
+  }
+  raw.reverse()
+
+  // Merge consecutive segments of the same type into single spans
+  for (const seg of raw) {
+    const last = segments[segments.length - 1]
+    if (last && last.type === seg.type) {
+      last.text += " " + seg.text
+    } else {
+      segments.push({ ...seg })
+    }
+  }
+  return segments
+}
+
+function DiffDisplay({ original, verified }: { original: string; verified: string }) {
+  const segments = diffWords(original, verified)
+  return (
+    <span>
+      {segments.map((seg, i) =>
+        seg.type === "same" ? (
+          <span key={i}>{seg.text} </span>
+        ) : seg.type === "added" ? (
+          <span key={i} className="bg-green-500/20 text-green-300 rounded px-0.5">{seg.text} </span>
+        ) : (
+          <span key={i} className="bg-red-500/15 text-red-400/70 line-through rounded px-0.5">{seg.text} </span>
+        )
+      )}
+    </span>
+  )
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function formatDuration(s: number): string {
@@ -106,20 +178,29 @@ function MessageBubble({
       )}
 
       {/* Legal verification block */}
-      {msg.verifiedTranslation && !msg.usedFallback && (
-        <div className="max-w-xs px-3 py-2 text-xs leading-relaxed bg-indigo-500/[0.07] border-l-2 border-indigo-500/40 pl-2.5 text-white/70">
+      {msg.verifiedTranslation && (
+        <div className={`max-w-xs px-3 py-2 text-xs leading-relaxed border-l-2 pl-2.5 ${
+          msg.usedFallback
+            ? "bg-amber-500/[0.05] border-amber-500/30 text-white/55"
+            : "bg-indigo-500/[0.07] border-indigo-500/40 text-white/70"
+        }`}>
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-[10px] font-semibold text-indigo-300 flex items-center gap-1">
-              <span className="material-symbols-outlined text-xs">gavel</span> Legal Verified
+            <span className={`text-[10px] font-semibold flex items-center gap-1 ${
+              msg.usedFallback ? "text-amber-400" : "text-indigo-300"
+            }`}>
+              <span className="material-symbols-outlined text-xs">gavel</span>
+              {msg.usedFallback ? "Verification Unavailable" : "Legal Verified"}
             </span>
-            {msg.accuracyScore != null && <VerificationChip score={msg.accuracyScore} />}
+            {msg.accuracyScore != null && !msg.usedFallback && <VerificationChip score={msg.accuracyScore} />}
           </div>
-          {msg.verifiedTranslation === msg.translation ? (
+          {msg.usedFallback ? (
+            <span className="text-white/35">Showing machine translation — verification service unavailable.</span>
+          ) : msg.verifiedTranslation === msg.translation ? (
             <span className="text-white/40">No changes — legally precise.</span>
           ) : (
-            msg.verifiedTranslation
+            <DiffDisplay original={msg.translation ?? ""} verified={msg.verifiedTranslation} />
           )}
-          {msg.accuracyNote && msg.verifiedTranslation !== msg.translation && (
+          {msg.accuracyNote && !msg.usedFallback && msg.verifiedTranslation !== msg.translation && (
             <div className="mt-1 text-[10px] text-white/40">
               {msg.accuracyNote}
             </div>

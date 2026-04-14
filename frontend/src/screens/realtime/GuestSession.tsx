@@ -267,10 +267,22 @@ export default function GuestSession({ meta, code }: Props) {
   useEffect(() => {
     if (connectedRef.current) return
     connectedRef.current = true
-    reset()
-    setMyName(meta.partnerName)
-    setMyLanguage(meta.targetLanguage)
-    setCourtInfo(meta.courtDivision ?? "", meta.courtroom ?? "", "")
+
+    const state = useRealtimeStore.getState()
+    const isReconnect = state.messages.length > 0 && state.roomCode === code.toUpperCase()
+
+    if (!isReconnect) {
+      // First connect — initialise store from scratch
+      reset()
+      setMyName(meta.partnerName)
+      setMyLanguage(meta.targetLanguage)
+      setCourtInfo(meta.courtDivision ?? "", meta.courtroom ?? "", "")
+    }
+
+    // Persist guest identity so the session survives a page refresh
+    useRealtimeStore.getState().setIsGuest(true)
+    useRealtimeStore.getState().setRoomToken(meta.roomToken)
+
     void connect({ roomId: code, name: meta.partnerName, token: meta.roomToken })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -290,8 +302,8 @@ export default function GuestSession({ meta, code }: Props) {
     if (sessionPhase === "ended")      return "ended"
     if (isPlayingTts)  return "ai_speaking"
     if (micLocked)     return "translating"
-    if (isSpeaking)    return "you_speaking"
     if (isMuted)       return "muted"
+    if (isSpeaking)    return "you_speaking"
     return "your_turn"
   }, [sessionPhase, isPlayingTts, micLocked, isSpeaking, isMuted])
 
