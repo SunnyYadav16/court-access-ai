@@ -56,7 +56,6 @@ from airflow.exceptions import AirflowFailException
 from airflow.providers.standard.operators.python import PythonOperator
 
 from courtaccess.core import gcs
-from dags.gpu_pool import GPU_POOL_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -958,8 +957,8 @@ with DAG(
 ) as dag:
     t1 = PythonOperator(task_id="validate_upload", python_callable=task_validate_upload)
     t2 = PythonOperator(task_id="classify_document", python_callable=task_classify_document)
-    t3 = PythonOperator(task_id="ocr_printed_text", python_callable=task_ocr_printed_text, pool=GPU_POOL_NAME)
-    t4 = PythonOperator(task_id="translate", python_callable=task_translate, pool=GPU_POOL_NAME)
+    t3 = PythonOperator(task_id="ocr_printed_text", python_callable=task_ocr_printed_text)
+    t4 = PythonOperator(task_id="translate", python_callable=task_translate)
     t5 = PythonOperator(task_id="legal_review", python_callable=task_legal_review)
     t6 = PythonOperator(task_id="reconstruct_pdf", python_callable=task_reconstruct_pdf)
     t7 = PythonOperator(task_id="upload_to_gcs", python_callable=task_upload_to_gcs)
