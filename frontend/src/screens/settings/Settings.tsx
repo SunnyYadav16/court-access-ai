@@ -46,14 +46,6 @@ export default function Settings({ onNav: _onNav }: Props) {
     })
   }
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text)
-  }
-
-  const truncateUserId = (id: string) => {
-    return id.slice(0, 8) + "..." + id.slice(-4)
-  }
-
   return (
     <div className="px-6 lg:px-8 py-8 max-w-5xl mx-auto space-y-8">
 
@@ -98,25 +90,35 @@ export default function Settings({ onNav: _onNav }: Props) {
         {/* ── Status Sidebar (4-col) ───────────────────────────────── */}
         <section className="md:col-span-4 bg-surface-container-low rounded-xl p-6 border border-outline-variant/10 flex flex-col justify-between">
           <div>
-            <h3 className="text-on-surface-variant text-[10px] uppercase tracking-[0.2em] mb-4">System Status</h3>
+            <h3 className="text-on-surface-variant text-[10px] uppercase tracking-[0.2em] mb-4">Account Status</h3>
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-400">Database Sync</span>
-                <span className="w-2 h-2 rounded-full bg-emerald-500" style={{ boxShadow: "0 0 8px rgba(16,185,129,0.6)" }} />
+                <span className="text-sm text-slate-400">Email Verified</span>
+                <span
+                  className={`w-2 h-2 rounded-full ${backendUser?.email_verified ? "bg-emerald-500" : "bg-red-500"}`}
+                  style={{ boxShadow: backendUser?.email_verified ? "0 0 8px rgba(16,185,129,0.6)" : "0 0 8px rgba(239,68,68,0.6)" }}
+                />
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-400">Security Node</span>
-                <span className="w-2 h-2 rounded-full bg-emerald-500" style={{ boxShadow: "0 0 8px rgba(16,185,129,0.6)" }} />
+                <span className="text-sm text-slate-400">MFA Protection</span>
+                <span
+                  className={`w-2 h-2 rounded-full ${backendUser?.mfa_enabled ? "bg-emerald-500" : "bg-secondary"}`}
+                  style={{ boxShadow: backendUser?.mfa_enabled ? "0 0 8px rgba(16,185,129,0.6)" : "0 0 8px rgba(255,193,7,0.6)" }}
+                />
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-400">Audit Trail</span>
-                <span className="w-2 h-2 rounded-full bg-secondary" style={{ boxShadow: "0 0 8px rgba(255,193,7,0.6)" }} />
+                <span className="text-sm text-slate-400">Auth Provider</span>
+                <span className="text-xs text-slate-300">{getProviderName(backendUser?.auth_provider || "")}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-400">Last Login</span>
+                <span className="text-xs text-slate-300">{formatDateTime(backendUser?.last_login_at)}</span>
               </div>
             </div>
           </div>
           <div className="mt-8 p-4 bg-surface-container-lowest rounded-lg border border-white/5">
             <p className="text-[10px] text-slate-500 leading-relaxed">
-              Your account is currently operating under high-security protocols. All actions are logged to the magistrate ledger.
+              Member since {formatDate(backendUser?.created_at)}. All actions are logged to the audit trail.
             </p>
           </div>
         </section>
@@ -129,13 +131,10 @@ export default function Settings({ onNav: _onNav }: Props) {
           </div>
           <div className="p-8 space-y-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-              {/* User ID */}
+              {/* Display Name */}
               <div>
-                <label className="block text-[10px] uppercase tracking-widest text-on-surface-variant mb-2">Internal User ID</label>
-                <div className="flex items-center gap-2 group cursor-pointer" role="button" tabIndex={0} onClick={() => copyToClipboard(backendUser?.user_id || "")} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); copyToClipboard(backendUser?.user_id || "") } }} aria-label="Copy User ID to clipboard">
-                  <span className="font-mono text-sm text-secondary-fixed">{truncateUserId(backendUser?.user_id || "")}</span>
-                  <span className="material-symbols-outlined text-xs text-slate-600 group-hover:text-secondary">content_copy</span>
-                </div>
+                <label className="block text-[10px] uppercase tracking-widest text-on-surface-variant mb-2">Display Name</label>
+                <p className="text-sm">{backendUser?.name || "—"}</p>
               </div>
 
               {/* Auth Provider */}

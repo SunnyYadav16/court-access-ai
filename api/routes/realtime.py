@@ -58,6 +58,8 @@ from api.dependencies import CurrentUser, DBSession, require_role
 from api.schemas.schemas import (
     ROLE_ID_TO_NAME,
     Language,
+    RealtimeSessionListResponse,
+    RealtimeSessionSummary,
     RoomCreateRequest,
     RoomCreateResponse,
     RoomJoinRequest,
@@ -849,6 +851,70 @@ async def end_session(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# GET /sessions/history — list current user's realtime sessions
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+_NLLB_TO_SHORT: dict[str, str] = {"spa_Latn": "es", "por_Latn": "pt"}
+
+
+@router.get(
+    "/history",
+    response_model=RealtimeSessionListResponse,
+    summary="List current user's realtime session history",
+)
+async def list_realtime_sessions(
+    user: CurrentUser,
+    db: DBSession,
+    page: int = 1,
+    page_size: int = 20,
+) -> RealtimeSessionListResponse:
+    """Paginated list of realtime sessions created by the current user."""
+    from sqlalchemy import desc, func
+
+    from db.models import RealtimeTranslationRequest
+    from db.models import Session as SessionModel
+
+    if page < 1:
+        raise HTTPException(status_code=422, detail="page must be >= 1")
+    if not 1 <= page_size <= 100:
+        raise HTTPException(status_code=422, detail="page_size must be 1-100")
+
+    base_filter = (
+        select(SessionModel, RealtimeTranslationRequest)
+        .join(RealtimeTranslationRequest, RealtimeTranslationRequest.session_id == SessionModel.session_id)
+        .where(SessionModel.user_id == user.user_id, SessionModel.type == "realtime")
+    )
+
+    count_result = await db.execute(select(func.count()).select_from(base_filter.subquery()))
+    total = count_result.scalar_one()
+
+    result = await db.execute(
+        base_filter.order_by(desc(SessionModel.created_at)).offset((page - 1) * page_size).limit(page_size)
+    )
+    rows = result.all()
+
+    items = [
+        RealtimeSessionSummary(
+            session_id=sess.session_id,
+            status=rt.phase,
+            target_language=_NLLB_TO_SHORT.get(sess.target_language, sess.target_language),
+            court_division=rt.court_division,
+            courtroom=rt.courtroom,
+            case_docket=rt.case_docket,
+            partner_name=rt.partner_name,
+            total_utterances=rt.total_utterances,
+            duration_seconds=rt.duration_seconds,
+            created_at=sess.created_at,
+            completed_at=rt.completed_at,
+        )
+        for sess, rt in rows
+    ]
+
+    return RealtimeSessionListResponse(items=items, total=total, page=page, page_size=page_size)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # WebSocket endpoint — full speech pipeline
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1023,6 +1089,18 @@ async def session_websocket(
         except Exception as _e:
             logger.warning("Failed to promote room phase to active on WS connect: %s", _e)
 
+    # ── Cancel any reconnect grace timer ────────────────────────────────
+    _prev_grace = getattr(room, "_grace_task", None)
+    if _prev_grace and not _prev_grace.done():
+        _prev_grace.cancel()
+        room._grace_task = None  # type: ignore[attr-defined]
+        logger.info("Room %s: reconnect grace timer cancelled (participant reconnected)", room_id)
+
+    # Determine the correct session_status to send: if the session was already
+    # active (i.e. a participant is reconnecting mid-session), resume "active"
+    # instead of resetting to "ready".
+    _resume_status = "active" if room.session_active else "ready"
+
     # ── Notify participants ───────────────────────────────────────────────
     if role == "a":
         await participant.send_json_safe(
@@ -1035,13 +1113,14 @@ async def session_websocket(
             }
         )
         # Guest may have connected before the owner (e.g. owner page-refreshed).
-        # In that case skip "waiting" and go straight to "ready" for both sides.
+        # In that case skip "waiting" and go straight to "ready" (or "active"
+        # if resuming a session) for both sides.
         existing_guest = next((p for p in room.participants if p.role == "b" and p.ws_open), None)
         if existing_guest:
             await existing_guest.send_json_safe({"type": "partner_joined", "name": user_name, "language": user_lang})
             for p in room.participants:
                 if p.ws_open:
-                    await p.send_json_safe({"type": "session_status", "status": "ready"})
+                    await p.send_json_safe({"type": "session_status", "status": _resume_status})
         else:
             await participant.send_json_safe({"type": "session_status", "status": "waiting"})
         logger.info("Room %s: owner %s connected (%s ↔ %s)", room_id, user_name, room.language_a, room.language_b)
@@ -1061,7 +1140,7 @@ async def session_websocket(
             await partner.send_json_safe({"type": "partner_joined", "name": user_name, "language": user_lang})
             for p in room.participants:
                 if p.ws_open:
-                    await p.send_json_safe({"type": "session_status", "status": "ready"})
+                    await p.send_json_safe({"type": "session_status", "status": _resume_status})
         else:
             await participant.send_json_safe({"type": "session_status", "status": "waiting"})
         logger.info("Room %s: %s joined as %s", room_id, user_name, user_lang)
@@ -1584,30 +1663,59 @@ async def session_websocket(
     finally:
         participant.ws_open = False
 
-        # Finalize first — _finalize_recording() drains queued ASR/MT tasks
-        # via asyncio.gather before writing audio/transcript to disk.  Cancelling
-        # background_tasks first would silently drop in-flight utterances.
-        if room.session_active:
-            room.session_active = False
-            await _finalize_recording()
-
-        # Cancel any tasks that finalization didn't drain (e.g. partial tasks
-        # still running after an abrupt disconnect mid-utterance).
+        # Cancel any in-flight ASR/MT tasks for this participant's audio pipeline.
         for t in background_tasks:
             if not t.done():
                 t.cancel()
 
-        # Notify partner
         departing_partner = room.get_partner(participant)
-        if departing_partner and departing_partner.ws_open:
-            await departing_partner.send_json_safe({"type": "partner_left", "name": user_name})
-            await departing_partner.send_json_safe({"type": "session_status", "status": "ended"})
-
         room.remove_participant(participant)
-        if not room.participants:
-            conversation_rooms.pop(room_id, None)
-            logger.info("Room %s: closed (empty)", room_id)
 
-        # Save individual WebM recording
+        if departing_partner and departing_partner.ws_open:
+            # Partner is still connected — allow a grace period for reconnection
+            # instead of immediately ending the session.
+            await departing_partner.send_json_safe({"type": "partner_left", "name": user_name})
+
+            if room.session_active:
+                # Session was live: keep it active so a reconnecting participant
+                # lands straight back into the active session.  Start a 30-second
+                # grace timer — if nobody reconnects, end the session for real.
+                logger.info(
+                    "Room %s: [%s] disconnected during active session — starting 30s reconnect grace period",
+                    room_id,
+                    user_name,
+                )
+
+                async def _reconnect_grace() -> None:
+                    """End the session for real if nobody reconnects within 30s."""
+                    await asyncio.sleep(30)
+                    if room_id not in conversation_rooms:
+                        return
+                    # Still only one participant → no reconnect happened
+                    if len(room.participants) < 2 and room.session_active:
+                        room.session_active = False
+                        logger.info("Room %s: reconnect grace expired — ending session", room_id)
+                        for p in room.participants:
+                            if p.ws_open:
+                                await p.send_json_safe({"type": "session_status", "status": "ended"})
+
+                # Cancel any previous grace timer (e.g. rapid disconnect/reconnect)
+                prev_task = getattr(room, "_grace_task", None)
+                if prev_task and not prev_task.done():
+                    prev_task.cancel()
+                room._grace_task = asyncio.create_task(_reconnect_grace())  # type: ignore[attr-defined]
+            else:
+                # Session wasn't active (lobby/waiting/ready) — just notify partner
+                await departing_partner.send_json_safe({"type": "session_status", "status": "waiting"})
+        else:
+            # No partner left — finalize recording and clean up the room
+            if room.session_active:
+                room.session_active = False
+                await _finalize_recording()
+            if not room.participants:
+                conversation_rooms.pop(room_id, None)
+                logger.info("Room %s: closed (empty)", room_id)
+
+        # Save individual WebM recording for this participant
         if audio_session.chunks:
             audio_session.save_as_wav()
