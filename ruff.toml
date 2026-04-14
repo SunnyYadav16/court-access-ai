@@ -27,7 +27,7 @@ fixable = ["ALL"]
 unfixable = []
 
 [lint.per-file-ignores]
-"**/tests/**" = ["S101", "S106"]  # allow assert and hardcoded passwords in tests
+"**/tests/**" = ["S101", "S106", "S108"]  # allow assert, hardcoded passwords, and /tmp paths in tests
 "dags/**" = ["T201"]              # allow print in DAGs for Airflow logging
 "scripts/**" = ["T201"]          # allow print in scripts
 

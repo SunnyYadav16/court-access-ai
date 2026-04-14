@@ -118,6 +118,8 @@ testpaths = [
     "courtaccess/forms/tests",
     "courtaccess/monitoring/tests",
     "api/tests",
+    "dags/tests",
+    "db/tests",
 ]
 python_files = "test_*.py"
 python_classes = "Test*"
