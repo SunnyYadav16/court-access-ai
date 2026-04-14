@@ -445,12 +445,18 @@ class LegalReviewer:
 
         with self._vertex_credentials_lock:
             if self._gcp_sa_json:
-                # Local dev — explicit SA JSON key
+                # Local dev — explicit SA key (file path or raw JSON string)
                 from google.oauth2 import service_account
 
                 if self._vertex_credentials is None:
+                    sa_value = self._gcp_sa_json.strip()
+                    if os.path.isfile(sa_value):
+                        with open(sa_value) as _f:
+                            sa_info = json.load(_f)
+                    else:
+                        sa_info = json.loads(sa_value)
                     self._vertex_credentials = service_account.Credentials.from_service_account_info(
-                        json.loads(self._gcp_sa_json),
+                        sa_info,
                         scopes=["https://www.googleapis.com/auth/cloud-platform"],
                     )
             else:
@@ -483,7 +489,7 @@ class LegalReviewer:
 
         return OpenAI(
             base_url=(
-                f"https://{self._vertex_location}-aiplatform.googleapis.com/v1"
+                f"https://{self._vertex_location}-aiplatform.googleapis.com/v1beta1"
                 f"/projects/{self._vertex_project_id}"
                 f"/locations/{self._vertex_location}/endpoints/openapi"
             ),
