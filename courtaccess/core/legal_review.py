@@ -40,6 +40,10 @@ _VERTEX_RETRYABLE_HTTP = {429, 500, 502, 503, 504}
 _NOT_VERIFIED_PREFIX = "[NOT VERIFIED — Vertex AI unavailable]"
 
 
+class VertexReviewError(Exception):
+    """Raised when Vertex AI legal review fails after retries or on a non-retryable error."""
+
+
 class LegalReviewer:
     """
     Verifies translated legal text using Llama 4 via Vertex AI.
@@ -271,10 +275,13 @@ class LegalReviewer:
     ) -> list:
         """
         Send one batch to Vertex AI.
-        Falls back to NLLB output with a warning prefix on exhausted retries.
+        Falls back to NLLB output with a warning prefix on failure.
         Source: Cell 7 _call_llama()
         """
-        return self._call_vertex(original_batch, translated_batch, snippet)
+        try:
+            return self._call_vertex(original_batch, translated_batch, snippet)
+        except VertexReviewError:
+            return [f"{_NOT_VERIFIED_PREFIX} {t}" for t in translated_batch]
 
     def _call_vertex(
         self,
@@ -298,7 +305,7 @@ class LegalReviewer:
         On exhausted retries: returns NLLB output with _NOT_VERIFIED_PREFIX.
         Source: Cell 7 _call_llama() Vertex section.
         """
-        import httpx
+        import openai
 
         prompt = self._build_verification_prompt(original_batch, translated_batch, snippet)
         last_exc = None
@@ -372,7 +379,7 @@ class LegalReviewer:
 
                 # Retryable network/service errors
                 is_retryable = isinstance(exc, (ConnectionError, TimeoutError)) or (
-                    isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in _VERTEX_RETRYABLE_HTTP
+                    isinstance(exc, openai.APIStatusError) and exc.status_code in _VERTEX_RETRYABLE_HTTP
                 )
 
                 if is_retryable:
@@ -387,17 +394,19 @@ class LegalReviewer:
                     time.sleep(wait)
                     continue
 
-                # Non-retryable external error — log and give up immediately
+                # Non-retryable external error — log and raise
                 logger.error("Vertex non-retryable error: %s", exc)
-                return translated_batch
+                raise VertexReviewError(f"Non-retryable Vertex AI error: {exc}") from exc
 
         # All retries exhausted
         logger.error(
-            "Vertex AI unavailable after %d attempts: %s — returning NLLB output with warning",
+            "Vertex AI unavailable after %d attempts: %s",
             self._vertex_max_retries,
             last_exc,
         )
-        return [f"{_NOT_VERIFIED_PREFIX} {t}" for t in translated_batch]
+        raise VertexReviewError(
+            f"Vertex AI unavailable after {self._vertex_max_retries} attempts: {last_exc}"
+        ) from last_exc
 
     def _validate_results(
         self,
@@ -582,5 +591,10 @@ class LegalReviewer:
         return {"status": "ok", "corrections": []}
 
     def _vertex_review(self, text: str) -> dict:
+        """
+        Single-text Vertex AI review.
+        Raises VertexReviewError on failure so the DAG retry wrapper
+        can detect it and flag the form for human review.
+        """
         results = self._call_vertex([text], [text], "")
         return {"status": "ok", "corrections": [], "reviewed": results[0]}
