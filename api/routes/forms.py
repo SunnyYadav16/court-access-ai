@@ -18,6 +18,7 @@ In production this will be queryable via the PostgreSQL FormCatalog table.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -91,14 +92,32 @@ async def trigger_form_scraper(
     triggered_at = datetime.now(tz=UTC)
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=20.0) as client:
             # Airflow 3 requires a JWT exchange before calling the REST API.
-            token_resp = await client.post(
-                token_url,
-                json={"username": settings.airflow_username, "password": settings.airflow_password},
-            )
-            token_resp.raise_for_status()
-            airflow_token = token_resp.json()["access_token"]
+            # Retry up to 3 times to handle transient 500s from FabAuthManager
+            # (stale DB connections on startup or under load).
+            airflow_token: str | None = None
+            last_token_exc: Exception | None = None
+            for attempt in range(3):
+                try:
+                    token_resp = await client.post(
+                        token_url,
+                        json={"username": settings.airflow_username, "password": settings.airflow_password},
+                    )
+                    token_resp.raise_for_status()
+                    airflow_token = token_resp.json()["access_token"]
+                    break
+                except Exception as exc:
+                    last_token_exc = exc
+                    if attempt < 2:
+                        logger.warning(
+                            "Airflow /auth/token attempt %d/3 failed: %s — retrying in 1s",
+                            attempt + 1,
+                            exc,
+                        )
+                        await asyncio.sleep(1)
+            if airflow_token is None:
+                raise last_token_exc  # type: ignore[misc]
 
             # Unpause → trigger → re-pause.
             # A paused DAG leaves triggered runs queued forever, so we must
@@ -126,6 +145,7 @@ async def trigger_form_scraper(
                 await client.patch(dag_url, headers=auth_headers, json={"is_paused": True})
             except Exception as repause_exc:
                 logger.warning("Could not re-pause form_scraper_dag after trigger: %s", repause_exc)
+
     except httpx.RequestError as exc:
         logger.error("Airflow unreachable while triggering form_scraper_dag: %s", exc)
         raise HTTPException(

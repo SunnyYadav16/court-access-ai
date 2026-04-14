@@ -52,7 +52,6 @@ from airflow.providers.standard.operators.python import PythonOperator
 from sqlalchemy.orm import Session
 
 from courtaccess.core import gcs
-from dags.gpu_pool import GPU_POOL_NAME
 from db.database import get_sync_engine
 from db.queries import forms as form_queries
 
@@ -708,7 +707,7 @@ with DAG(
     tags=["courtaccess", "documents", "docx", "translation"],
 ) as dag:
     t1 = PythonOperator(task_id="validate_upload", python_callable=task_validate_upload)
-    t2 = PythonOperator(task_id="translate_docx", python_callable=task_translate_docx, pool=GPU_POOL_NAME)
+    t2 = PythonOperator(task_id="translate_docx", python_callable=task_translate_docx)
     t3 = PythonOperator(task_id="upload_to_gcs", python_callable=task_upload_to_gcs)
     t4 = PythonOperator(task_id="finalize", python_callable=task_finalize)
     t5 = PythonOperator(task_id="log_summary", python_callable=task_log_summary)

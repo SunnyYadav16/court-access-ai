@@ -48,7 +48,6 @@ from courtaccess.core.ocr_printed import OCREngine
 from courtaccess.core.reconstruct_pdf import reconstruct_pdf
 from courtaccess.core.translation import Translator
 from courtaccess.languages import get_language_config
-from dags.gpu_pool import GPU_POOL_NAME
 from db.database import get_sync_engine
 from db.queries import forms as form_queries
 from db.queries.audit import write_audit_sync
@@ -690,11 +689,9 @@ with DAG(
     tags=["courtaccess", "forms", "translation", "ocr"],
 ) as dag:
     t1_load = PythonOperator(task_id="load_form_entry", python_callable=task_load_form_entry)
-    t2_ocr = PythonOperator(task_id="ocr_extract_text", python_callable=task_ocr_extract_text, pool=GPU_POOL_NAME)
-    t3_es = PythonOperator(task_id="translate_spanish", python_callable=task_translate_spanish, pool=GPU_POOL_NAME)
-    t4_pt = PythonOperator(
-        task_id="translate_portuguese", python_callable=task_translate_portuguese, pool=GPU_POOL_NAME
-    )
+    t2_ocr = PythonOperator(task_id="ocr_extract_text", python_callable=task_ocr_extract_text)
+    t3_es = PythonOperator(task_id="translate_spanish", python_callable=task_translate_spanish)
+    t4_pt = PythonOperator(task_id="translate_portuguese", python_callable=task_translate_portuguese)
     t5_rev_es = PythonOperator(task_id="legal_review_spanish", python_callable=task_legal_review_spanish)
     t6_rev_pt = PythonOperator(task_id="legal_review_portuguese", python_callable=task_legal_review_portuguese)
     t7_rec_es = PythonOperator(task_id="reconstruct_pdf_spanish", python_callable=task_reconstruct_pdf_spanish)
