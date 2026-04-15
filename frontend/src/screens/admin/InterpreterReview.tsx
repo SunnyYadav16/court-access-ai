@@ -327,7 +327,8 @@ export default function InterpreterReview({ onNav: _onNav }: Props) {
           <div>
             <h1 className="font-headline text-4xl text-on-surface mb-2">Translation Review Queue</h1>
             <p className="text-on-surface-variant max-w-2xl">
-              Review AI-translated court documents. Download originals and translations to compare,
+              Review AI-translated Massachusetts court forms automatically scraped from mass.gov
+              and processed through the DAG pipeline. Download originals and translations to compare,
               then approve or flag for recorrection.
             </p>
           </div>

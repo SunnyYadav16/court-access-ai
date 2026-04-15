@@ -87,36 +87,19 @@ export default function Settings({ onNav: _onNav }: Props) {
           </div>
         </section>
 
-        {/* ── Status Sidebar (4-col) ───────────────────────────────── */}
-        <section className="md:col-span-4 bg-surface-container-low rounded-xl p-6 border border-outline-variant/10 flex flex-col justify-between">
-          <div>
-            <h3 className="text-on-surface-variant text-[10px] uppercase tracking-[0.2em] mb-4">Account Status</h3>
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-400">Email Verified</span>
-                <span
-                  className={`w-2 h-2 rounded-full ${backendUser?.email_verified ? "bg-emerald-500" : "bg-red-500"}`}
-                  style={{ boxShadow: backendUser?.email_verified ? "0 0 8px rgba(16,185,129,0.6)" : "0 0 8px rgba(239,68,68,0.6)" }}
-                />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-400">MFA Protection</span>
-                <span
-                  className={`w-2 h-2 rounded-full ${backendUser?.mfa_enabled ? "bg-emerald-500" : "bg-secondary"}`}
-                  style={{ boxShadow: backendUser?.mfa_enabled ? "0 0 8px rgba(16,185,129,0.6)" : "0 0 8px rgba(255,193,7,0.6)" }}
-                />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-400">Auth Provider</span>
-                <span className="text-xs text-slate-300">{getProviderName(backendUser?.auth_provider || "")}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-400">Last Login</span>
-                <span className="text-xs text-slate-300">{formatDateTime(backendUser?.last_login_at)}</span>
-              </div>
-            </div>
+        {/* ── Mission Quote (4-col) ────────────────────────────────── */}
+        <section className="md:col-span-4 bg-surface-container-low rounded-xl p-6 border border-outline-variant/10 flex flex-col justify-between relative overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-bl from-secondary/5 to-transparent pointer-events-none" />
+          <div className="relative flex-1 flex flex-col justify-center gap-6">
+            <span className="material-symbols-outlined text-secondary/40 text-5xl">format_quote</span>
+            <blockquote className="text-base text-on-surface leading-relaxed italic font-headline">
+              "Justice delayed is justice denied — but justice lost in translation is justice denied twice."
+            </blockquote>
+            <p className="text-[11px] text-on-surface-variant uppercase tracking-widest">
+              CourtAccess AI Mission
+            </p>
           </div>
-          <div className="mt-8 p-4 bg-surface-container-lowest rounded-lg border border-white/5">
+          <div className="mt-6 p-4 bg-surface-container-lowest rounded-lg border border-white/5 relative">
             <p className="text-[10px] text-slate-500 leading-relaxed">
               Member since {formatDate(backendUser?.created_at)}. All actions are logged to the audit trail.
             </p>

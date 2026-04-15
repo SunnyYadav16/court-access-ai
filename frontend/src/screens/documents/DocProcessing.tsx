@@ -309,7 +309,7 @@ export default function DocProcessing({ onNav }: Props) {
       <section>
         <h1 className="font-headline text-4xl text-on-surface mb-2">Process Intelligence</h1>
         <p className="text-on-surface-variant font-body max-w-2xl">
-          Session {sessionId.slice(0, 8)}… · {isComplete ? `${langLabel} translation complete.` : `Translating to ${langLabel}. Your document is being translated and verified for legal accuracy.`}
+          {isComplete ? `${langLabel} translation complete.` : `Translating to ${langLabel}. Your document is being translated and verified for legal accuracy.`}
         </p>
       </section>
 

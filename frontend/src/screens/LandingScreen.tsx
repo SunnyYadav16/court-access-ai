@@ -44,20 +44,20 @@ interface PipelineStep {
 
 // The five pipeline steps — no model names, just what each step *does*
 const PIPELINE_STEPS_BASE: PipelineStep[] = [
-  { id: "vad",     label: "Voice Detection",       sublabel: "Listening for speech…",           status: "queued" },
-  { id: "asr",     label: "Speech to Text",         sublabel: "Converting audio to words…",      status: "queued" },
-  { id: "mt",      label: "AI Translation",          sublabel: "Translating ES → EN…",            status: "queued" },
-  { id: "legal",   label: "Legal Accuracy Review",  sublabel: "Checking legal terminology…",     status: "queued", isAI: true },
-  { id: "tts",     label: "Audio Output",           sublabel: "Generating spoken translation…",  status: "queued" },
+  { id: "vad", label: "Voice Detection", sublabel: "Listening for speech…", status: "queued" },
+  { id: "asr", label: "Speech to Text", sublabel: "Converting audio to words…", status: "queued" },
+  { id: "mt", label: "AI Translation", sublabel: "Translating ES → EN…", status: "queued" },
+  { id: "legal", label: "Legal Accuracy Review", sublabel: "Checking legal terminology…", status: "queued", isAI: true },
+  { id: "tts", label: "Audio Output", sublabel: "Generating spoken translation…", status: "queued" },
 ]
 
 // What each step shows when it's the "running" step
 const RUNNING_SUBLABELS: Record<string, string> = {
-  vad:   "Voice activity detected",
-  asr:   "Transcribing audio stream…",
-  mt:    "ES → EN in progress…",
+  vad: "Voice activity detected",
+  asr: "Transcribing audio stream…",
+  mt: "ES → EN in progress…",
   legal: "AI reviewing legal context…",
-  tts:   "Rendering audio output…",
+  tts: "Rendering audio output…",
 }
 
 // Services the platform offers
@@ -66,7 +66,7 @@ const SERVICES = [
     icon: "description",
     title: "Translate Legal Documents",
     who: "For the public",
-    desc: "Upload a court notice, evidence file, or legal filing and get an accurate translation in seconds — written in plain language you can actually understand.",
+    desc: "Upload a court notice, evidence file, or legal filing and get an accurate translation in seconds, written in language you can actually understand.",
     sample: { es: "¿Desea apelar esta decisión?", en: "Do you wish to appeal this decision?" },
   },
   {
@@ -80,17 +80,39 @@ const SERVICES = [
     icon: "account_balance",
     title: "Complete Court Forms",
     who: "For everyone",
-    desc: "Browse 45+ official Massachusetts court forms, available in Spanish and Portuguese. Fill them out with guided multilingual assistance.",
+    desc: "Browse 45+ official Massachusetts court forms, available in Spanish and Portuguese. Fill them out in the language you're most comfortable with.",
     sample: { es: "Solicitud de divorcio", en: "Petition for Divorce" },
   },
 ]
 
-// How it works — the animated flow steps
-const HOW_IT_WORKS = [
-  { step: "01", icon: "upload_file",       title: "Upload or Speak",         desc: "Submit a document or start speaking in Spanish or Portuguese." },
-  { step: "02", icon: "translate",         title: "AI Translates Instantly",  desc: "Our system converts your content to English with legal accuracy." },
-  { step: "03", icon: "verified_user",     title: "Legal Review",             desc: "An AI layer checks the translation for legal accuracy and terminology." },
-  { step: "04", icon: "download_done",     title: "Read or Listen",           desc: "Get your result as text, audio, or a downloadable translated document." },
+// How it works — two clear paths
+const HOW_IT_WORKS_PATHS = [
+  {
+    id: "document",
+    badge: "Document Translation",
+    icon: "upload_file",
+    inputTitle: "Submit a Document",
+    inputDesc: "Upload a PDF or Word file in Spanish or Portuguese.",
+    processIcon: "translate",
+    processTitle: "AI Translates + Legal Review",
+    processDesc: "Your document is translated and checked for legal accuracy.",
+    outputIcon: "download",
+    outputTitle: "Download Translated Document",
+    outputDesc: "Get your translated document as a downloadable PDF, ready to use.",
+  },
+  {
+    id: "live",
+    badge: "Live Interpretation",
+    icon: "mic",
+    inputTitle: "Start Speaking",
+    inputDesc: "Speak into your microphone in Spanish or Portuguese during a live session.",
+    processIcon: "translate",
+    processTitle: "AI Translates + Legal Review",
+    processDesc: "Speech is converted to text, translated, and verified in real time.",
+    outputIcon: "volume_up",
+    outputTitle: "Hear Translated Audio",
+    outputDesc: "Listen to your translated speech played back instantly in English.",
+  },
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -134,7 +156,7 @@ function AIBadge() {
 /** Single pipeline step row */
 function PipelineStepRow({ step }: { step: PipelineStep }) {
   const isRunning = step.status === "running"
-  const isDone    = step.status === "done"
+  const isDone = step.status === "done"
 
   return (
     <motion.div
@@ -143,19 +165,18 @@ function PipelineStepRow({ step }: { step: PipelineStep }) {
         isRunning
           ? { borderColor: "rgba(200,150,62,0.35)", backgroundColor: "rgba(200,150,62,0.07)" }
           : isDone
-          ? { borderColor: "rgba(74,222,128,0.22)", backgroundColor: "rgba(74,222,128,0.06)" }
-          : { borderColor: "rgba(255,255,255,0.06)", backgroundColor: "rgba(255,255,255,0.02)" }
+            ? { borderColor: "rgba(74,222,128,0.22)", backgroundColor: "rgba(74,222,128,0.06)" }
+            : { borderColor: "rgba(255,255,255,0.06)", backgroundColor: "rgba(255,255,255,0.02)" }
       }
       transition={{ duration: 0.4 }}
       className="flex items-center gap-3 px-3 py-2.5 rounded-lg border"
     >
       {/* Status icon */}
       <div
-        className={`w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 text-[11px] font-bold transition-all duration-300 ${
-          isDone    ? "bg-green-500/20 text-green-400" :
-          isRunning ? (step.isAI ? "bg-tertiary-container text-on-tertiary-container" : "bg-secondary-container/30 text-secondary") :
-                      "bg-white/5 text-on-surface-variant"
-        }`}
+        className={`w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 text-[11px] font-bold transition-all duration-300 ${isDone ? "bg-green-500/20 text-green-400" :
+            isRunning ? (step.isAI ? "bg-tertiary-container text-on-tertiary-container" : "bg-secondary-container/30 text-secondary") :
+              "bg-white/5 text-on-surface-variant"
+          }`}
       >
         {isDone ? (
           <span className="material-symbols-outlined text-[14px]">check</span>
@@ -163,10 +184,10 @@ function PipelineStepRow({ step }: { step: PipelineStep }) {
           step.isAI
             ? <span className="material-symbols-outlined text-[14px]">auto_awesome</span>
             : <motion.span
-                animate={{ rotate: 360 }}
-                transition={{ repeat: Infinity, duration: 1.2, ease: "linear" }}
-                className="material-symbols-outlined text-[14px] block"
-              >sync</motion.span>
+              animate={{ rotate: 360 }}
+              transition={{ repeat: Infinity, duration: 1.2, ease: "linear" }}
+              className="material-symbols-outlined text-[14px] block"
+            >sync</motion.span>
         ) : (
           <span className="w-1.5 h-1.5 rounded-full bg-on-surface-variant/30" />
         )}
@@ -183,11 +204,10 @@ function PipelineStepRow({ step }: { step: PipelineStep }) {
 
       {/* Badge */}
       <span
-        className={`text-[9px] font-bold px-2 py-0.5 rounded-full tracking-wide flex-shrink-0 ${
-          isDone    ? "bg-green-500/15 text-green-400" :
-          isRunning ? (step.isAI ? "bg-tertiary-container/50 text-on-tertiary-container" : "bg-secondary-container/30 text-secondary") :
-                      "bg-white/5 text-on-surface-variant/50"
-        }`}
+        className={`text-[9px] font-bold px-2 py-0.5 rounded-full tracking-wide flex-shrink-0 ${isDone ? "bg-green-500/15 text-green-400" :
+            isRunning ? (step.isAI ? "bg-tertiary-container/50 text-on-tertiary-container" : "bg-secondary-container/30 text-secondary") :
+              "bg-white/5 text-on-surface-variant/50"
+          }`}
       >
         {isDone ? "DONE" : isRunning ? (step.isAI ? "AI" : "LIVE") : "—"}
       </span>
@@ -272,7 +292,7 @@ function usePipelineSimulation() {
     scheduleNext()
 
     return () => timeouts.forEach(clearTimeout)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cycleCount])
 
   return { steps, inputText }
@@ -280,11 +300,11 @@ function usePipelineSimulation() {
 
 function getCompletedSublabel(id: string): string {
   const map: Record<string, string> = {
-    vad:   "Speech confirmed",
-    asr:   "Transcript ready",
-    mt:    "Translation complete",
+    vad: "Speech confirmed",
+    asr: "Transcript ready",
+    mt: "Translation complete",
     legal: "Legal terms verified",
-    tts:   "Audio generated",
+    tts: "Audio generated",
   }
   return map[id] ?? ""
 }
@@ -321,8 +341,7 @@ export default function LandingScreen({ onNav: _onNav }: Props) {
   return (
     <div className="min-h-screen bg-surface text-on-surface font-body selection:bg-secondary-container selection:text-on-secondary-container">
 
-      {/* Justice statue background overlay */}
-      <div className="page-bg-overlay" />
+      {/* Background is handled by animated floating orbs in the hero section */}
 
       {/* ── Nav ─────────────────────────────────────────────────────── */}
       <nav className="fixed top-0 left-0 w-full z-50 h-14 flex items-center justify-between px-6 bg-primary-container/95 backdrop-blur-md border-b border-outline-variant/10 shadow-lg shadow-black/30">
@@ -357,9 +376,37 @@ export default function LandingScreen({ onNav: _onNav }: Props) {
 
         {/* ── Hero ─────────────────────────────────────────────────── */}
         <section className="relative min-h-[92vh] flex items-center px-6 py-20 overflow-hidden">
-          {/* Ambient glow blobs */}
-          <div className="absolute top-1/3 left-1/4 w-96 h-96 bg-secondary/5 blur-[120px] rounded-full pointer-events-none" />
-          <div className="absolute bottom-1/4 right-1/4 w-80 h-80 bg-tertiary/5 blur-[100px] rounded-full pointer-events-none" />
+          {/* Animated floating orbs */}
+          <motion.div
+            animate={{ x: [0, 60, -30, 0], y: [0, -40, 20, 0], scale: [1, 1.15, 0.85, 1] }}
+            transition={{ repeat: Infinity, duration: 18, ease: "easeInOut" }}
+            className="absolute top-[15%] left-[10%] w-72 h-72 rounded-full pointer-events-none"
+            style={{ background: "radial-gradient(circle, rgba(200,150,62,0.45) 0%, transparent 70%)", filter: "blur(60px)" }}
+          />
+          <motion.div
+            animate={{ x: [0, -50, 40, 0], y: [0, 50, -30, 0], scale: [1, 0.9, 1.2, 1] }}
+            transition={{ repeat: Infinity, duration: 22, ease: "easeInOut" }}
+            className="absolute top-[60%] right-[8%] w-96 h-96 rounded-full pointer-events-none"
+            style={{ background: "radial-gradient(circle, rgba(120,80,200,0.35) 0%, transparent 70%)", filter: "blur(80px)" }}
+          />
+          <motion.div
+            animate={{ x: [0, 30, -60, 0], y: [0, -60, 30, 0], scale: [1, 1.1, 0.85, 1] }}
+            transition={{ repeat: Infinity, duration: 15, ease: "easeInOut" }}
+            className="absolute top-[40%] left-[50%] w-64 h-64 rounded-full pointer-events-none"
+            style={{ background: "radial-gradient(circle, rgba(200,150,62,0.35) 0%, transparent 70%)", filter: "blur(70px)" }}
+          />
+          <motion.div
+            animate={{ x: [0, -40, 20, 0], y: [0, 30, -50, 0], scale: [1, 1.2, 0.9, 1] }}
+            transition={{ repeat: Infinity, duration: 25, ease: "easeInOut" }}
+            className="absolute top-[5%] right-[25%] w-52 h-52 rounded-full pointer-events-none"
+            style={{ background: "radial-gradient(circle, rgba(74,222,128,0.3) 0%, transparent 70%)", filter: "blur(50px)" }}
+          />
+          <motion.div
+            animate={{ x: [0, 50, -20, 0], y: [0, -20, 60, 0], scale: [1, 0.95, 1.15, 1] }}
+            transition={{ repeat: Infinity, duration: 20, ease: "easeInOut" }}
+            className="absolute bottom-[10%] left-[30%] w-80 h-80 rounded-full pointer-events-none"
+            style={{ background: "radial-gradient(circle, rgba(200,150,62,0.4) 0%, transparent 70%)", filter: "blur(90px)" }}
+          />
 
           <div className="max-w-7xl mx-auto w-full grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
 
@@ -391,8 +438,8 @@ export default function LandingScreen({ onNav: _onNav }: Props) {
               {/* Subheadline — plain language */}
               <motion.div variants={staggerItem}>
                 <p className="text-lg text-on-surface-variant leading-relaxed max-w-lg">
-                  CourtAccess AI helps people who speak Spanish or Portuguese navigate
-                  the Massachusetts court system — by translating legal documents, interpreting
+                  CourtAccess AI helps Spanish and Portuguese speakers navigate
+                  the Massachusetts court system by translating legal documents, interpreting
                   live courtroom speech, and making court forms accessible in your language.
                 </p>
               </motion.div>
@@ -400,10 +447,10 @@ export default function LandingScreen({ onNav: _onNav }: Props) {
               {/* Feature chips */}
               <motion.div variants={staggerItem} className="flex flex-wrap gap-2">
                 {[
-                  { icon: "language",    label: "Spanish & Portuguese" },
-                  { icon: "bolt",        label: "Real-Time AI"         },
-                  { icon: "assignment",  label: "45+ Court Forms"      },
-                  { icon: "lock",        label: "Secure & Private"     },
+                  { icon: "language", label: "Spanish & Portuguese" },
+                  { icon: "bolt", label: "Real-Time AI" },
+                  { icon: "assignment", label: "45+ Court Forms" },
+                  { icon: "lock", label: "Secure & Private" },
                 ].map((f) => (
                   <span
                     key={f.label}
@@ -535,38 +582,106 @@ export default function LandingScreen({ onNav: _onNav }: Props) {
           </div>
         </section>
 
-        {/* ── How It Works (Animated Flow) ─────────────────────────── */}
-        <section className="py-28 px-6 bg-surface-container-lowest/40 backdrop-blur-sm">
+        {/* ── How It Works (Two Paths) ─────────────────────────────── */}
+        <section className="py-28 px-6 bg-surface-container-lowest/40 backdrop-blur-sm relative overflow-hidden">
+          {/* Floating orbs */}
+          <motion.div
+            animate={{ x: [0, 45, -25, 0], y: [0, -35, 40, 0], scale: [1, 1.1, 0.9, 1] }}
+            transition={{ repeat: Infinity, duration: 19, ease: "easeInOut" }}
+            className="absolute top-[20%] left-[5%] w-72 h-72 rounded-full pointer-events-none"
+            style={{ background: "radial-gradient(circle, rgba(200,150,62,0.35) 0%, transparent 70%)", filter: "blur(65px)" }}
+          />
+          <motion.div
+            animate={{ x: [0, -35, 50, 0], y: [0, 45, -25, 0], scale: [1, 0.85, 1.15, 1] }}
+            transition={{ repeat: Infinity, duration: 24, ease: "easeInOut" }}
+            className="absolute bottom-[15%] right-[10%] w-80 h-80 rounded-full pointer-events-none"
+            style={{ background: "radial-gradient(circle, rgba(120,80,200,0.3) 0%, transparent 70%)", filter: "blur(80px)" }}
+          />
           <ScrollSection className="max-w-7xl mx-auto">
             <motion.div variants={staggerItem} className="text-center mb-16">
               <p className="text-secondary text-sm font-bold tracking-widest uppercase mb-3">How It Works</p>
               <h2 className="font-headline text-4xl md:text-5xl font-bold text-on-surface">
-                From your language to the courtroom,
+                Two ways to translate,
                 <br />
-                <span className="text-secondary italic font-normal">in four steps.</span>
+                <span className="text-secondary italic font-normal">one trusted platform.</span>
               </h2>
+              <p className="text-on-surface-variant mt-4 text-lg max-w-2xl mx-auto">
+                Choose the path that fits your needs. Submit a document or speak live, and get your results as a translated file or audio.
+              </p>
             </motion.div>
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 relative">
-              {/* Connecting line (desktop) */}
-              <div className="hidden md:block absolute top-10 left-[12.5%] right-[12.5%] h-px bg-gradient-to-r from-transparent via-secondary/30 to-transparent" />
-
-              {HOW_IT_WORKS.map((step, i) => (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              {HOW_IT_WORKS_PATHS.map((path) => (
                 <motion.div
-                  key={step.step}
+                  key={path.id}
                   variants={staggerItem}
-                  className="flex flex-col items-center text-center gap-4 relative"
+                  className="bg-surface-container-low/60 backdrop-blur-md rounded-2xl border border-outline-variant/10 p-8 flex flex-col gap-6"
                 >
-                  {/* Icon circle */}
-                  <div className="relative z-10 w-20 h-20 rounded-full bg-surface-container-highest border border-outline-variant/15 flex items-center justify-center shadow-xl shadow-black/20">
-                    <span className="material-symbols-outlined text-secondary text-3xl">{step.icon}</span>
-                    <span className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-secondary text-on-secondary text-[10px] font-bold flex items-center justify-center shadow-md">
-                      {i + 1}
-                    </span>
+                  {/* Path badge */}
+                  <span className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-[11px] font-semibold tracking-wide w-fit ${path.id === "document"
+                      ? "bg-secondary-container/20 text-secondary border border-secondary/20"
+                      : "bg-tertiary-container/20 text-on-tertiary-container border border-tertiary/20"
+                    }`}>
+                    <span className="material-symbols-outlined text-[14px]">{path.icon}</span>
+                    {path.badge}
+                  </span>
+
+                  {/* Step 1: Input */}
+                  <div className="flex items-start gap-4">
+                    <div className="relative flex-shrink-0">
+                      <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${path.id === "document" ? "bg-secondary-container/20" : "bg-tertiary-container/20"
+                        }`}>
+                        <span className={`material-symbols-outlined text-xl ${path.id === "document" ? "text-secondary" : "text-on-tertiary-container"
+                          }`}>{path.icon}</span>
+                      </div>
+                      <span className={`absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full text-[9px] font-bold flex items-center justify-center shadow-md ${path.id === "document" ? "bg-secondary text-on-secondary" : "bg-tertiary text-on-tertiary"
+                        }`}>1</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-headline text-base font-bold text-on-surface mb-1">{path.inputTitle}</h3>
+                      <p className="text-sm text-on-surface-variant leading-relaxed">{path.inputDesc}</p>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="font-headline text-lg font-bold text-on-surface mb-2">{step.title}</h3>
-                    <p className="text-sm text-on-surface-variant leading-relaxed">{step.desc}</p>
+
+                  {/* Arrow connector */}
+                  <div className="flex items-center justify-center pl-5">
+                    <div className={`w-px h-6 ${path.id === "document" ? "bg-secondary/25" : "bg-tertiary/25"}`} />
+                  </div>
+
+                  {/* Step 2: Process */}
+                  <div className="flex items-start gap-4">
+                    <div className="relative flex-shrink-0">
+                      <div className="w-11 h-11 rounded-xl bg-surface-container-highest/60 flex items-center justify-center">
+                        <span className="material-symbols-outlined text-xl text-on-surface-variant">{path.processIcon}</span>
+                      </div>
+                      <span className={`absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full text-[9px] font-bold flex items-center justify-center shadow-md ${path.id === "document" ? "bg-secondary text-on-secondary" : "bg-tertiary text-on-tertiary"
+                        }`}>2</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-headline text-base font-bold text-on-surface mb-1">{path.processTitle}</h3>
+                      <p className="text-sm text-on-surface-variant leading-relaxed">{path.processDesc}</p>
+                    </div>
+                  </div>
+
+                  {/* Arrow connector */}
+                  <div className="flex items-center justify-center pl-5">
+                    <div className={`w-px h-6 ${path.id === "document" ? "bg-secondary/25" : "bg-tertiary/25"}`} />
+                  </div>
+
+                  {/* Step 3: Output */}
+                  <div className="flex items-start gap-4">
+                    <div className="relative flex-shrink-0">
+                      <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${path.id === "document" ? "bg-green-500/15" : "bg-green-500/15"
+                        }`}>
+                        <span className="material-symbols-outlined text-xl text-green-400">{path.outputIcon}</span>
+                      </div>
+                      <span className={`absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full text-[9px] font-bold flex items-center justify-center shadow-md ${path.id === "document" ? "bg-secondary text-on-secondary" : "bg-tertiary text-on-tertiary"
+                        }`}>3</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-headline text-base font-bold text-on-surface mb-1">{path.outputTitle}</h3>
+                      <p className="text-sm text-on-surface-variant leading-relaxed">{path.outputDesc}</p>
+                    </div>
                   </div>
                 </motion.div>
               ))}
@@ -575,7 +690,26 @@ export default function LandingScreen({ onNav: _onNav }: Props) {
         </section>
 
         {/* ── Services ─────────────────────────────────────────────── */}
-        <section className="py-28 px-6">
+        <section className="py-28 px-6 relative overflow-hidden">
+          {/* Floating orbs background */}
+          <motion.div
+            animate={{ x: [0, -40, 30, 0], y: [0, 30, -20, 0], scale: [1, 1.1, 0.9, 1] }}
+            transition={{ repeat: Infinity, duration: 20, ease: "easeInOut" }}
+            className="absolute top-[10%] right-[5%] w-80 h-80 rounded-full pointer-events-none"
+            style={{ background: "radial-gradient(circle, rgba(120,80,200,0.3) 0%, transparent 70%)", filter: "blur(75px)" }}
+          />
+          <motion.div
+            animate={{ x: [0, 50, -30, 0], y: [0, -40, 50, 0], scale: [1, 0.9, 1.15, 1] }}
+            transition={{ repeat: Infinity, duration: 17, ease: "easeInOut" }}
+            className="absolute bottom-[5%] left-[8%] w-72 h-72 rounded-full pointer-events-none"
+            style={{ background: "radial-gradient(circle, rgba(200,150,62,0.4) 0%, transparent 70%)", filter: "blur(65px)" }}
+          />
+          <motion.div
+            animate={{ x: [0, -30, 40, 0], y: [0, 50, -30, 0], scale: [1, 1.15, 0.85, 1] }}
+            transition={{ repeat: Infinity, duration: 23, ease: "easeInOut" }}
+            className="absolute top-[50%] left-[45%] w-64 h-64 rounded-full pointer-events-none"
+            style={{ background: "radial-gradient(circle, rgba(74,222,128,0.25) 0%, transparent 70%)", filter: "blur(70px)" }}
+          />
           <ScrollSection className="max-w-7xl mx-auto">
             <motion.div variants={staggerItem} className="mb-14">
               <p className="text-secondary text-sm font-bold tracking-widest uppercase mb-3">What You Can Do</p>
@@ -583,7 +717,7 @@ export default function LandingScreen({ onNav: _onNav }: Props) {
                 Three tools. One platform.
               </h2>
               <p className="text-on-surface-variant mt-3 text-lg max-w-xl">
-                Whether you're a resident, an attorney, or a court official — we have a tool built for you.
+                Whether you're a resident, an attorney, or a court official, we have a tool built for you.
               </p>
             </motion.div>
 
@@ -626,7 +760,20 @@ export default function LandingScreen({ onNav: _onNav }: Props) {
         </section>
 
         {/* ── About ────────────────────────────────────────────────── */}
-        <section className="py-28 px-6 bg-surface-container-lowest/40">
+        <section className="py-28 px-6 bg-surface-container-lowest/40 relative overflow-hidden">
+          {/* Floating orbs */}
+          <motion.div
+            animate={{ x: [0, -50, 30, 0], y: [0, 25, -40, 0], scale: [1, 1.15, 0.9, 1] }}
+            transition={{ repeat: Infinity, duration: 21, ease: "easeInOut" }}
+            className="absolute top-[10%] right-[15%] w-64 h-64 rounded-full pointer-events-none"
+            style={{ background: "radial-gradient(circle, rgba(74,222,128,0.25) 0%, transparent 70%)", filter: "blur(60px)" }}
+          />
+          <motion.div
+            animate={{ x: [0, 40, -20, 0], y: [0, -30, 50, 0], scale: [1, 0.9, 1.1, 1] }}
+            transition={{ repeat: Infinity, duration: 16, ease: "easeInOut" }}
+            className="absolute bottom-[20%] left-[5%] w-72 h-72 rounded-full pointer-events-none"
+            style={{ background: "radial-gradient(circle, rgba(200,150,62,0.35) 0%, transparent 70%)", filter: "blur(70px)" }}
+          />
           <ScrollSection className="max-w-5xl mx-auto">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-14 items-center">
               <motion.div variants={staggerItem}>
@@ -636,7 +783,7 @@ export default function LandingScreen({ onNav: _onNav }: Props) {
                 </h2>
                 <p className="text-on-surface-variant leading-relaxed mb-8">
                   General translation tools weren't designed for legal settings. Court documents use
-                  specific terminology that matters enormously — a mistranslation can affect someone's
+                  specific terminology that matters enormously, and a single mistranslation can affect someone's
                   rights. CourtAccess AI is trained on legal language and verified for courtroom use.
                 </p>
                 <button
@@ -650,9 +797,9 @@ export default function LandingScreen({ onNav: _onNav }: Props) {
 
               <motion.div variants={staggerItem} className="flex flex-col gap-4">
                 {[
-                  { icon: "verified",       title: "Legal Terminology Verified",         desc: "Every translation is checked against a verified legal terminology database." },
-                  { icon: "shield_locked",  title: "Court Privacy Standards",            desc: "Your documents are handled under strict judicial data privacy requirements." },
-                  { icon: "speed",          title: "Fast Enough for Live Hearings",      desc: "Audio interpretation works in real time — under one second of delay." },
+                  { icon: "verified", title: "Legal Terminology Verified", desc: "Every translation is checked against a verified legal terminology database." },
+                  { icon: "shield_locked", title: "Court Privacy Standards", desc: "Your documents are handled under strict judicial data privacy requirements." },
+                  { icon: "speed", title: "Fast Enough for Live Hearings", desc: "Audio interpretation works in real time with under one second of delay." },
                 ].map((item) => (
                   <div key={item.title} className="flex items-start gap-4 p-5 rounded-xl bg-surface-container-low/50 border border-outline-variant/10">
                     <div className="w-10 h-10 rounded-lg bg-secondary-container/20 flex items-center justify-center flex-shrink-0 mt-0.5">
@@ -670,7 +817,20 @@ export default function LandingScreen({ onNav: _onNav }: Props) {
         </section>
 
         {/* ── Bottom CTA ───────────────────────────────────────────── */}
-        <section className="py-24 px-6">
+        <section className="py-24 px-6 relative overflow-hidden">
+          {/* Floating orbs */}
+          <motion.div
+            animate={{ x: [0, 35, -45, 0], y: [0, -50, 30, 0], scale: [1, 1.2, 0.85, 1] }}
+            transition={{ repeat: Infinity, duration: 18, ease: "easeInOut" }}
+            className="absolute top-[15%] left-[20%] w-80 h-80 rounded-full pointer-events-none"
+            style={{ background: "radial-gradient(circle, rgba(120,80,200,0.3) 0%, transparent 70%)", filter: "blur(75px)" }}
+          />
+          <motion.div
+            animate={{ x: [0, -30, 40, 0], y: [0, 40, -20, 0], scale: [1, 0.9, 1.15, 1] }}
+            transition={{ repeat: Infinity, duration: 22, ease: "easeInOut" }}
+            className="absolute bottom-[10%] right-[15%] w-64 h-64 rounded-full pointer-events-none"
+            style={{ background: "radial-gradient(circle, rgba(200,150,62,0.35) 0%, transparent 70%)", filter: "blur(65px)" }}
+          />
           <ScrollSection>
             <motion.div
               variants={staggerItem}

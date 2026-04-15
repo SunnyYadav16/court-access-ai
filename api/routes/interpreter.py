@@ -6,11 +6,11 @@ Interpreter-only endpoints for the CourtAccess AI API.
 All routes are gated by require_role("interpreter") and require a valid Bearer token.
 
 Endpoints:
-  GET  /interpreter/review                       — List completed document translations for review
-  GET  /interpreter/review/{session_id}          — Get a single session's details for review
+  GET  /interpreter/review                       — List scraped court forms pending human review
+  GET  /interpreter/review/{session_id}          — Get a single form's details for review
   POST /interpreter/review/{session_id}/correct  — Submit a correction to a translation
-  POST /interpreter/review/{session_id}/approve  — Approve a translation
-  POST /interpreter/review/{session_id}/flag     — Flag a translation for recorrection
+  POST /interpreter/review/{session_id}/approve  — Approve a form translation
+  POST /interpreter/review/{session_id}/flag     — Flag a form translation for recorrection
 """
 
 from __future__ import annotations
@@ -64,9 +64,9 @@ class FlagRequest(BaseModel):
 
 
 class ReviewSummary(BaseModel):
-    """Summary of a document session for the review queue."""
+    """Summary of a scraped court form for the review queue."""
 
-    session_id: uuid.UUID
+    session_id: uuid.UUID  # actually form_id — reused so the frontend key stays stable
     target_language: str
     status: str
     review_status: str  # "pending" | "approved" | "flagged"
@@ -84,9 +84,6 @@ class ReviewSummary(BaseModel):
 # ══════════════════════════════════════════════════════════════════════════════
 # Helpers
 # ══════════════════════════════════════════════════════════════════════════════
-
-# NLLB code → short code mapping
-_NLLB_TO_SHORT = {"spa_Latn": "es", "por_Latn": "pt"}
 
 
 async def _generate_signed_url_if_available(gcs_path: str | None) -> str | None:
@@ -111,37 +108,41 @@ async def _generate_signed_url_if_available(gcs_path: str | None) -> str | None:
 
 async def _get_review_statuses(
     db: DBSession,
-    session_ids: list[uuid.UUID],
+    form_ids: list[uuid.UUID],
 ) -> dict[str, str]:
     """
-    Build a mapping of session_id → review_status by checking audit logs.
+    Build a mapping of form_id → review_status by checking audit logs.
+
+    Approve/flag actions store form_id in the JSONB ``details`` column
+    (not in the ``session_id`` FK which is NULL for form reviews).
 
     Returns "approved" if an interpreter_approved entry exists (latest wins),
     "flagged" if interpreter_flagged exists, else "pending".
     """
-    if not session_ids:
+    if not form_ids:
         return {}
 
     from db.models import AuditLog
 
+    form_id_strs = [str(fid) for fid in form_ids]
+
     result = await db.execute(
-        select(AuditLog.session_id, AuditLog.action_type)
+        select(
+            AuditLog.details["form_id"].astext.label("form_id"),
+            AuditLog.action_type,
+        )
         .where(
-            AuditLog.session_id.in_(session_ids),
             AuditLog.action_type.in_(["interpreter_approved", "interpreter_flagged"]),
+            AuditLog.details["form_id"].astext.in_(form_id_strs),
         )
         .order_by(desc(AuditLog.created_at))
     )
 
     statuses: dict[str, str] = {}
     for row in result.all():
-        sid = str(row.session_id)
-        if sid not in statuses:
-            # First (most recent) entry wins
-            if row.action_type == "interpreter_approved":
-                statuses[sid] = "approved"
-            elif row.action_type == "interpreter_flagged":
-                statuses[sid] = "flagged"
+        fid = str(row.form_id)
+        if fid not in statuses:
+            statuses[fid] = "approved" if row.action_type == "interpreter_approved" else "flagged"
 
     return statuses
 
@@ -153,12 +154,12 @@ async def _get_review_statuses(
 
 @router.get(
     "/review",
-    summary="List completed translations for interpreter review",
+    summary="List scraped court forms pending human review",
     response_model=list[ReviewSummary],
     description=(
-        "Returns all completed document translation sessions for the review queue. "
-        "Includes review status derived from audit logs and signed download URLs "
-        "for both original and translated files."
+        "Returns mass.gov court forms automatically scraped and translated by the DAG pipeline "
+        "that are flagged needs_human_review=True. Interpreters approve or flag these — "
+        "NOT user-uploaded documents."
     ),
 )
 async def list_review_sessions(
@@ -172,41 +173,42 @@ async def list_review_sessions(
     ),
 ) -> list[ReviewSummary]:
     """
-    Returns all completed document translation sessions for interpreter review.
+    Returns active, scraped court forms where needs_human_review is True.
 
     Review status is derived from audit log entries:
     - "approved" if interpreter_approved audit entry exists
     - "flagged" if interpreter_flagged audit entry exists
     - "pending" otherwise
     """
-    from db.models import DocumentTranslationRequest
-    from db.models import Session as SessionModel
+    from db.models import FormCatalog, FormVersion
 
-    nllb_target = {"es": "spa_Latn", "pt": "por_Latn"}
-
+    # Base query: active forms that need human review, latest version only
     q = (
-        select(SessionModel, DocumentTranslationRequest)
+        select(FormCatalog, FormVersion)
         .join(
-            DocumentTranslationRequest,
-            DocumentTranslationRequest.session_id == SessionModel.session_id,
+            FormVersion,
+            (FormVersion.form_id == FormCatalog.form_id) & (FormVersion.version == FormCatalog.current_version),
         )
         .where(
-            SessionModel.type == "document",
-            DocumentTranslationRequest.status == "completed",
+            FormCatalog.status == "active",
+            FormCatalog.needs_human_review == True,  # noqa: E712
         )
-        .order_by(desc(SessionModel.created_at))
+        .order_by(desc(FormCatalog.last_scraped_at))
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
 
+    # Language filter: only show forms that have a translation for the requested language
     if target_language:
-        nllb = nllb_target.get(target_language.strip().lower())
-        if nllb is None:
+        if target_language == "es":
+            q = q.where(FormVersion.file_path_es.isnot(None))
+        elif target_language == "pt":
+            q = q.where(FormVersion.file_path_pt.isnot(None))
+        else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Unsupported target_language '{target_language}'. Allowed values: {list(nllb_target.keys())}.",
+                detail=f"Unsupported target_language '{target_language}'. Allowed values: es, pt.",
             )
-        q = q.where(SessionModel.target_language == nllb)
 
     result = await db.execute(q)
     rows = result.all()
@@ -214,38 +216,49 @@ async def list_review_sessions(
     if not rows:
         return []
 
-    # Derive review statuses from audit logs
-    session_ids = [s.session_id for s, _r in rows]
-    review_statuses = await _get_review_statuses(db, session_ids)
+    # Derive review statuses from audit logs (keyed by form_id)
+    form_ids = [f.form_id for f, _v in rows]
+    review_statuses = await _get_review_statuses(db, form_ids)
 
-    # Compute signed URL expiry (same for all URLs in this batch)
     now = datetime.now(UTC)
     expires_at = (now + timedelta(seconds=settings.signed_url_expiry_seconds)).isoformat()
 
     summaries: list[ReviewSummary] = []
-    for s, r in rows:
-        sid = str(s.session_id)
+    for form, version in rows:
+        fid = str(form.form_id)
 
-        # Generate signed URLs for both original and translated files
-        signed_original = await _generate_signed_url_if_available(r.input_file_gcs_path)
-        signed_translated = await _generate_signed_url_if_available(r.output_file_gcs_path)
+        # Determine which translated file to surface
+        if target_language == "pt":
+            translated_path = version.file_path_pt
+        else:
+            translated_path = version.file_path_es or version.file_path_pt
 
-        # Extract filename from GCS path
-        original_filename = r.input_file_gcs_path.split("/")[-1] if r.input_file_gcs_path else None
+        signed_original = await _generate_signed_url_if_available(version.file_path_original)
+        signed_translated = await _generate_signed_url_if_available(translated_path)
+
+        # Surface the target language for display
+        if target_language:
+            lang_code = target_language
+        elif version.file_path_es:
+            lang_code = "es"
+        elif version.file_path_pt:
+            lang_code = "pt"
+        else:
+            continue  # no translation available — skip this form
 
         summaries.append(
             ReviewSummary(
-                session_id=s.session_id,
-                target_language=_NLLB_TO_SHORT.get(s.target_language, s.target_language),
-                status=r.status,
-                review_status=review_statuses.get(sid, "pending"),
-                avg_confidence_score=r.avg_confidence_score,
-                llama_corrections_count=r.llama_corrections_count or 0,
-                original_filename=original_filename,
+                session_id=form.form_id,  # reuse session_id field — frontend uses this as item key
+                target_language=lang_code,
+                status="completed",
+                review_status=review_statuses.get(fid, "pending"),
+                avg_confidence_score=None,  # forms don't track per-form confidence
+                llama_corrections_count=0,
+                original_filename=form.form_name,
                 signed_url_original=signed_original,
                 signed_url_translated=signed_translated,
                 signed_url_expires_at=expires_at if (signed_original or signed_translated) else None,
-                created_at=s.created_at.isoformat(),
+                created_at=form.last_scraped_at.isoformat() if form.last_scraped_at else form.created_at.isoformat(),
             )
         )
 
@@ -259,57 +272,53 @@ async def list_review_sessions(
 
 @router.get(
     "/review/{session_id}",
-    summary="Get session details for review",
+    summary="Get scraped form details for review",
     response_model=ReviewSummary,
-    description="Returns full review details including signed download URLs for a single session.",
 )
 async def get_review_session(
     session_id: uuid.UUID,
     interpreter: _InterpreterUser,
     db: DBSession,
 ) -> ReviewSummary:
-    from db.models import DocumentTranslationRequest
-    from db.models import Session as SessionModel
+    from db.models import FormCatalog, FormVersion
 
     result = await db.execute(
-        select(SessionModel, DocumentTranslationRequest)
+        select(FormCatalog, FormVersion)
         .join(
-            DocumentTranslationRequest,
-            DocumentTranslationRequest.session_id == SessionModel.session_id,
+            FormVersion,
+            (FormVersion.form_id == FormCatalog.form_id) & (FormVersion.version == FormCatalog.current_version),
         )
-        .where(SessionModel.session_id == session_id)
+        .where(FormCatalog.form_id == session_id)
     )
     row = result.first()
     if not row:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Form not found")
 
-    s, r = row
+    form, version = row
+    fid = str(form.form_id)
 
-    # Derive review status
-    review_statuses = await _get_review_statuses(db, [s.session_id])
-    review_status = review_statuses.get(str(s.session_id), "pending")
+    review_statuses = await _get_review_statuses(db, [form.form_id])
+    review_status = review_statuses.get(fid, "pending")
 
-    # Generate signed URLs
-    signed_original = await _generate_signed_url_if_available(r.input_file_gcs_path)
-    signed_translated = await _generate_signed_url_if_available(r.output_file_gcs_path)
+    signed_original = await _generate_signed_url_if_available(version.file_path_original)
+    signed_translated = await _generate_signed_url_if_available(version.file_path_es or version.file_path_pt)
+    lang_code = "es" if version.file_path_es else "pt"
 
     now = datetime.now(UTC)
     expires_at = (now + timedelta(seconds=settings.signed_url_expiry_seconds)).isoformat()
 
-    original_filename = r.input_file_gcs_path.split("/")[-1] if r.input_file_gcs_path else None
-
     return ReviewSummary(
-        session_id=s.session_id,
-        target_language=_NLLB_TO_SHORT.get(s.target_language, s.target_language),
-        status=r.status,
+        session_id=form.form_id,
+        target_language=lang_code,
+        status="completed",
         review_status=review_status,
-        avg_confidence_score=r.avg_confidence_score,
-        llama_corrections_count=r.llama_corrections_count or 0,
-        original_filename=original_filename,
+        avg_confidence_score=None,
+        llama_corrections_count=0,
+        original_filename=form.form_name,
         signed_url_original=signed_original,
         signed_url_translated=signed_translated,
         signed_url_expires_at=expires_at if (signed_original or signed_translated) else None,
-        created_at=s.created_at.isoformat(),
+        created_at=form.last_scraped_at.isoformat() if form.last_scraped_at else form.created_at.isoformat(),
     )
 
 
@@ -322,7 +331,7 @@ async def get_review_session(
     "/review/{session_id}/correct",
     status_code=status.HTTP_201_CREATED,
     summary="Submit a translation correction",
-    description="Interpreter submits a correction for a translation in the flagged session. Written to the audit log.",
+    description="Interpreter submits a correction for a form translation. Written to the audit log.",
 )
 async def submit_correction(
     session_id: uuid.UUID,
@@ -330,20 +339,21 @@ async def submit_correction(
     interpreter: _InterpreterUser,
     db: DBSession,
 ) -> dict:
-    from db.models import Session as SessionModel
+    from db.models import FormCatalog
     from db.queries.audit import write_audit
 
-    # Verify session exists
-    result = await db.execute(select(SessionModel.session_id).where(SessionModel.session_id == session_id))
+    # Verify form exists
+    result = await db.execute(select(FormCatalog.form_id).where(FormCatalog.form_id == session_id))
     if not result.first():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Form not found")
 
     await write_audit(
         db,
         user_id=interpreter.user_id,
         action_type="interpreter_correction",
-        session_id=session_id,
+        session_id=None,
         details={
+            "form_id": str(session_id),
             "original_text": body.original_text,
             "original_language": body.original_language,
             "corrected_translation": body.corrected_translation,
@@ -354,7 +364,7 @@ async def submit_correction(
     await db.commit()
 
     logger.info(
-        "Interpreter correction submitted: session=%s interpreter=%s target=%s",
+        "Interpreter correction submitted: form=%s interpreter=%s target=%s",
         session_id,
         interpreter.user_id,
         body.target_language,
@@ -371,38 +381,36 @@ async def submit_correction(
 @router.post(
     "/review/{session_id}/approve",
     status_code=status.HTTP_200_OK,
-    summary="Approve a translation",
-    description="Mark a translation as approved by the interpreter. Writes an audit log entry.",
+    summary="Approve a form translation",
+    description="Mark a scraped form translation as approved. Clears needs_human_review flag.",
 )
 async def approve_translation(
     session_id: uuid.UUID,
     interpreter: _InterpreterUser,
     db: DBSession,
 ) -> dict:
-    from db.models import DocumentTranslationRequest
-    from db.models import Session as SessionModel
+    from db.models import FormCatalog
     from db.queries.audit import write_audit
 
-    result = await db.execute(
-        select(DocumentTranslationRequest)
-        .join(SessionModel, SessionModel.session_id == DocumentTranslationRequest.session_id)
-        .where(DocumentTranslationRequest.session_id == session_id)
-    )
-    req = result.scalar_one_or_none()
-    if not req:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    result = await db.execute(select(FormCatalog).where(FormCatalog.form_id == session_id))
+    form = result.scalar_one_or_none()
+    if not form:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Form not found")
+
+    # Clear the human review flag — form is now certified
+    form.needs_human_review = False
 
     await write_audit(
         db,
         user_id=interpreter.user_id,
         action_type="interpreter_approved",
-        session_id=session_id,
-        details={"approved_by": str(interpreter.user_id)},
+        session_id=None,
+        details={"approved_by": str(interpreter.user_id), "form_id": str(session_id)},
     )
     await db.commit()
 
     logger.info(
-        "Translation approved: session=%s interpreter=%s",
+        "Form translation approved: form=%s interpreter=%s",
         session_id,
         interpreter.user_id,
     )
@@ -418,10 +426,10 @@ async def approve_translation(
 @router.post(
     "/review/{session_id}/flag",
     status_code=status.HTTP_200_OK,
-    summary="Flag a translation for recorrection",
+    summary="Flag a form translation for recorrection",
     description=(
-        "Flag a translation as needing recorrection. Optionally marks the "
-        "translation request as failed so it can be re-processed."
+        "Flag a scraped form translation as needing recorrection. "
+        "The form keeps needs_human_review=True and the flag is logged."
     ),
 )
 async def flag_for_recorrection(
@@ -430,32 +438,32 @@ async def flag_for_recorrection(
     interpreter: _InterpreterUser,
     db: DBSession,
 ) -> dict:
-    from db.models import DocumentTranslationRequest
+    from db.models import FormCatalog
     from db.queries.audit import write_audit
 
-    result = await db.execute(
-        select(DocumentTranslationRequest).where(DocumentTranslationRequest.session_id == session_id)
-    )
-    req = result.scalar_one_or_none()
-    if not req:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    result = await db.execute(select(FormCatalog).where(FormCatalog.form_id == session_id))
+    form = result.scalar_one_or_none()
+    if not form:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Form not found")
 
-    # Mark as failed so DAG can re-trigger on next upload attempt
-    if body.correction_requested:
-        req.status = "failed"
-        req.error_message = f"Flagged for recorrection by interpreter: {body.notes}"
+    # Ensure the form stays in (or returns to) the review queue
+    form.needs_human_review = True
 
     await write_audit(
         db,
         user_id=interpreter.user_id,
         action_type="interpreter_flagged",
-        session_id=session_id,
-        details={"notes": body.notes, "correction_requested": body.correction_requested},
+        session_id=None,
+        details={
+            "notes": body.notes,
+            "correction_requested": body.correction_requested,
+            "form_id": str(session_id),
+        },
     )
     await db.commit()
 
     logger.info(
-        "Translation flagged: session=%s interpreter=%s notes=%s",
+        "Form translation flagged: form=%s interpreter=%s notes=%s",
         session_id,
         interpreter.user_id,
         body.notes[:50],
