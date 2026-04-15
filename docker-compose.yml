@@ -35,7 +35,7 @@ x-airflow-common:
 
     # ── Auth ──
     AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
-    AIRFLOW__API__AUTH_BACKENDS: 'airflow.providers.fab.auth_manager.api.auth.backend.basic_auth'
+    AIRFLOW__FAB__AUTH_BACKENDS: 'airflow.providers.fab.auth_manager.api.auth.backend.basic_auth'
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_SECRET_KEY}
 
     # ── Database ──
@@ -43,6 +43,13 @@ x-airflow-common:
 
     # ── Scheduler ──
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    AIRFLOW__SCHEDULER__SCHEDULER_HEARTBEAT_SEC: '30'
+    AIRFLOW__SCHEDULER__LOCAL_TASK_JOB_HEARTBEAT_SEC: '30'
+
+    # ── Task execution ──
+    AIRFLOW__CORE__INTERNAL_API_TIMEOUT: '120'
+    AIRFLOW__CORE__PARALLELISM: '8'
+    AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: '4'
 
     # ── courtaccess package path ──
     PYTHONPATH: /opt/airflow

@@ -159,6 +159,8 @@ def create_app() -> FastAPI:
     if (_FRONTEND_DIST / "assets").exists():
         app.mount("/assets", StaticFiles(directory=str(_FRONTEND_DIST / "assets")), name="assets")
         logger.info("Serving frontend static assets from %s", _FRONTEND_DIST)
+    if (_FRONTEND_DIST / "images").exists():
+        app.mount("/images", StaticFiles(directory=str(_FRONTEND_DIST / "images")), name="images")
 
     # ── Meta endpoints ─────────────────────────────────────────────────────
     _register_meta_endpoints(app)
