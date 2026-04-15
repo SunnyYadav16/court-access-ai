@@ -250,6 +250,9 @@ class TranslationStatusResponse(BaseModel):
     # Error state
     error_message: str | None = None
 
+    # Original filename — extracted from GCS input path
+    original_filename: str | None = None
+
 
 class PipelineStepResponse(BaseModel):
     """One step row from pipeline_steps — returned by GET /documents/{session_id}/steps."""

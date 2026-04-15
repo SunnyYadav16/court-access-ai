@@ -796,62 +796,9 @@ async def list_rooms(
     }
 
 
-@router.get(
-    "/{session_id}",
-    response_model=SessionResponse,
-    summary="Get session status",
-)
-async def get_session(
-    session_id: uuid.UUID,
-    user: CurrentUser,
-    db: DBSession,
-) -> SessionResponse:
-    sid = str(session_id)
-    session = _sessions.get(sid)
-    if not session:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-    # Resolve role via ROLE_ID_TO_NAME — single source of truth from schemas.
-    user_role = ROLE_ID_TO_NAME.get(user.role_id, UserRole.PUBLIC)
-    # Admin and court_official may view any session; others may only view their own.
-    if session["user_id"] != user.user_id and user_role not in _ROLES_CAN_VIEW_ANY_SESSION:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-
-    return SessionResponse(
-        session_id=session["session_id"],
-        websocket_url=f"/sessions/{session_id}/ws",
-        status=session["status"],
-        created_at=session["created_at"],
-        target_language=session["target_language"],
-        source_language=session["source_language"],
-    )
-
-
-@router.post(
-    "/{session_id}/end",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="End an active session",
-)
-async def end_session(
-    session_id: uuid.UUID,
-    user: CurrentUser,
-    db: DBSession,
-) -> None:
-    sid = str(session_id)
-    session = _sessions.get(sid)
-    if not session:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-    # Resolve role via ROLE_ID_TO_NAME — single source of truth from schemas.
-    user_role = ROLE_ID_TO_NAME.get(user.role_id, UserRole.PUBLIC)
-    if session["user_id"] != user.user_id and user_role != UserRole.ADMIN:  # admin may end any session
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-    if session["status"] == SessionStatus.ENDED:
-        return
-    _sessions[sid]["status"] = SessionStatus.ENDED
-    logger.info("Session ended: session_id=%s user_id=%s", session_id, user.user_id)
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # GET /sessions/history — list current user's realtime sessions
+# NOTE: Must be defined BEFORE /{session_id} to avoid route shadowing.
 # ══════════════════════════════════════════════════════════════════════════════
 
 
@@ -912,6 +859,60 @@ async def list_realtime_sessions(
     ]
 
     return RealtimeSessionListResponse(items=items, total=total, page=page, page_size=page_size)
+
+
+@router.get(
+    "/{session_id}",
+    response_model=SessionResponse,
+    summary="Get session status",
+)
+async def get_session(
+    session_id: uuid.UUID,
+    user: CurrentUser,
+    db: DBSession,
+) -> SessionResponse:
+    sid = str(session_id)
+    session = _sessions.get(sid)
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    # Resolve role via ROLE_ID_TO_NAME — single source of truth from schemas.
+    user_role = ROLE_ID_TO_NAME.get(user.role_id, UserRole.PUBLIC)
+    # Admin and court_official may view any session; others may only view their own.
+    if session["user_id"] != user.user_id and user_role not in _ROLES_CAN_VIEW_ANY_SESSION:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    return SessionResponse(
+        session_id=session["session_id"],
+        websocket_url=f"/sessions/{session_id}/ws",
+        status=session["status"],
+        created_at=session["created_at"],
+        target_language=session["target_language"],
+        source_language=session["source_language"],
+    )
+
+
+@router.post(
+    "/{session_id}/end",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="End an active session",
+)
+async def end_session(
+    session_id: uuid.UUID,
+    user: CurrentUser,
+    db: DBSession,
+) -> None:
+    sid = str(session_id)
+    session = _sessions.get(sid)
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    # Resolve role via ROLE_ID_TO_NAME — single source of truth from schemas.
+    user_role = ROLE_ID_TO_NAME.get(user.role_id, UserRole.PUBLIC)
+    if session["user_id"] != user.user_id and user_role != UserRole.ADMIN:  # admin may end any session
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    if session["status"] == SessionStatus.ENDED:
+        return
+    _sessions[sid]["status"] = SessionStatus.ENDED
+    logger.info("Session ended: session_id=%s user_id=%s", session_id, user.user_id)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -9,9 +9,9 @@
  * file validation, language selector, and document session state.
  */
 
-import { useRef, useState, DragEvent, ChangeEvent } from "react"
+import { useEffect, useRef, useState, DragEvent, ChangeEvent } from "react"
 import { ScreenId, SCREENS } from "@/lib/constants"
-import { documentsApi } from "@/services/api"
+import { documentsApi, type DocumentStatus } from "@/services/api"
 import useAuthStore from "@/store/authStore"
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -51,8 +51,21 @@ export default function DocUpload({ onNav }: Props) {
   const [uploadProgress, setUploadProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
+  const [activeQueue, setActiveQueue] = useState<DocumentStatus[]>([])
 
   const busy = stage === "uploading" || stage === "finalizing"
+
+  // ── Fetch active queue on mount ────────────────────────────────────────────
+
+  useEffect(() => {
+    documentsApi.list(1, 10)
+      .then(data => {
+        setActiveQueue(data.items.filter(
+          (d: DocumentStatus) => d.status === "processing" || d.status === "pending"
+        ))
+      })
+      .catch(() => {}) // non-critical
+  }, [])
 
   // ── File selection ──────────────────────────────────────────────────────────
 
@@ -341,18 +354,47 @@ export default function DocUpload({ onNav }: Props) {
             <h3 className="font-headline text-xl text-on-surface mb-6 flex items-center justify-between">
               Current Queue
               <span className="text-xs font-sans text-on-surface-variant font-normal">
-                0 Files Active
+                {activeQueue.length} {activeQueue.length === 1 ? "File" : "Files"} Active
               </span>
             </h3>
 
-            {/* Empty state */}
-            <div className="flex-1 flex flex-col items-center justify-center text-center py-12 opacity-60">
-              <span className="material-symbols-outlined text-5xl text-on-surface-variant mb-4">inbox</span>
-              <p className="text-sm text-on-surface-variant">No documents in queue</p>
-              <p className="text-xs text-on-surface-variant mt-1">
-                Upload a document to begin processing
-              </p>
-            </div>
+            {activeQueue.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-center py-12 opacity-60">
+                <span className="material-symbols-outlined text-5xl text-on-surface-variant mb-4">inbox</span>
+                <p className="text-sm text-on-surface-variant">No documents in queue</p>
+                <p className="text-xs text-on-surface-variant mt-1">
+                  Upload a document to begin processing
+                </p>
+              </div>
+            ) : (
+              <div className="flex-1 space-y-3 overflow-y-auto">
+                {activeQueue.map(doc => (
+                  <button
+                    key={doc.session_id}
+                    onClick={() => {
+                      setDocumentSession({ sessionId: doc.session_id, targetLanguage: doc.target_language })
+                      onNav(SCREENS.DOC_PROCESSING)
+                    }}
+                    className="w-full text-left p-3 rounded-lg bg-surface-container-high hover:bg-surface-bright transition-colors cursor-pointer border border-white/5 group"
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-semibold text-white/80 truncate max-w-[160px]">
+                        {doc.original_filename
+                          ? doc.original_filename.replace(/\.[^.]+$/, "").replace(/_/g, " ")
+                          : `${doc.target_language === "es" ? "Spanish" : doc.target_language === "pt" ? "Portuguese" : doc.target_language} Translation`}
+                      </span>
+                      <span className="text-[9px] text-secondary flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[10px] animate-spin">autorenew</span>
+                        Processing
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-white/40">
+                      {doc.target_language === "es" ? "Spanish" : doc.target_language === "pt" ? "Portuguese" : doc.target_language} · Click to view progress
+                    </p>
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* AI Suggestion */}
             <div className="mt-6 pt-6 border-t border-white/5">

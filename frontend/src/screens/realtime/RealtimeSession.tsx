@@ -383,17 +383,14 @@ export default function RealtimeSession({ onNav }: Props) {
 
   // ── Computed sidebar stats ─────────────────────────────────────────────────
   const stats = useMemo(() => {
-    const scored = messages.filter((m) => m.accuracyScore != null)
-    const avgAsr = scored.length
-      ? (scored.reduce((s, m) => s + (m.accuracyScore ?? 0), 0) / scored.length).toFixed(2)
-      : "—"
-    const nmtScored = messages.filter((m) => m.translation != null && m.accuracyScore != null)
-    const avgNmt = nmtScored.length
-      ? (nmtScored.reduce((s, m) => s + (m.accuracyScore ?? 0), 0) / nmtScored.length).toFixed(2)
-      : "—"
-    const corrections = scored.filter((m) => (m.accuracyScore ?? 1) < 0.9).length
+    const legalScored = messages.filter((m) => m.accuracyScore != null && !m.usedFallback)
+    const avgLegal = legalScored.length
+      ? Math.round(legalScored.reduce((s, m) => s + (m.accuracyScore ?? 0), 0) / legalScored.length * 100)
+      : null
+    const avgLegalDisplay = avgLegal !== null ? `${avgLegal}%` : "—"
+    const corrections = legalScored.filter((m) => (m.accuracyScore ?? 1) < 0.9).length
     const ttsSegments = messages.filter((m) => m.translation != null).length
-    return { avgAsr, avgNmt, corrections, ttsSegments }
+    return { avgLegal, avgLegalDisplay, corrections, ttsSegments }
   }, [messages])
 
   // ── Action handlers ────────────────────────────────────────────────────────
@@ -444,7 +441,7 @@ export default function RealtimeSession({ onNav }: Props) {
         @keyframes waveBar { 0%,100%{transform:scaleY(0.4)} 50%{transform:scaleY(1)} }
       `}</style>
 
-      <div className="min-h-screen flex flex-col bg-background text-on-surface">
+      <div className="h-screen flex flex-col overflow-hidden bg-background text-on-surface">
 
         {/* ── Header ──────────────────────────────────────────────────────── */}
         <div className="px-6 py-2.5 flex items-center justify-between flex-shrink-0 bg-[#0D1B2A] border-b border-white/[0.07] shadow-xl shadow-black/40">
@@ -633,21 +630,20 @@ export default function RealtimeSession({ onNav }: Props) {
                 </div>
               </div>
 
-              {/* Confidence */}
+              {/* Legal Accuracy */}
               <div className="text-right flex-shrink-0">
                 <div className="text-[10px] text-white/40">
-                  Confidence
+                  Legal Accuracy
                 </div>
                 <div
                   className={`text-lg font-bold ${
-                    stats.avgAsr !== "—" && parseFloat(stats.avgAsr) >= 0.9
-                      ? "text-green-400"
-                      : stats.avgAsr !== "—" && parseFloat(stats.avgAsr) >= 0.7
-                        ? "text-amber-400"
-                        : "text-white/40"
+                    stats.avgLegal === null ? "text-white/40"
+                    : stats.avgLegal >= 90 ? "text-green-400"
+                    : stats.avgLegal >= 70 ? "text-amber-400"
+                    : "text-red-400"
                   }`}
                 >
-                  {stats.avgAsr !== "—" ? `${Math.round(parseFloat(stats.avgAsr) * 100)}%` : "—"}
+                  {stats.avgLegal !== null ? `${stats.avgLegal}%` : "—"}
                 </div>
               </div>
             </div>
@@ -699,8 +695,7 @@ export default function RealtimeSession({ onNav }: Props) {
             {/* Stats */}
             <SidebarSection title="Stats">
               <SidebarRow label="Utterances" value={messages.length} />
-              <SidebarRow label="Avg ASR Conf." value={stats.avgAsr} />
-              <SidebarRow label="Avg NMT Conf." value={stats.avgNmt} />
+              <SidebarRow label="Avg Legal Accuracy" value={stats.avgLegalDisplay} />
               <SidebarRow label="Llama Corrections" value={stats.corrections} />
               <SidebarRow label="TTS Segments" value={stats.ttsSegments} />
             </SidebarSection>

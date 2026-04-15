@@ -59,6 +59,7 @@ export interface DocumentStatus {
   llama_corrections_count: number;
   processing_time_seconds: number | null;
   error_message: string | null;
+  original_filename: string | null;
 }
 
 export interface PipelineStep {
@@ -454,6 +455,34 @@ export interface TriggerScraperResponse {
   triggered_at: string;
 }
 
+export interface ContainerStat {
+  name: string;
+  cpu: string;
+  mem: string;
+  gpu: string | null;
+}
+
+export interface ScraperStats {
+  last_run_at: string | null;
+  dag_run_id: string | null;
+  scenario_a_new: number;
+  scenario_b_updated: number;
+  scenario_c_deleted: number;
+  scenario_d_renamed: number;
+  scenario_e_no_change: number;
+  pretranslation_queued: number;
+  active_forms: number;
+  forms_with_es: number;
+  forms_with_pt: number;
+}
+
+export interface SystemStats {
+  db_latency_ms: number;
+  active_form_count: number;
+  pending_review_count: number;
+  avg_pipeline_step_seconds: number | null;
+}
+
 export const adminApi = {
   getStats: (): Promise<AdminStats> =>
     api.get<AdminStats>("/admin/stats").then((r) => r.data),
@@ -478,6 +507,18 @@ export const adminApi = {
 
   triggerScraper: (): Promise<TriggerScraperResponse> =>
     api.post<TriggerScraperResponse>("/forms/scraper/trigger", { force: false }).then((r) => r.data),
+
+  getContainerStats: (): Promise<ContainerStat[]> =>
+    api.get<ContainerStat[]>("/admin/container-stats").then((r) => r.data),
+
+  cleanupStaleSessions: (): Promise<{ cleaned: number }> =>
+    api.post<{ cleaned: number }>("/admin/cleanup-stale-sessions", {}).then((r) => r.data),
+
+  getScraperStats: (): Promise<ScraperStats> =>
+    api.get<ScraperStats>("/admin/scraper-stats").then((r) => r.data),
+
+  getSystemStats: (): Promise<SystemStats> =>
+    api.get<SystemStats>("/admin/system-stats").then((r) => r.data),
 };
 
 // Re-export RoleRequestSummary for consumers that need it

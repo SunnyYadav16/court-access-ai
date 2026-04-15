@@ -105,6 +105,42 @@ function GuestMessageBubble({
           {subText}
         </div>
       )}
+      {/* Legal verification — shown for partner messages that have been verified */}
+      {!isSelf && msg.verifiedTranslation && (
+        <div className={`max-w-xs px-3 py-2 text-xs leading-relaxed border-l-2 pl-2.5 ${
+          msg.usedFallback
+            ? "bg-amber-500/[0.05] border-amber-500/30 text-white/55"
+            : "bg-indigo-500/[0.07] border-indigo-500/40 text-white/70"
+        }`}>
+          <div className="flex items-center gap-2 mb-1">
+            <span className={`text-[10px] font-semibold flex items-center gap-1 ${
+              msg.usedFallback ? "text-amber-400" : "text-indigo-300"
+            }`}>
+              <span className="material-symbols-outlined text-xs">gavel</span>
+              {msg.usedFallback ? "Verification Unavailable" : "Legal Verified"}
+            </span>
+            {msg.accuracyScore != null && !msg.usedFallback && (
+              <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                msg.accuracyScore >= 0.9 ? "bg-green-900/30 text-green-400"
+                : msg.accuracyScore >= 0.7 ? "bg-amber-900/30 text-amber-400"
+                : "bg-red-900/30 text-red-400"
+              }`}>
+                {Math.round(msg.accuracyScore * 100)}%
+              </span>
+            )}
+          </div>
+          {msg.usedFallback ? (
+            <span className="text-white/35">Showing machine translation.</span>
+          ) : msg.verifiedTranslation === msg.translation ? (
+            <span className="text-white/40">No changes — legally precise.</span>
+          ) : (
+            <span>{msg.verifiedTranslation}</span>
+          )}
+          {msg.accuracyNote && !msg.usedFallback && msg.verifiedTranslation !== msg.translation && (
+            <div className="mt-1 text-[10px] text-white/40">{msg.accuracyNote}</div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -390,7 +426,7 @@ export default function GuestSession({ meta, code }: Props) {
                      background:#ef4444; animation:blink 1s ease-in-out infinite; }
       `}</style>
 
-      <div className="min-h-screen flex flex-col bg-background text-on-surface">
+      <div className="h-screen flex flex-col overflow-hidden bg-background text-on-surface">
         {/* ── Top bar ─────────────────────────────────────────────────────── */}
         <div className="flex items-center justify-between px-5 py-3 shrink-0 bg-[#0D1B2A] border-b border-white/[0.07] shadow-xl shadow-black/40">
           <div className="flex items-center gap-2">

@@ -291,6 +291,12 @@ function ProtectedApp() {
   }
 
   if (authState === "authenticated") {
+    // RealtimeSession gets full-screen treatment — no sidebar, no topbar.
+    // It renders its own header with session controls.
+    if (screen === SCREENS.REALTIME_SESSION && role && ROLE_SCREENS[role].has(SCREENS.REALTIME_SESSION)) {
+      return <RealtimeSession onNav={onNav} />
+    }
+
     return (
       <AppShell current={screen} onNav={onNav} role={role}>
         {renderScreen()}

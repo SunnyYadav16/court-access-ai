@@ -221,6 +221,7 @@ export default function RecentSessions({ onNav }: Props) {
             value={typeFilter}
             onChange={(e) => setTypeFilter(e.target.value as "all" | "document" | "realtime")}
             className="w-full bg-surface-container-high border-none rounded-lg px-4 py-3 text-on-surface appearance-none focus:ring-2 focus:ring-primary-container cursor-pointer"
+            style={{ WebkitAppearance: "none", MozAppearance: "none" } as React.CSSProperties}
           >
             <option value="all">Session Type: All</option>
             <option value="document">Document</option>
@@ -312,7 +313,9 @@ function DocumentCard({
       </div>
 
       <h3 className="text-xl font-headline font-bold text-on-surface mb-1">
-        {LANG_LABEL[row.target_language] ?? row.target_language} Translation
+        {row.original_filename
+          ? row.original_filename.replace(/\.[^.]+$/, "").replace(/_/g, " ")
+          : `${LANG_LABEL[row.target_language] ?? row.target_language} Translation`}
       </h3>
 
       <p className="text-on-surface-variant text-sm mb-6 flex items-center gap-2">

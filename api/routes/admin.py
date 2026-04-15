@@ -585,3 +585,226 @@ async def list_audit_logs(
         select(AuditLog).order_by(desc(AuditLog.created_at)).offset((page - 1) * page_size).limit(page_size)
     )
     return result.scalars().all()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /admin/container-stats — live Docker container resource usage
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class ContainerStat(BaseModel):
+    name: str
+    cpu: str
+    mem: str
+    gpu: str | None = None
+
+
+@router.get(
+    "/container-stats",
+    summary="Live Docker container resource usage (admin only)",
+    response_model=list[ContainerStat],
+)
+async def get_container_stats(admin: _AdminUser) -> list[ContainerStat]:
+    """
+    Runs `docker stats --no-stream --format json` via subprocess and returns
+    CPU/memory usage per container.
+    """
+    import asyncio
+    import json as _json
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "docker",
+            "stats",
+            "--no-stream",
+            "--format",
+            '{"name":"{{.Name}}","cpu":"{{.CPUPerc}}","mem":"{{.MemPerc}}"}',
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15.0)
+        lines = stdout.decode().strip().splitlines()
+        results = []
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                d = _json.loads(line)
+                results.append(
+                    ContainerStat(
+                        name=d["name"].removeprefix("court-access-ai-").removesuffix("-1"),
+                        cpu=d["cpu"],
+                        mem=d["mem"],
+                    )
+                )
+            except Exception:
+                logger.debug("Skipping unparseable docker stats line: %s", line)
+                continue
+        return results
+    except Exception as exc:
+        logger.warning("docker stats failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Container stats unavailable — docker CLI not accessible from this process.",
+        ) from exc
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# POST /admin/cleanup-stale-sessions — mark abandoned sessions as completed
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@router.post(
+    "/cleanup-stale-sessions",
+    summary="Mark abandoned sessions as completed (admin only)",
+)
+async def cleanup_stale_sessions(admin: _AdminUser, db: DBSession) -> dict:
+    """
+    Sessions that have been 'active' for more than 2 hours with no
+    completed_at are considered abandoned and marked completed.
+    """
+    from db.models import Session as SessionModel
+
+    cutoff = datetime.now(tz=UTC) - timedelta(hours=2)
+    result = await db.execute(
+        select(SessionModel).where(
+            SessionModel.status == "active",
+            SessionModel.created_at < cutoff,
+        )
+    )
+    stale = result.scalars().all()
+    for s in stale:
+        s.status = "completed"
+        s.completed_at = datetime.now(tz=UTC)
+    await db.commit()
+    logger.info("Cleaned up %d stale sessions (admin: %s)", len(stale), admin.user_id)
+    return {"cleaned": len(stale)}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /admin/scraper-stats — last form scraper DAG run results
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class ScraperStats(BaseModel):
+    last_run_at: datetime | None
+    dag_run_id: str | None
+    scenario_a_new: int
+    scenario_b_updated: int
+    scenario_c_deleted: int
+    scenario_d_renamed: int
+    scenario_e_no_change: int
+    pretranslation_queued: int
+    active_forms: int
+    forms_with_es: int
+    forms_with_pt: int
+
+
+@router.get(
+    "/scraper-stats",
+    summary="Last form scraper DAG run results (admin only)",
+    response_model=ScraperStats,
+)
+async def get_scraper_stats(admin: _AdminUser, db: DBSession) -> ScraperStats:
+    """Read the most recent form_scrape_completed audit log entry."""
+    from db.models import AuditLog
+
+    result = await db.execute(
+        select(AuditLog)
+        .where(AuditLog.action_type == "form_scrape_completed")
+        .order_by(desc(AuditLog.created_at))
+        .limit(1)
+    )
+    entry = result.scalar_one_or_none()
+    if entry is None:
+        return ScraperStats(
+            last_run_at=None,
+            dag_run_id=None,
+            scenario_a_new=0,
+            scenario_b_updated=0,
+            scenario_c_deleted=0,
+            scenario_d_renamed=0,
+            scenario_e_no_change=0,
+            pretranslation_queued=0,
+            active_forms=0,
+            forms_with_es=0,
+            forms_with_pt=0,
+        )
+    d = entry.details or {}
+    counts = d.get("counts", {})
+    catalog = d.get("catalog_metrics", {})
+    return ScraperStats(
+        last_run_at=entry.created_at,
+        dag_run_id=d.get("dag_run_id"),
+        scenario_a_new=counts.get("new", 0),
+        scenario_b_updated=counts.get("updated", 0),
+        scenario_c_deleted=counts.get("deleted", 0),
+        scenario_d_renamed=counts.get("renamed", 0),
+        scenario_e_no_change=counts.get("no_change", 0),
+        pretranslation_queued=d.get("pretranslation_queued", 0),
+        active_forms=d.get("active_forms", 0),
+        forms_with_es=catalog.get("forms_with_es", 0),
+        forms_with_pt=catalog.get("forms_with_pt", 0),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /admin/system-stats — DB latency, form counts, avg pipeline step time
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class SystemStatsResponse(BaseModel):
+    db_latency_ms: float
+    active_form_count: int
+    pending_review_count: int
+    avg_pipeline_step_seconds: float | None
+
+
+@router.get(
+    "/system-stats",
+    summary="System health stats (admin only)",
+    response_model=SystemStatsResponse,
+)
+async def get_system_stats(admin: _AdminUser, db: DBSession) -> SystemStatsResponse:
+    """DB latency ping, form catalog counts, and avg pipeline step duration."""
+    import time
+
+    from db.models import FormCatalog
+
+    # DB latency ping
+    t0 = time.monotonic()
+    await db.execute(text("SELECT 1"))
+    latency_ms = round((time.monotonic() - t0) * 1000, 2)
+
+    # Form counts
+    counts_q = await db.execute(
+        select(
+            func.count().label("total"),
+            func.count().filter(FormCatalog.needs_human_review.is_(True)).label("pending"),
+        ).where(FormCatalog.status == "active")
+    )
+    row = counts_q.one()
+    active_total = row.total or 0
+    pending = row.pending or 0
+
+    # Avg pipeline step duration (last 7 days)
+    latency_q = await db.execute(
+        text("""
+        SELECT AVG(EXTRACT(EPOCH FROM (updated_at - prev_updated_at)))
+        FROM (
+            SELECT updated_at,
+                   LAG(updated_at) OVER (PARTITION BY session_id ORDER BY updated_at) AS prev_updated_at
+            FROM pipeline_steps
+            WHERE status = 'success'
+              AND updated_at >= NOW() - INTERVAL '7 days'
+        ) sub WHERE prev_updated_at IS NOT NULL
+    """)
+    )
+    avg_secs = latency_q.scalar()
+
+    return SystemStatsResponse(
+        db_latency_ms=latency_ms,
+        active_form_count=active_total,
+        pending_review_count=pending,
+        avg_pipeline_step_seconds=round(avg_secs, 3) if avg_secs else None,
+    )

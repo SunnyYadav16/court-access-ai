@@ -314,12 +314,14 @@ class LegalReviewer:
                 if self._groq_available:
                     logger.warning("Vertex AI failed — falling back to Groq")
                     return self._call_groq(original_batch, translated_batch, snippet)
-                return [f"{_NOT_VERIFIED_PREFIX} {t}" for t in translated_batch]
+                logger.warning("All LLM providers unavailable — returning unverified NLLB translations")
+                return list(translated_batch)
 
         if self._groq_available:
             return self._call_groq(original_batch, translated_batch, snippet)
 
-        return [f"{_NOT_VERIFIED_PREFIX} {t}" for t in translated_batch]
+        logger.warning("All LLM providers unavailable — returning unverified NLLB translations")
+        return list(translated_batch)
 
     def _call_vertex(
         self,
@@ -533,7 +535,8 @@ class LegalReviewer:
                 break
 
         logger.error("Groq fallback failed after %d attempts: %s", max_retries, last_exc)
-        return [f"{_NOT_VERIFIED_PREFIX} {t}" for t in translated_batch]
+        logger.warning("All LLM providers unavailable — returning unverified NLLB translations")
+        return list(translated_batch)
 
     def _validate_results(
         self,

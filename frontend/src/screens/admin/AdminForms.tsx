@@ -11,7 +11,7 @@
 
 import { useEffect, useState } from "react"
 import { ScreenId, SCREENS } from "@/lib/constants"
-import { adminApi, formsApi, type FormResponse } from "@/services/api"
+import { adminApi, formsApi, type FormResponse, type ScraperStats, type SystemStats } from "@/services/api"
 import { formatDate } from "@/lib/utils"
 
 interface Props { onNav: (s: ScreenId) => void }
@@ -26,7 +26,8 @@ const scenarios = [
 
 export default function AdminForms({ onNav }: Props) {
   const [pendingForms, setPendingForms] = useState<FormResponse[]>([])
-  const [lastScrapeAt, setLastScrapeAt] = useState<string | null>(null)
+  const [scraperStats, setScraperStats] = useState<ScraperStats | null>(null)
+  const [systemStats, setSystemStats] = useState<SystemStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [triggerBanner, setTriggerBanner] = useState<string | null>(null)
@@ -37,15 +38,14 @@ export default function AdminForms({ onNav }: Props) {
     setLoading(true)
     setError(null)
     try {
-      const formsResp = await formsApi.list({ status: "active", page_size: 200 })
-      const pending = formsResp.items.filter((f) => f.needs_human_review)
-      setPendingForms(pending)
-      const sorted = formsResp.items
-        .map((f) => f.last_scraped_at)
-        .filter((d): d is string => d !== null)
-        .sort()
-      const latest = sorted.length > 0 ? sorted[sorted.length - 1] : null
-      setLastScrapeAt(latest)
+      const [formsResp, scraperResp, sysResp] = await Promise.all([
+        formsApi.list({ status: "active", page_size: 200 }),
+        adminApi.getScraperStats(),
+        adminApi.getSystemStats(),
+      ])
+      setPendingForms(formsResp.items.filter((f) => f.needs_human_review))
+      setScraperStats(scraperResp)
+      setSystemStats(sysResp)
     } catch {
       setError("Failed to load forms data. Please try again.")
     } finally {
@@ -134,8 +134,15 @@ export default function AdminForms({ onNav }: Props) {
             <div className="flex flex-col">
               <span className="text-[10px] uppercase tracking-widest text-on-surface-variant mb-1 font-bold">Last Run</span>
               <span className="font-medium text-on-surface">
-                {loading ? "loading…" : formatDate(lastScrapeAt)}
+                {loading ? "loading…" : scraperStats?.last_run_at
+                  ? formatDate(scraperStats.last_run_at)
+                  : "Never run"}
               </span>
+              {scraperStats?.dag_run_id && (
+                <span className="text-[10px] text-on-surface-variant font-mono mt-0.5">
+                  {scraperStats.dag_run_id}
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -148,19 +155,34 @@ export default function AdminForms({ onNav }: Props) {
             <div>
               <h3 className="font-headline text-2xl text-on-surface">Last Scrape Analysis</h3>
               <p className="text-on-surface-variant text-sm mt-1">
-                Scenario breakdown not yet stored in DB — pending form_scraper_dag update.
+                {scraperStats?.dag_run_id
+                  ? `From DAG run: ${scraperStats.dag_run_id}`
+                  : "No scrape runs found in audit log."}
               </p>
             </div>
           </div>
           <div className="grid grid-cols-5 gap-4">
-            {scenarios.map((s, i) => (
-              <div key={i} className="text-center py-3 flex flex-col items-center">
-                <span className={`material-symbols-outlined text-2xl ${s.accent} mb-2`}>{s.icon}</span>
-                <div className="text-2xl font-headline text-on-surface-variant mb-1">—</div>
-                <div className="text-[10px] text-slate-500 font-label uppercase tracking-wider">{s.label}</div>
-                <div className="text-[10px] text-slate-600">{s.sub}</div>
-              </div>
-            ))}
+            {scenarios.map((s, i) => {
+              const values = scraperStats
+                ? [
+                    scraperStats.scenario_a_new,
+                    scraperStats.scenario_b_updated,
+                    scraperStats.scenario_c_deleted,
+                    scraperStats.scenario_d_renamed,
+                    scraperStats.scenario_e_no_change,
+                  ]
+                : null
+              return (
+                <div key={i} className="text-center py-3 flex flex-col items-center">
+                  <span className={`material-symbols-outlined text-2xl ${s.accent} mb-2`}>{s.icon}</span>
+                  <div className="text-2xl font-headline text-on-surface mb-1">
+                    {values ? values[i] : "—"}
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-label uppercase tracking-wider">{s.label}</div>
+                  <div className="text-[10px] text-slate-600">{s.sub}</div>
+                </div>
+              )
+            })}
           </div>
         </section>
 
@@ -231,10 +253,30 @@ export default function AdminForms({ onNav }: Props) {
       {/* System Stats Footer Grid */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         {[
-          { label: "Worker Nodes", value: "12", extra: <span className="text-xs text-green-500 flex items-center"><span className="material-symbols-outlined text-sm">arrow_upward</span> 100%</span> },
-          { label: "Avg Processing Time", value: "1.4s", extra: <span className="text-xs text-on-surface-variant">/ page</span> },
-          { label: "Total Tokens Ingested", value: "1.2M", extra: <span className="text-xs text-tertiary">Current Session</span> },
-          { label: "DB Latency", value: "14ms", extra: <span className="text-xs text-green-500">Stable</span> },
+          {
+            label: "Active Forms",
+            value: systemStats ? String(systemStats.active_form_count) : "—",
+            extra: <span className="text-xs text-on-surface-variant">in catalog</span>,
+          },
+          {
+            label: "Avg Step Duration",
+            value: systemStats?.avg_pipeline_step_seconds != null
+              ? `${systemStats.avg_pipeline_step_seconds.toFixed(1)}s`
+              : "—",
+            extra: <span className="text-xs text-on-surface-variant">/ pipeline step</span>,
+          },
+          {
+            label: "Pending Review",
+            value: systemStats ? String(systemStats.pending_review_count) : "—",
+            extra: <span className="text-xs text-amber-400">needs review</span>,
+          },
+          {
+            label: "DB Latency",
+            value: systemStats ? `${systemStats.db_latency_ms}ms` : "—",
+            extra: <span className={`text-xs ${systemStats && systemStats.db_latency_ms < 50 ? "text-green-500" : "text-amber-400"}`}>
+              {systemStats && systemStats.db_latency_ms < 50 ? "Stable" : "Elevated"}
+            </span>,
+          },
         ].map((s) => (
           <div key={s.label} className="p-6 bg-surface-container-low rounded-xl border border-outline-variant/5">
             <span className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold block mb-4">{s.label}</span>

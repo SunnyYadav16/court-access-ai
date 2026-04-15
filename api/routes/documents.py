@@ -491,6 +491,7 @@ async def get_document_status(
         llama_corrections_count=req_obj.llama_corrections_count or 0,
         processing_time_seconds=req_obj.processing_time_seconds,
         error_message=req_obj.error_message,
+        original_filename=req_obj.input_file_gcs_path.split("/")[-1] if req_obj.input_file_gcs_path else None,
     )
 
 
@@ -612,6 +613,7 @@ async def list_documents(
             llama_corrections_count=r.llama_corrections_count or 0,
             processing_time_seconds=r.processing_time_seconds,
             error_message=r.error_message,
+            original_filename=r.input_file_gcs_path.split("/")[-1] if r.input_file_gcs_path else None,
         )
         for s, r in rows
     ]
