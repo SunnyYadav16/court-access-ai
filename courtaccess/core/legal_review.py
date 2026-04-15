@@ -280,8 +280,12 @@ class LegalReviewer:
         """
         try:
             return self._call_vertex(original_batch, translated_batch, snippet)
+        # except VertexReviewError:
+        #     return [f"{_NOT_VERIFIED_PREFIX} {t}" for t in translated_batch]
+        # AFTER
         except VertexReviewError:
-            return [f"{_NOT_VERIFIED_PREFIX} {t}" for t in translated_batch]
+            logger.warning("Vertex AI failed — falling back to Groq")
+            return self._call_groq(original_batch, translated_batch, snippet)
 
     def _call_vertex(
         self,
@@ -407,6 +411,61 @@ class LegalReviewer:
         raise VertexReviewError(
             f"Vertex AI unavailable after {self._vertex_max_retries} attempts: {last_exc}"
         ) from last_exc
+        
+    def _call_groq(
+        self,
+        original_batch: list,
+        translated_batch: list,
+        snippet: str,
+    ) -> list:
+        """
+        Groq Llama fallback — called when Vertex AI is unavailable.
+        Uses the same prompt and response shape as _call_vertex.
+        """
+        from groq import Groq
+
+        groq_api_key = os.getenv("GROQ_API_KEY", "")
+        groq_model = os.getenv("GROQ_LEGAL_LLM_MODEL", "llama-3.3-70b-versatile")
+
+        if not groq_api_key:
+            logger.error("Groq fallback unavailable: GROQ_API_KEY not set — returning NLLB output")
+            return [f"{_NOT_VERIFIED_PREFIX} {t}" for t in translated_batch]
+
+        prompt = self._build_verification_prompt(original_batch, translated_batch, snippet)
+
+        try:
+            client = Groq(api_key=groq_api_key)
+            resp = client.chat.completions.create(
+                model=groq_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0,
+                max_tokens=8192,
+            )
+
+            raw = resp.choices[0].message.content
+            try:
+                corrected = json.loads(self._strip_fences(raw))
+            except json.JSONDecodeError as exc:
+                logger.warning("Groq bad response (JSONDecodeError) — returning NLLB output: %s", exc)
+                return translated_batch
+
+            if not isinstance(corrected, list):
+                logger.warning("Groq bad response (not a list, got %s) — returning NLLB output", type(corrected).__name__)
+                return translated_batch
+
+            if len(corrected) != len(original_batch):
+                logger.warning(
+                    "Groq bad response (length mismatch: expected %d, got %d) — returning NLLB output",
+                    len(original_batch),
+                    len(corrected),
+                )
+                return translated_batch
+
+            return self._validate_results(original_batch, translated_batch, corrected)
+
+        except Exception as exc:
+            logger.error("Groq fallback also failed: %s — returning NLLB output", exc)
+            return [f"{_NOT_VERIFIED_PREFIX} {t}" for t in translated_batch]
 
     def _validate_results(
         self,

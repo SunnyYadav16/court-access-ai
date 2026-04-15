@@ -296,9 +296,12 @@ class LegalVerifierService:
             raw_json = response.choices[0].message.content or ""
             return self._parse_response(raw_json, raw_translation)
 
+        # except Exception as exc:
+        #     logger.warning("API call failed (%s): %s", type(exc).__name__, exc)
+        #     return self._fallback(raw_translation)
         except Exception as exc:
-            logger.warning("API call failed (%s): %s", type(exc).__name__, exc)
-            return self._fallback(raw_translation)
+            logger.warning("Vertex API call failed (%s): %s — trying Groq fallback", type(exc).__name__, exc)
+            return self._call_groq_fallback(system_prompt, user_message, raw_translation)
 
     # ------------------------------------------------------------------ #
     #  Internal helpers                                                   #
@@ -342,6 +345,39 @@ class LegalVerifierService:
             raw_translation=raw_translation,
             used_fallback=True,
         )
+        
+    def _call_groq_fallback(self, system_prompt: str, user_message: str, raw_translation: str) -> VerificationResult:
+        """Try Groq as a fallback when Vertex AI is unavailable."""
+        import os
+        from groq import Groq
+
+        groq_api_key = os.getenv("GROQ_API_KEY", "")
+        groq_model = os.getenv("GROQ_LEGAL_LLM_MODEL", "llama-3.3-70b-versatile")
+
+        if not groq_api_key:
+            logger.warning("[LegalVerifier] Groq fallback unavailable: GROQ_API_KEY not set")
+            return self._fallback(raw_translation)
+
+        try:
+            timeout = get_settings().legal_verify_timeout
+            client = Groq(api_key=groq_api_key)
+            response = client.chat.completions.create(
+                model=groq_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                temperature=0.1,
+                max_tokens=512,
+                timeout=timeout,
+            )
+            raw_json = response.choices[0].message.content or ""
+            return self._parse_response(raw_json, raw_translation)
+
+        except Exception as exc:
+            logger.warning("[LegalVerifier] Groq fallback also failed (%s): %s", type(exc).__name__, exc)
+            return self._fallback(raw_translation)
+
 
 
 # ---------------------------------------------------------------------------
