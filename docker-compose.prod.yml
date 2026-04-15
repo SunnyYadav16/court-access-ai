@@ -32,7 +32,7 @@ x-airflow-common:
 
     # ── Auth ──
     AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
-    AIRFLOW__API__AUTH_BACKENDS: 'airflow.providers.fab.auth_manager.api.auth.backend.basic_auth'
+    AIRFLOW__FAB__AUTH_BACKENDS: 'airflow.providers.fab.auth_manager.api.auth.backend.basic_auth'
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_SECRET_KEY}
 
     # ── Database (Cloud SQL) ──
@@ -40,6 +40,23 @@ x-airflow-common:
 
     # ── Scheduler ──
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    # Heartbeat grace — long-running PDF translation tasks (OCR + NLLB + legal
+    # review) can take 10+ minutes per form.  The default scheduler heartbeat
+    # timeout is too short, causing httpx.ReadTimeout between the scheduler and
+    # the internal API server.  These settings prevent the scheduler from
+    # killing healthy-but-slow tasks.
+    AIRFLOW__SCHEDULER__SCHEDULER_HEARTBEAT_SEC: '30'
+    AIRFLOW__SCHEDULER__LOCAL_TASK_JOB_HEARTBEAT_SEC: '30'
+
+    # ── Task execution ──
+    # Increase the internal API timeout so task start / heartbeat RPCs don't
+    # time out under load (default is 30s which is too tight for a VM running
+    # heavy ML workloads alongside the Airflow API server).
+    AIRFLOW__CORE__INTERNAL_API_TIMEOUT: '120'
+    # Cap concurrent tasks — LocalExecutor on a single VM with GPU-heavy
+    # translation should not run 32 tasks (the default) in parallel.
+    AIRFLOW__CORE__PARALLELISM: '8'
+    AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: '4'
 
     # ── courtaccess package path ──
     PYTHONPATH: /opt/airflow

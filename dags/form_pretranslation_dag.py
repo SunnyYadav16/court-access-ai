@@ -35,7 +35,7 @@ import os
 import shutil
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from airflow import DAG
@@ -72,9 +72,13 @@ DEFAULT_ARGS = {
     "owner": "courtaccess",
     "depends_on_past": False,
     "retries": 1,
-    "retry_delay": 60,
+    "retry_delay": timedelta(seconds=60),
     "email_on_failure": False,
     "email_on_retry": False,
+    # Safety net: individual tasks should not run longer than 30 minutes.
+    # OCR + NLLB translation + legal review is typically 5-15 min per language;
+    # 30 min gives ample headroom without letting stuck tasks hang forever.
+    "execution_timeout": timedelta(minutes=30),
 }
 
 

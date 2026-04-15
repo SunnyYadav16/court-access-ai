@@ -24,6 +24,7 @@ DB tables used:
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import logging
 import uuid
@@ -53,34 +54,19 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
-async def _get_airflow_token(client: httpx.AsyncClient) -> str:
-    """Exchange Airflow credentials for a JWT (required by Airflow 3.x REST API).
+def _airflow_basic_auth_headers() -> dict[str, str]:
+    """Build HTTP Basic Auth headers for the Airflow REST API.
 
-    Retries up to 3 times with a 1-second delay to handle transient 500 errors
-    caused by stale DB connections in FabAuthManager on startup or under load.
+    Airflow 3.x's /auth/token JWT endpoint depends on FabAuthManager's internal
+    Flask app, which is prone to "Flask app is not initialized" 500 errors.
+    Basic Auth bypasses that entirely — the /api/v2/* endpoints accept it
+    directly via FabAuthManager's session-based auth.
     """
-    last_exc: Exception | None = None
-    for attempt in range(3):
-        try:
-            token_resp = await client.post(
-                f"{settings.airflow_base_url}/auth/token",
-                json={"username": settings.airflow_username, "password": settings.airflow_password},
-            )
-            token_resp.raise_for_status()
-            return token_resp.json()["access_token"]
-        except Exception as exc:
-            last_exc = exc
-            if attempt < 2:
-                logger.warning(
-                    "Airflow /auth/token attempt %d/3 failed: %s — retrying in 1s",
-                    attempt + 1,
-                    exc,
-                )
-                await asyncio.sleep(1)
-    raise last_exc  # type: ignore[misc]
+    creds = base64.b64encode(f"{settings.airflow_username}:{settings.airflow_password}".encode()).decode()
+    return {"Authorization": f"Basic {creds}"}
 
 
-async def _unpause_for_trigger(client: httpx.AsyncClient, dag_id: str, token: str) -> None:
+async def _unpause_for_trigger(client: httpx.AsyncClient, dag_id: str, auth_headers: dict[str, str]) -> None:
     """Unpause a DAG so a triggered run will be picked up by the scheduler.
 
     DAGs start paused (AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=true).
@@ -91,7 +77,7 @@ async def _unpause_for_trigger(client: httpx.AsyncClient, dag_id: str, token: st
     """
     resp = await client.patch(
         f"{settings.airflow_base_url}/api/v2/dags/{dag_id}",
-        headers={"Authorization": f"Bearer {token}"},
+        headers=auth_headers,
         json={"is_paused": False},
     )
     resp.raise_for_status()
@@ -384,11 +370,11 @@ async def upload_document(
     # or a re-trigger endpoint. We log the error but don't fail the upload.
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
-            airflow_token = await _get_airflow_token(client)
-            await _unpause_for_trigger(client, dag_id, airflow_token)
+            auth_headers = _airflow_basic_auth_headers()
+            await _unpause_for_trigger(client, dag_id, auth_headers)
             resp = await client.post(
                 f"{settings.airflow_base_url}/api/v2/dags/{dag_id}/dagRuns",
-                headers={"Authorization": f"Bearer {airflow_token}"},
+                headers=auth_headers,
                 json={
                     "logical_date": start_time,
                     "conf": {
@@ -802,11 +788,11 @@ async def retranslate_document(
     # ── Trigger Airflow DAG ────────────────────────────────────────────────
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
-            airflow_token = await _get_airflow_token(client)
-            await _unpause_for_trigger(client, "document_pipeline_dag", airflow_token)
+            auth_headers = _airflow_basic_auth_headers()
+            await _unpause_for_trigger(client, "document_pipeline_dag", auth_headers)
             resp = await client.post(
                 f"{settings.airflow_base_url}/api/v2/dags/document_pipeline_dag/dagRuns",
-                headers={"Authorization": f"Bearer {airflow_token}"},
+                headers=auth_headers,
                 json={
                     "logical_date": now.isoformat(),
                     "conf": {

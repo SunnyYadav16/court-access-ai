@@ -18,7 +18,7 @@ In production this will be queryable via the PostgreSQL FormCatalog table.
 
 from __future__ import annotations
 
-import asyncio
+import base64
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -87,45 +87,22 @@ async def trigger_form_scraper(
             detail="Airflow configuration is missing. Cannot trigger scraper DAG.",
         )
 
-    token_url = f"{settings.airflow_base_url}/auth/token"
     dag_run_url = f"{settings.airflow_base_url}/api/v2/dags/form_scraper_dag/dagRuns"
     triggered_at = datetime.now(tz=UTC)
 
+    # Basic Auth bypasses the broken /auth/token JWT endpoint — Airflow 3.x's
+    # FabAuthManager accepts Basic credentials directly on /api/v2/* routes.
+    creds = base64.b64encode(f"{settings.airflow_username}:{settings.airflow_password}".encode()).decode()
+    auth_headers = {"Authorization": f"Basic {creds}"}
+
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
-            # Airflow 3 requires a JWT exchange before calling the REST API.
-            # Retry up to 3 times to handle transient 500s from FabAuthManager
-            # (stale DB connections on startup or under load).
-            airflow_token: str | None = None
-            last_token_exc: Exception | None = None
-            for attempt in range(3):
-                try:
-                    token_resp = await client.post(
-                        token_url,
-                        json={"username": settings.airflow_username, "password": settings.airflow_password},
-                    )
-                    token_resp.raise_for_status()
-                    airflow_token = token_resp.json()["access_token"]
-                    break
-                except Exception as exc:
-                    last_token_exc = exc
-                    if attempt < 2:
-                        logger.warning(
-                            "Airflow /auth/token attempt %d/3 failed: %s — retrying in 1s",
-                            attempt + 1,
-                            exc,
-                        )
-                        await asyncio.sleep(1)
-            if airflow_token is None:
-                raise last_token_exc  # type: ignore[misc]
-
             # Unpause → trigger → re-pause.
             # A paused DAG leaves triggered runs queued forever, so we must
             # unpause first. We re-pause immediately after queuing the run so
             # the weekly scheduler does NOT fire automatically — only API
             # calls should start this DAG.
             dag_url = f"{settings.airflow_base_url}/api/v2/dags/form_scraper_dag"
-            auth_headers = {"Authorization": f"Bearer {airflow_token}"}
 
             await client.patch(dag_url, headers=auth_headers, json={"is_paused": False})
 
