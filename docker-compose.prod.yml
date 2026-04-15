@@ -31,7 +31,7 @@ x-airflow-common:
     AIRFLOW__CORE__INTERNAL_API_SECRET_KEY: ${AIRFLOW_SECRET_KEY}
 
     # ── Auth ──
-    AIRFLOW__CORE__AUTH_MANAGER: airflow.auth.managers.simple.simple_auth_manager.SimpleAuthManager
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.api_fastapi.auth.managers.simple.simple_auth_manager.SimpleAuthManager
     AIRFLOW__SIMPLE_AUTH_MANAGER__PASSWORDS: '{"airflow": "airflow"}'
     AIRFLOW__SIMPLE_AUTH_MANAGER__ROLE: 'Admin'
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_SECRET_KEY}
