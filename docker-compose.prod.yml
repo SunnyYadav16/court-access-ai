@@ -152,6 +152,10 @@ x-airflow-common:
     GOOGLE_APPLICATION_CREDENTIALS: ''
     GCP_DVC_CREDENTIALS: ''
 
+    GROQ_API_KEY: ${GROQ_API_KEY}
+    GROQ_LEGAL_LLM_MODEL: ${GROQ_LEGAL_LLM_MODEL}
+
+
   env_file:
     - .env.production
 
@@ -338,6 +342,9 @@ services:
       # ── GCP credentials (empty — VM uses attached service account via ADC) ──
       GOOGLE_APPLICATION_CREDENTIALS: ''
       GCP_DVC_CREDENTIALS: ''
+
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      GROQ_LEGAL_LLM_MODEL: ${GROQ_LEGAL_LLM_MODEL}
 
     # No live code volume mounts in prod — everything is baked into the image.
     volumes:
