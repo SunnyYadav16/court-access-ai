@@ -100,7 +100,7 @@ export default function HomeOfficial({ onNav }: Props) {
           <span className="material-symbols-outlined text-4xl text-secondary mb-6 block">interpreter_mode</span>
           <h3 className="text-2xl font-headline mb-3 text-on-surface">Start Interpretation Session</h3>
           <p className="text-on-surface-variant text-sm mb-6 max-w-sm">
-            Initiate secure, high-fidelity real-time audio translation for live court proceedings with neural verification.
+            Start a secure, real-time audio translation session for live court proceedings with AI verification.
           </p>
           <div className="flex items-center text-secondary font-bold text-sm group-hover:translate-x-2 transition-transform uppercase tracking-wider">
             Begin Session <span className="material-symbols-outlined ml-2">arrow_forward</span>
@@ -161,7 +161,7 @@ export default function HomeOfficial({ onNav }: Props) {
           <div>
             <h4 className="text-on-primary font-bold text-lg">System Verification Active</h4>
             <p className="text-on-primary-container text-xs">
-              Neural engines running at 99.8% precision for English-Spanish-Mandarin pairs.
+              Translation system running at 99.8% accuracy for English, Spanish, and Portuguese.
             </p>
           </div>
         </div>

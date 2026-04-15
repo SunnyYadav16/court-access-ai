@@ -49,6 +49,7 @@ export default function SignupForm() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
   // Password strength checks
@@ -216,10 +217,23 @@ export default function SignupForm() {
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-xs cursor-pointer"
-              style={{ color: "#8494A7", background: "none", border: "none" }}
+              className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer"
+              style={{ color: "#8494A7", background: "none", border: "none", padding: 0, lineHeight: 1 }}
+              tabIndex={-1}
+              aria-label={showPassword ? "Hide password" : "Show password"}
             >
-              {showPassword ? "Hide" : "Show"}
+              {showPassword ? (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/>
+                  <path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/>
+                  <line x1="1" y1="1" x2="23" y2="23"/>
+                </svg>
+              ) : (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                  <circle cx="12" cy="12" r="3"/>
+                </svg>
+              )}
             </button>
           </div>
         </div>
@@ -256,14 +270,37 @@ export default function SignupForm() {
           <label className="text-xs font-semibold block mb-1" style={{ color: "#4A5568" }}>
             Confirm password
           </label>
-          <Input
-            placeholder="Confirm your password"
-            type="password"
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            disabled={isLoading}
-            style={validationErrors.confirmPassword ? { borderColor: "#ef4444" } : {}}
-          />
+          <div className="relative">
+            <Input
+              placeholder="Confirm your password"
+              type={showConfirmPassword ? "text" : "password"}
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              disabled={isLoading}
+              style={validationErrors.confirmPassword ? { borderColor: "#ef4444" } : {}}
+            />
+            <button
+              type="button"
+              onClick={() => setShowConfirmPassword((v) => !v)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer"
+              style={{ color: "#8494A7", background: "none", border: "none", padding: 0, lineHeight: 1 }}
+              tabIndex={-1}
+              aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+            >
+              {showConfirmPassword ? (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/>
+                  <path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/>
+                  <line x1="1" y1="1" x2="23" y2="23"/>
+                </svg>
+              ) : (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                  <circle cx="12" cy="12" r="3"/>
+                </svg>
+              )}
+            </button>
+          </div>
           {validationErrors.confirmPassword && (
             <p className="text-[10px] mt-0.5" style={{ color: "#ef4444" }}>
               {validationErrors.confirmPassword}
@@ -302,7 +339,7 @@ export default function SignupForm() {
         <Button
           type="submit"
           className="w-full cursor-pointer"
-          style={{ background: "#0B1D3A" }}
+          style={{ background: "#1D4ED8" }}
           disabled={isLoading}
         >
           {isLoading ? (

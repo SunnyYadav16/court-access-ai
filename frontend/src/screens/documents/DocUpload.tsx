@@ -225,8 +225,8 @@ export default function DocUpload({ onNav }: Props) {
                     Drop Official Documents Here
                   </h3>
                   <p className="text-on-surface-variant text-center max-w-md mb-8">
-                    PDF, DOCX, or scanned documents. Files are encrypted and analyzed
-                    using the Magistrate-V2 Neural Network.
+                    PDF, DOCX, or scanned documents. Files are encrypted and securely
+                    processed by our AI translation system.
                   </p>
                   <button
                     className="bg-[#FFD700] text-[#0D1B2A] px-8 py-3 rounded-lg font-bold shadow-xl hover:scale-105 transition-transform active:scale-95 border-none cursor-pointer"

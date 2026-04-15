@@ -18,14 +18,14 @@ const upcomingProceedings = [
     time: "14:30",
     tz: "PM EST",
     title: "Civil Arbitration: Martinez v. Logistics Global",
-    detail: "Linguistic Mode: Consecutive • Legal Domain: Maritime Law",
+    detail: "Mode: Consecutive • Legal Area: Maritime Law",
     aiAssisted: true,
   },
   {
     time: "16:00",
     tz: "PM EST",
     title: "Criminal Arraignment: Case #449-B",
-    detail: "Linguistic Mode: Simultaneous • Legal Domain: Federal Criminal",
+    detail: "Mode: Simultaneous • Legal Area: Federal Criminal",
     aiAssisted: false,
   },
 ]
@@ -83,7 +83,7 @@ export default function HomeInterpreter({ onNav }: Props) {
               </div>
               <h3 className="font-headline text-3xl mb-4 text-on-surface">Join Real-Time Session</h3>
               <p className="text-on-surface-variant font-body mb-8 max-w-md">
-                Execute sworn interpretation for active cases. Direct neural relay active for multi-language sequence.
+                Provide live interpretation for active court cases. Real-time multi-language translation is ready.
               </p>
             </div>
             <div className="relative z-10 flex items-center gap-4">
@@ -112,7 +112,7 @@ export default function HomeInterpreter({ onNav }: Props) {
               </div>
               <h3 className="font-headline text-3xl mb-4 text-on-surface">Translation Review</h3>
               <p className="text-on-surface-variant font-body mb-8">
-                Audit 4 pending AI-assisted transcripts for grammatical precision and legal context preservation.
+                Review 4 pending AI-assisted translations for correctness and legal accuracy.
               </p>
             </div>
             <div className="relative z-10">

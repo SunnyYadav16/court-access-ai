@@ -37,7 +37,7 @@ export default function MFAScreen({ onNav }: Props) {
             </div>
             <p className="text-[11px] mb-5" style={{ color: "#8494A7" }}>Code refreshes in 22 seconds</p>
 
-            <Button className="w-full" style={{ background: "#0B1D3A" }}
+            <Button className="w-full" style={{ background: "#1D4ED8" }}
               onClick={() => onNav(SCREENS.HOME_OFFICIAL)}>
               Verify
             </Button>

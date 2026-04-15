@@ -90,7 +90,7 @@ export default function AdminForms({ onNav }: Props) {
         <div>
           <h1 className="font-headline text-4xl text-on-surface mb-2">Form Scraper Management</h1>
           <p className="text-on-surface-variant text-lg max-w-2xl">
-            Orchestrate high-precision legal document ingestion and neural entity extraction workflows.
+            Manage court form scraping, pre-translation, and review workflows.
           </p>
         </div>
         <button

@@ -532,4 +532,66 @@ export interface RoleRequestSummary {
   reviewed_at: string | null;
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Interpreter endpoints
+// ══════════════════════════════════════════════════════════════════════════════
+
+export interface InterpreterReviewSummary {
+  session_id: string;
+  target_language: string;
+  status: string;
+  review_status: "pending" | "approved" | "flagged";
+  avg_confidence_score: number | null;
+  llama_corrections_count: number;
+  original_filename: string | null;
+  signed_url_original: string | null;
+  signed_url_translated: string | null;
+  signed_url_expires_at: string | null;
+  created_at: string;
+}
+
+export const interpreterApi = {
+  /** List completed translations for review. */
+  listReview: (page = 1, targetLanguage?: string): Promise<InterpreterReviewSummary[]> =>
+    api
+      .get<InterpreterReviewSummary[]>("/interpreter/review", {
+        params: { page, ...(targetLanguage ? { target_language: targetLanguage } : {}) },
+      })
+      .then((r) => r.data),
+
+  /** Get a single session's review details. */
+  getReview: (sessionId: string): Promise<InterpreterReviewSummary> =>
+    api.get<InterpreterReviewSummary>(`/interpreter/review/${sessionId}`).then((r) => r.data),
+
+  /** Approve a translation. */
+  approve: (sessionId: string): Promise<{ status: string; session_id: string }> =>
+    api.post(`/interpreter/review/${sessionId}/approve`).then((r) => r.data),
+
+  /** Flag a translation for recorrection. */
+  flag: (
+    sessionId: string,
+    notes: string,
+    correctionRequested = true,
+  ): Promise<{ status: string; session_id: string }> =>
+    api
+      .post(`/interpreter/review/${sessionId}/flag`, {
+        notes,
+        correction_requested: correctionRequested,
+      })
+      .then((r) => r.data),
+
+  /** Submit a manual correction. */
+  submitCorrection: (
+    sessionId: string,
+    body: {
+      original_text: string;
+      original_language: string;
+      corrected_translation: string;
+      target_language: string;
+      correction_notes?: string;
+    },
+  ): Promise<{ status: string; session_id: string }> =>
+    api.post(`/interpreter/review/${sessionId}/correct`, body).then((r) => r.data),
+};
+
 export default api;

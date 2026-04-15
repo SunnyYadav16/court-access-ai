@@ -152,7 +152,7 @@ export default function VerifyEmailView() {
       <Button
         onClick={handleCheckVerified}
         className="w-full cursor-pointer mb-3"
-        style={{ background: "#0B1D3A" }}
+        style={{ background: "#1D4ED8" }}
         disabled={checking || isLoading}
       >
         {checking ? (

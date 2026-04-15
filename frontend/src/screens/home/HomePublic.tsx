@@ -60,8 +60,8 @@ export default function HomePublic({ onNav }: Props) {
             </span>
           </div>
           <p className="mt-6 text-on-surface-variant max-w-xl text-lg leading-relaxed">
-            Access high-fidelity legal document translations and government form assistance,
-            powered by specialized neural justice networks.
+            Access accurate legal document translations and government form assistance,
+            powered by AI built for the court system.
           </p>
         </div>
       </section>
@@ -106,7 +106,7 @@ export default function HomePublic({ onNav }: Props) {
               Important Notice
             </h4>
             <p className="text-on-surface-variant text-sm leading-relaxed max-w-4xl">
-              This service uses AI-powered neural networks to assist in document processing and translation.
+              This service uses AI to assist in document processing and translation.
               CourtAccess AI does not provide formal legal advice. Please consult with a qualified attorney
               for specific legal guidance. Automated translations should be verified by a certified human
               translator for official court proceedings.

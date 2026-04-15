@@ -152,7 +152,7 @@ export default function HomeAdmin({ onNav }: Props) {
             <span className="material-symbols-outlined text-tertiary mb-4 block">translate</span>
             <h3 className="text-xl text-white font-headline mb-2">Translation Node</h3>
             <p className="text-slate-500 text-sm font-body">
-              Neural engine monitoring for live sessions. Streams: 4.
+              Live translation monitoring. Active streams: 4.
             </p>
           </div>
           <div className="mt-6">

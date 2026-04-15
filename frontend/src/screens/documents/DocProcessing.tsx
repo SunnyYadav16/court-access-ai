@@ -19,9 +19,9 @@ import useAuthStore from "@/store/authStore"
 // ── Step config ──────────────────────────────────────────────────────────────
 
 const STEP_LABELS: Record<string, string> = {
-  validate_upload:   "Ingestion",
+  validate_upload:   "Upload Check",
   classify_document: "Classification",
-  ocr_printed_text:  "OCR Layering",
+  ocr_printed_text:  "Text Extraction",
   translate:         "Translation",
   legal_review:      "Legal Review",
   reconstruct_pdf:   "Rebuilding",
@@ -309,7 +309,7 @@ export default function DocProcessing({ onNav }: Props) {
       <section>
         <h1 className="font-headline text-4xl text-on-surface mb-2">Process Intelligence</h1>
         <p className="text-on-surface-variant font-body max-w-2xl">
-          Session {sessionId.slice(0, 8)}… · {isComplete ? `${langLabel} translation complete.` : `Translating to ${langLabel}. Systems are currently executing neural translation and cross-jurisdictional verification.`}
+          Session {sessionId.slice(0, 8)}… · {isComplete ? `${langLabel} translation complete.` : `Translating to ${langLabel}. Your document is being translated and verified for legal accuracy.`}
         </p>
       </section>
 
@@ -528,7 +528,7 @@ export default function DocProcessing({ onNav }: Props) {
               <div>
                 <h2 className="font-headline text-2xl text-on-surface">Certified Deliverables</h2>
                 <p className="text-on-surface-variant text-sm italic">
-                  High-precision legal PDFs available for immediate download.
+                  Your translated legal documents are ready to download.
                 </p>
               </div>
               {avgConf != null && (

@@ -132,7 +132,7 @@ function GuestMessageBubble({
           {msg.usedFallback ? (
             <span className="text-white/35">Showing machine translation.</span>
           ) : msg.verifiedTranslation === msg.translation ? (
-            <span className="text-white/40">No changes — legally precise.</span>
+            <span className="text-white/40">No changes needed — verified.</span>
           ) : (
             <span>{msg.verifiedTranslation}</span>
           )}

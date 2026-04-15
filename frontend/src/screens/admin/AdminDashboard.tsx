@@ -193,7 +193,7 @@ export default function AdminDashboard({ onNav: _onNav }: Props) {
           </div>
           <h1 className="text-5xl font-headline text-on-surface tracking-tight">System Monitoring</h1>
           <p className="text-on-surface-variant mt-2 max-w-xl">
-            Real-time oversight of neural machine translation pipelines and judicial data ingestion nodes.
+            Monitor translation processing, system health, and recent activity across all services.
           </p>
         </div>
         <div className="flex items-center gap-3">
