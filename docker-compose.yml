@@ -34,8 +34,9 @@ x-airflow-common:
     AIRFLOW__CORE__INTERNAL_API_SECRET_KEY: ${AIRFLOW_SECRET_KEY}
 
     # ── Auth ──
-    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
-    AIRFLOW__API__AUTH_BACKENDS: 'airflow.providers.fab.auth_manager.api.auth.backend.basic_auth'
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.auth.managers.simple.simple_auth_manager.SimpleAuthManager
+    AIRFLOW__SIMPLE_AUTH_MANAGER__PASSWORDS: '{"airflow": "airflow"}'
+    AIRFLOW__SIMPLE_AUTH_MANAGER__ROLE: 'Admin'
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_SECRET_KEY}
 
     # ── Database ──
@@ -341,6 +342,10 @@ services:
       # ── Processor Tuning ──
       PDF_RENDER_DPI: ${PDF_RENDER_DPI}
       VALIDATION_CONFIDENCE_THRESHOLD: ${VALIDATION_CONFIDENCE_THRESHOLD}
+
+      # ── Groq (Llama fallback) ──
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_LEGAL_LLM_MODEL: ${GROQ_LEGAL_LLM_MODEL:-}
 
       # ── Airflow (API Client) ──
       AIRFLOW_BASE_URL: ${AIRFLOW_BASE_URL}

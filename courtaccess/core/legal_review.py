@@ -5,7 +5,8 @@ LegalReviewer class for Llama-based legal terminology verification.
 
 Provider priority (controlled by env vars):
   1. Vertex AI — Llama 4 Maverick (USE_VERTEX_LEGAL_REVIEW=true)
-  2. Stub      — always returns OK (default)
+  2. Groq     — Llama 4 Scout fallback (GROQ_API_KEY set)
+  3. Stub     — always returns OK (default)
 
 Translation cache (Redis-backed):
   Caches Llama verification results keyed by SHA-256 of
@@ -37,18 +38,24 @@ _CACHE_TTL_SECONDS = 86400 * 30  # 30 days
 
 _VERTEX_RETRY_BACKOFF = [1, 2, 4]  # seconds between attempts
 _VERTEX_RETRYABLE_HTTP = {429, 500, 502, 503, 504}
-_NOT_VERIFIED_PREFIX = "[NOT VERIFIED — Vertex AI unavailable]"
+_GROQ_RETRY_BACKOFF = [1, 2]  # shorter for Groq (faster API)
+_GROQ_RETRYABLE_HTTP = {429, 500, 502, 503}
+_NOT_VERIFIED_PREFIX = "[NOT VERIFIED — LLM providers unavailable]"
 
 
-class VertexReviewError(Exception):
-    """Raised when Vertex AI legal review fails after retries or on a non-retryable error."""
+class LLMReviewError(Exception):
+    """Raised when all LLM providers fail after retries."""
+
+
+# Keep old name as alias so any external references still work.
+VertexReviewError = LLMReviewError
 
 
 class LegalReviewer:
     """
-    Verifies translated legal text using Llama 4 via Vertex AI.
-    Caches results in Redis to avoid redundant API calls across
-    container restarts.
+    Verifies translated legal text using Llama via Vertex AI (primary)
+    or Groq (fallback). Caches results in Redis to avoid redundant API
+    calls across container restarts.
 
     Instantiate once at app startup per language:
         reviewer = LegalReviewer(config, glossary.glossary)
@@ -84,10 +91,30 @@ class LegalReviewer:
         self._cache_hits = 0
         self._cache_misses = 0
 
+        # Groq fallback — lazy client, cached after first use
+        self._groq_api_key = os.getenv("GROQ_API_KEY", "")
+        self._groq_model = os.getenv("GROQ_LEGAL_LLM_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+        self._groq_client = None  # lazily initialised in _get_groq_client()
+        self._groq_client_lock = threading.Lock()
+
         # Redis — lazy connection, graceful degradation
         self._redis_url = os.getenv("REDIS_URL")
         self._redis = None
         self._redis_available = True  # set False on first connection failure
+
+    # ── Provider availability ────────────────────────────────────────────────
+
+    @property
+    def _vertex_available(self) -> bool:
+        return bool(self._use_vertex_legal_review and self._vertex_project_id)
+
+    @property
+    def _groq_available(self) -> bool:
+        return bool(self._groq_api_key)
+
+    @property
+    def _any_provider_available(self) -> bool:
+        return self._vertex_available or self._groq_available
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -109,7 +136,7 @@ class LegalReviewer:
         if not original_spans:
             return translated_spans
 
-        if not (self._use_vertex_legal_review and self._vertex_project_id):
+        if not self._any_provider_available:
             return translated_spans
 
         if self.verification_mode == "document":
@@ -144,9 +171,11 @@ class LegalReviewer:
         Review a single translated text for legal accuracy.
         Returns output contract dict: {status, corrections}
         """
-        if not (self._use_vertex_legal_review and self._vertex_project_id):
+        if not self._any_provider_available:
             return self._stub_review(text)
-        return self._vertex_review(text)
+        if self._vertex_available:
+            return self._vertex_review(text)
+        return self._groq_review(text)
 
     def print_cache_stats(self) -> None:
         """Source: translation cache cell print_cache_stats()"""
@@ -274,18 +303,23 @@ class LegalReviewer:
         snippet: str,
     ) -> list:
         """
-        Send one batch to Vertex AI.
-        Falls back to NLLB output with a warning prefix on failure.
+        Send one batch to Vertex AI, falling back to Groq on failure.
+        Falls back to NLLB output with a warning prefix if all providers fail.
         Source: Cell 7 _call_llama()
         """
-        try:
-            return self._call_vertex(original_batch, translated_batch, snippet)
-        # except VertexReviewError:
-        #     return [f"{_NOT_VERIFIED_PREFIX} {t}" for t in translated_batch]
-        # AFTER
-        except VertexReviewError:
-            logger.warning("Vertex AI failed — falling back to Groq")
+        if self._vertex_available:
+            try:
+                return self._call_vertex(original_batch, translated_batch, snippet)
+            except LLMReviewError:
+                if self._groq_available:
+                    logger.warning("Vertex AI failed — falling back to Groq")
+                    return self._call_groq(original_batch, translated_batch, snippet)
+                return [f"{_NOT_VERIFIED_PREFIX} {t}" for t in translated_batch]
+
+        if self._groq_available:
             return self._call_groq(original_batch, translated_batch, snippet)
+
+        return [f"{_NOT_VERIFIED_PREFIX} {t}" for t in translated_batch]
 
     def _call_vertex(
         self,
@@ -306,7 +340,7 @@ class LegalReviewer:
           - Result is not a list
           - Result length does not match batch size
 
-        On exhausted retries: returns NLLB output with _NOT_VERIFIED_PREFIX.
+        On exhausted retries: raises LLMReviewError (triggers Groq fallback).
         Source: Cell 7 _call_llama() Vertex section.
         """
         import openai
@@ -400,7 +434,7 @@ class LegalReviewer:
 
                 # Non-retryable external error — log and raise
                 logger.error("Vertex non-retryable error: %s", exc)
-                raise VertexReviewError(f"Non-retryable Vertex AI error: {exc}") from exc
+                raise LLMReviewError(f"Non-retryable Vertex AI error: {exc}") from exc
 
         # All retries exhausted
         logger.error(
@@ -408,10 +442,10 @@ class LegalReviewer:
             self._vertex_max_retries,
             last_exc,
         )
-        raise VertexReviewError(
+        raise LLMReviewError(
             f"Vertex AI unavailable after {self._vertex_max_retries} attempts: {last_exc}"
         ) from last_exc
-        
+
     def _call_groq(
         self,
         original_batch: list,
@@ -420,52 +454,86 @@ class LegalReviewer:
     ) -> list:
         """
         Groq Llama fallback — called when Vertex AI is unavailable.
-        Uses the same prompt and response shape as _call_vertex.
+        Uses the same prompt and validation as _call_vertex, with its own
+        retry logic tuned for Groq's faster API and rate limits.
         """
-        from groq import Groq
-
-        groq_api_key = os.getenv("GROQ_API_KEY", "")
-        groq_model = os.getenv("GROQ_LEGAL_LLM_MODEL", "llama-3.3-70b-versatile")
-
-        if not groq_api_key:
-            logger.error("Groq fallback unavailable: GROQ_API_KEY not set — returning NLLB output")
-            return [f"{_NOT_VERIFIED_PREFIX} {t}" for t in translated_batch]
-
         prompt = self._build_verification_prompt(original_batch, translated_batch, snippet)
+        last_exc = None
+        max_retries = 2
 
-        try:
-            client = Groq(api_key=groq_api_key)
-            resp = client.chat.completions.create(
-                model=groq_model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0,
-                max_tokens=8192,
-            )
-
-            raw = resp.choices[0].message.content
+        for attempt in range(max_retries):
             try:
-                corrected = json.loads(self._strip_fences(raw))
-            except json.JSONDecodeError as exc:
-                logger.warning("Groq bad response (JSONDecodeError) — returning NLLB output: %s", exc)
-                return translated_batch
-
-            if not isinstance(corrected, list):
-                logger.warning("Groq bad response (not a list, got %s) — returning NLLB output", type(corrected).__name__)
-                return translated_batch
-
-            if len(corrected) != len(original_batch):
-                logger.warning(
-                    "Groq bad response (length mismatch: expected %d, got %d) — returning NLLB output",
-                    len(original_batch),
-                    len(corrected),
+                client = self._get_groq_client()
+                resp = client.chat.completions.create(
+                    model=self._groq_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0,
+                    max_tokens=8192,
                 )
-                return translated_batch
 
-            return self._validate_results(original_batch, translated_batch, corrected)
+                # ── Truncation check ─────────────────────────────────────
+                finish_reason = resp.choices[0].finish_reason
+                if finish_reason == "length":
+                    logger.warning(
+                        "Groq response truncated (finish_reason=length) — batch of %d items. Returning NLLB output.",
+                        len(original_batch),
+                    )
+                    return translated_batch
 
-        except Exception as exc:
-            logger.error("Groq fallback also failed: %s — returning NLLB output", exc)
-            return [f"{_NOT_VERIFIED_PREFIX} {t}" for t in translated_batch]
+                # ── Bad response checks (no retry) ───────────────────────
+                raw = resp.choices[0].message.content
+                try:
+                    corrected = json.loads(self._strip_fences(raw))
+                except json.JSONDecodeError as exc:
+                    logger.warning("Groq bad response (JSONDecodeError) — returning NLLB output: %s", exc)
+                    return translated_batch
+
+                if not isinstance(corrected, list):
+                    logger.warning(
+                        "Groq bad response (not a list, got %s) — returning NLLB output",
+                        type(corrected).__name__,
+                    )
+                    return translated_batch
+
+                if len(corrected) != len(original_batch):
+                    logger.warning(
+                        "Groq bad response (length mismatch: expected %d, got %d) — returning NLLB output",
+                        len(original_batch),
+                        len(corrected),
+                    )
+                    return translated_batch
+
+                return self._validate_results(original_batch, translated_batch, corrected)
+
+            except Exception as exc:
+                last_exc = exc
+
+                if isinstance(exc, (AttributeError, TypeError, NameError)):
+                    raise
+
+                # Rate limit (429) — back off and retry
+                try:
+                    from groq import APIStatusError
+
+                    if isinstance(exc, APIStatusError) and exc.status_code in _GROQ_RETRYABLE_HTTP:
+                        wait = _GROQ_RETRY_BACKOFF[min(attempt, len(_GROQ_RETRY_BACKOFF) - 1)]
+                        logger.warning(
+                            "Groq retryable error (attempt %d/%d, retrying in %ds): %s",
+                            attempt + 1,
+                            max_retries,
+                            wait,
+                            exc,
+                        )
+                        time.sleep(wait)
+                        continue
+                except ImportError:
+                    pass
+
+                logger.error("Groq non-retryable error: %s", exc)
+                break
+
+        logger.error("Groq fallback failed after %d attempts: %s", max_retries, last_exc)
+        return [f"{_NOT_VERIFIED_PREFIX} {t}" for t in translated_batch]
 
     def _validate_results(
         self,
@@ -554,6 +622,21 @@ class LegalReviewer:
             ),
             api_key=self._vertex_credentials.token,
         )
+
+    # ── Groq client ──────────────────────────────────────────────────────────
+
+    def _get_groq_client(self):
+        """Return the cached Groq client, creating it on first call (thread-safe)."""
+        if self._groq_client is not None:
+            return self._groq_client
+        with self._groq_client_lock:
+            if self._groq_client is None:
+                try:
+                    from groq import Groq
+                except ImportError:
+                    raise LLMReviewError("groq package is not installed — run: pip install groq") from None
+                self._groq_client = Groq(api_key=self._groq_api_key)
+        return self._groq_client
 
     # ── Prompt and utilities ──────────────────────────────────────────────────
 
@@ -658,8 +741,13 @@ class LegalReviewer:
     def _vertex_review(self, text: str) -> dict:
         """
         Single-text Vertex AI review.
-        Raises VertexReviewError on failure so the DAG retry wrapper
+        Raises LLMReviewError on failure so the DAG retry wrapper
         can detect it and flag the form for human review.
         """
         results = self._call_vertex([text], [text], "")
+        return {"status": "ok", "corrections": [], "reviewed": results[0]}
+
+    def _groq_review(self, text: str) -> dict:
+        """Single-text Groq review — used when Vertex is not configured."""
+        results = self._call_groq([text], [text], "")
         return {"status": "ok", "corrections": [], "reviewed": results[0]}

@@ -24,7 +24,6 @@ DB tables used:
 from __future__ import annotations
 
 import asyncio
-import base64
 import hashlib
 import logging
 import uuid
@@ -54,16 +53,21 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
-def _airflow_basic_auth_headers() -> dict[str, str]:
-    """Build HTTP Basic Auth headers for the Airflow REST API.
+async def _airflow_auth_headers(client: httpx.AsyncClient) -> dict[str, str]:
+    """Fetch a JWT from Airflow's ``/auth/token`` and return Bearer headers.
 
-    Airflow 3.x's /auth/token JWT endpoint depends on FabAuthManager's internal
-    Flask app, which is prone to "Flask app is not initialized" 500 errors.
-    Basic Auth bypasses that entirely — the /api/v2/* endpoints accept it
-    directly via FabAuthManager's session-based auth.
+    Airflow 3.x's ``/api/v2/`` endpoints only accept JWT Bearer tokens.
+    SimpleAuthManager provides ``/auth/token`` without Flask dependencies.
     """
-    creds = base64.b64encode(f"{settings.airflow_username}:{settings.airflow_password}".encode()).decode()
-    return {"Authorization": f"Basic {creds}"}
+    resp = await client.post(
+        f"{settings.airflow_base_url}/auth/token",
+        json={"username": settings.airflow_username, "password": settings.airflow_password},
+    )
+    resp.raise_for_status()
+    token = resp.json().get("access_token")
+    if not token:
+        raise ValueError(f"Airflow /auth/token response missing access_token: {resp.text}")
+    return {"Authorization": f"Bearer {token}"}
 
 
 async def _unpause_for_trigger(client: httpx.AsyncClient, dag_id: str, auth_headers: dict[str, str]) -> None:
@@ -370,7 +374,7 @@ async def upload_document(
     # or a re-trigger endpoint. We log the error but don't fail the upload.
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
-            auth_headers = _airflow_basic_auth_headers()
+            auth_headers = await _airflow_auth_headers(client)
             await _unpause_for_trigger(client, dag_id, auth_headers)
             resp = await client.post(
                 f"{settings.airflow_base_url}/api/v2/dags/{dag_id}/dagRuns",
@@ -788,7 +792,7 @@ async def retranslate_document(
     # ── Trigger Airflow DAG ────────────────────────────────────────────────
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
-            auth_headers = _airflow_basic_auth_headers()
+            auth_headers = await _airflow_auth_headers(client)
             await _unpause_for_trigger(client, "document_pipeline_dag", auth_headers)
             resp = await client.post(
                 f"{settings.airflow_base_url}/api/v2/dags/document_pipeline_dag/dagRuns",

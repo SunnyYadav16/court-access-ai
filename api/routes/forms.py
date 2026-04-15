@@ -18,7 +18,6 @@ In production this will be queryable via the PostgreSQL FormCatalog table.
 
 from __future__ import annotations
 
-import base64
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -90,13 +89,22 @@ async def trigger_form_scraper(
     dag_run_url = f"{settings.airflow_base_url}/api/v2/dags/form_scraper_dag/dagRuns"
     triggered_at = datetime.now(tz=UTC)
 
-    # Basic Auth bypasses the broken /auth/token JWT endpoint — Airflow 3.x's
-    # FabAuthManager accepts Basic credentials directly on /api/v2/* routes.
-    creds = base64.b64encode(f"{settings.airflow_username}:{settings.airflow_password}".encode()).decode()
-    auth_headers = {"Authorization": f"Basic {creds}"}
-
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
+            # Fetch JWT — Airflow 3.x /api/v2/ requires Bearer tokens.
+            token_resp = await client.post(
+                f"{settings.airflow_base_url}/auth/token",
+                json={"username": settings.airflow_username, "password": settings.airflow_password},
+            )
+            token_resp.raise_for_status()
+            token = token_resp.json().get("access_token")
+            if not token:
+                raise httpx.HTTPStatusError(
+                    "Airflow /auth/token response missing access_token",
+                    request=token_resp.request,
+                    response=token_resp,
+                )
+            auth_headers = {"Authorization": f"Bearer {token}"}
             # Unpause → trigger → re-pause.
             # A paused DAG leaves triggered runs queued forever, so we must
             # unpause first. We re-pause immediately after queuing the run so
