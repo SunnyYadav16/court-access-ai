@@ -5,9 +5,9 @@
 #
 # Triggers only on push to main — no reason to build images on feature branches.
 #
-# Builds two targets from the multi-stage Dockerfile:
-#   api     — FastAPI app server (serves frontend static files + REST API)
-#   airflow — Airflow scheduler/workers with courtaccess package pre-installed
+# Builds targets from two Dockerfiles:
+#   api     — FastAPI app server (serves frontend static files + REST API)  [Dockerfile]
+#   airflow — Airflow workers on the CUDA runtime so CTranslate2 uses GPU  [gpu.Dockerfile --target airflow]
 #
 # Images are pushed to Google Artifact Registry:
 #   {GCP_ARTIFACT_REGISTRY}/{GCP_PROJECT_ID}/{GCP_ARTIFACT_REPOSITORY}/courtaccess-api:{sha}
@@ -142,6 +142,7 @@ jobs:
         with:
           context: .
           file: gpu.Dockerfile
+          target: api
           push: true
           tags: |
             ${{ steps.tags.outputs.api_gpu_tag }}
@@ -154,24 +155,27 @@ jobs:
             VITE_FIREBASE_MESSAGING_SENDER_ID=${{ vars.VITE_FIREBASE_MESSAGING_SENDER_ID }}
             VITE_FIREBASE_APP_ID=${{ secrets.VITE_FIREBASE_APP_ID }}
             VITE_API_BASE_URL=${{ vars.VITE_API_BASE_URL }}
-          cache-from: type=gha,scope=api-gpu-v2
-          cache-to: type=gha,mode=max,scope=api-gpu-v2
+          cache-from: type=gha,scope=api-gpu-v3
+          cache-to: type=gha,mode=max,scope=api-gpu-v3
           provenance: false
 
       # ── 10. Build & push — airflow target ────────────────────────────────────
-      # apache/airflow:3.1.7 base + courtaccess package + DAGs + Playwright/Chromium
+      # Built from gpu.Dockerfile (target: airflow) so the image is based on
+      # nvidia/cuda:12.4.1-cudnn-runtime — making libcublas.so.12 available at
+      # runtime. Without this, _cuda_available() in translation.py fails the
+      # ctypes.CDLL("libcublas.so.12") check and CTranslate2 falls back to CPU.
       - name: Build & push airflow image
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile
+          file: gpu.Dockerfile
           target: airflow
           push: true
           tags: |
             ${{ steps.tags.outputs.airflow_tag }}
             ${{ steps.tags.outputs.airflow_latest }}
-          cache-from: type=gha,scope=airflow-v2
-          cache-to: type=gha,mode=max,scope=airflow-v2
+          cache-from: type=gha,scope=airflow-gpu-v1
+          cache-to: type=gha,mode=max,scope=airflow-gpu-v1
           provenance: false
 
       # ── 11. Write image digest report ────────────────────────────────────────

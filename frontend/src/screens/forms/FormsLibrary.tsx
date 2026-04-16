@@ -126,6 +126,7 @@ export default function FormsLibrary({ onNav }: Props) {
         <div className="bg-surface-container-low p-4 rounded-xl border border-outline-variant/10 relative">
           <select
             className="bg-transparent border-none focus:ring-0 text-on-surface w-full appearance-none cursor-pointer outline-none"
+            style={{ WebkitAppearance: "none", MozAppearance: "none" } as React.CSSProperties}
             value={selectedDivision}
             onChange={(e) => handleDivisionChange(e.target.value)}
           >
@@ -143,6 +144,7 @@ export default function FormsLibrary({ onNav }: Props) {
         <div className="bg-surface-container-low p-4 rounded-xl border border-outline-variant/10 relative">
           <select
             className="bg-transparent border-none focus:ring-0 text-on-surface w-full appearance-none cursor-pointer outline-none"
+            style={{ WebkitAppearance: "none", MozAppearance: "none" } as React.CSSProperties}
             value={selectedLanguage}
             onChange={(e) => handleLanguageChange(e.target.value)}
           >

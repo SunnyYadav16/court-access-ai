@@ -9,6 +9,78 @@ import { realtimeApi } from "@/services/api"
 
 const TOAST_SESSION_ENDED = "Session ended. Transcript saved."
 
+// ── Word-level diff ──────────────────────────────────────────────────────────
+
+/**
+ * Compute a simple word-level diff between the original NLLB translation and
+ * the Llama-verified translation.  Returns an array of segments, each marked
+ * as "same", "added" (new word from verifier), or "removed" (dropped by verifier).
+ *
+ * Uses the classic LCS (Longest Common Subsequence) approach on whitespace-
+ * tokenised words.  Good enough for short legal utterances — O(n*m) where n
+ * and m are word counts (typically <40).
+ */
+type DiffSegment = { text: string; type: "same" | "added" | "removed" }
+
+function diffWords(original: string, verified: string): DiffSegment[] {
+  const a = original.split(/\s+/).filter(Boolean)
+  const b = verified.split(/\s+/).filter(Boolean)
+
+  // Build LCS table
+  const m = a.length
+  const n = b.length
+  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0))
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1])
+
+  // Back-trace to build diff
+  const segments: DiffSegment[] = []
+  let i = m, j = n
+  const raw: DiffSegment[] = []
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
+      raw.push({ text: a[i - 1], type: "same" })
+      i--; j--
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      raw.push({ text: b[j - 1], type: "added" })
+      j--
+    } else {
+      raw.push({ text: a[i - 1], type: "removed" })
+      i--
+    }
+  }
+  raw.reverse()
+
+  // Merge consecutive segments of the same type into single spans
+  for (const seg of raw) {
+    const last = segments[segments.length - 1]
+    if (last && last.type === seg.type) {
+      last.text += " " + seg.text
+    } else {
+      segments.push({ ...seg })
+    }
+  }
+  return segments
+}
+
+function DiffDisplay({ original, verified }: { original: string; verified: string }) {
+  const segments = diffWords(original, verified)
+  return (
+    <span>
+      {segments.map((seg, i) =>
+        seg.type === "same" ? (
+          <span key={i}>{seg.text} </span>
+        ) : seg.type === "added" ? (
+          <span key={i} className="bg-green-500/20 text-green-300 rounded px-0.5">{seg.text} </span>
+        ) : (
+          <span key={i} className="bg-red-500/15 text-red-400/70 line-through rounded px-0.5">{seg.text} </span>
+        )
+      )}
+    </span>
+  )
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function formatDuration(s: number): string {
@@ -105,19 +177,20 @@ function MessageBubble({
         </div>
       )}
 
-      {/* Legal verification block */}
+      {/* Legal verification block — hidden when verifier fell back */}
       {msg.verifiedTranslation && !msg.usedFallback && (
-        <div className="max-w-xs px-3 py-2 text-xs leading-relaxed bg-indigo-500/[0.07] border-l-2 border-indigo-500/40 pl-2.5 text-white/70">
+        <div className="max-w-xs px-3 py-2 text-xs leading-relaxed border-l-2 pl-2.5 bg-indigo-500/[0.07] border-indigo-500/40 text-white/70">
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-[10px] font-semibold text-indigo-300 flex items-center gap-1">
-              <span className="material-symbols-outlined text-xs">gavel</span> Legal Verified
+            <span className="text-[10px] font-semibold flex items-center gap-1 text-indigo-300">
+              <span className="material-symbols-outlined text-xs">gavel</span>
+              Legal Verified
             </span>
             {msg.accuracyScore != null && <VerificationChip score={msg.accuracyScore} />}
           </div>
           {msg.verifiedTranslation === msg.translation ? (
             <span className="text-white/40">No changes — legally precise.</span>
           ) : (
-            msg.verifiedTranslation
+            <DiffDisplay original={msg.translation ?? ""} verified={msg.verifiedTranslation} />
           )}
           {msg.accuracyNote && msg.verifiedTranslation !== msg.translation && (
             <div className="mt-1 text-[10px] text-white/40">
@@ -310,17 +383,14 @@ export default function RealtimeSession({ onNav }: Props) {
 
   // ── Computed sidebar stats ─────────────────────────────────────────────────
   const stats = useMemo(() => {
-    const scored = messages.filter((m) => m.accuracyScore != null)
-    const avgAsr = scored.length
-      ? (scored.reduce((s, m) => s + (m.accuracyScore ?? 0), 0) / scored.length).toFixed(2)
-      : "—"
-    const nmtScored = messages.filter((m) => m.translation != null && m.accuracyScore != null)
-    const avgNmt = nmtScored.length
-      ? (nmtScored.reduce((s, m) => s + (m.accuracyScore ?? 0), 0) / nmtScored.length).toFixed(2)
-      : "—"
-    const corrections = scored.filter((m) => (m.accuracyScore ?? 1) < 0.9).length
+    const legalScored = messages.filter((m) => m.accuracyScore != null && !m.usedFallback)
+    const avgLegal = legalScored.length
+      ? Math.round(legalScored.reduce((s, m) => s + (m.accuracyScore ?? 0), 0) / legalScored.length * 100)
+      : null
+    const avgLegalDisplay = avgLegal !== null ? `${avgLegal}%` : "—"
+    const corrections = legalScored.filter((m) => (m.accuracyScore ?? 1) < 0.9).length
     const ttsSegments = messages.filter((m) => m.translation != null).length
-    return { avgAsr, avgNmt, corrections, ttsSegments }
+    return { avgLegal, avgLegalDisplay, corrections, ttsSegments }
   }, [messages])
 
   // ── Action handlers ────────────────────────────────────────────────────────
@@ -371,7 +441,7 @@ export default function RealtimeSession({ onNav }: Props) {
         @keyframes waveBar { 0%,100%{transform:scaleY(0.4)} 50%{transform:scaleY(1)} }
       `}</style>
 
-      <div className="min-h-screen flex flex-col bg-background text-on-surface">
+      <div className="h-screen flex flex-col overflow-hidden bg-background text-on-surface">
 
         {/* ── Header ──────────────────────────────────────────────────────── */}
         <div className="px-6 py-2.5 flex items-center justify-between flex-shrink-0 bg-[#0D1B2A] border-b border-white/[0.07] shadow-xl shadow-black/40">
@@ -560,21 +630,20 @@ export default function RealtimeSession({ onNav }: Props) {
                 </div>
               </div>
 
-              {/* Confidence */}
+              {/* Legal Accuracy */}
               <div className="text-right flex-shrink-0">
                 <div className="text-[10px] text-white/40">
-                  Confidence
+                  Legal Accuracy
                 </div>
                 <div
                   className={`text-lg font-bold ${
-                    stats.avgAsr !== "—" && parseFloat(stats.avgAsr) >= 0.9
-                      ? "text-green-400"
-                      : stats.avgAsr !== "—" && parseFloat(stats.avgAsr) >= 0.7
-                        ? "text-amber-400"
-                        : "text-white/40"
+                    stats.avgLegal === null ? "text-white/40"
+                    : stats.avgLegal >= 90 ? "text-green-400"
+                    : stats.avgLegal >= 70 ? "text-amber-400"
+                    : "text-red-400"
                   }`}
                 >
-                  {stats.avgAsr !== "—" ? `${Math.round(parseFloat(stats.avgAsr) * 100)}%` : "—"}
+                  {stats.avgLegal !== null ? `${stats.avgLegal}%` : "—"}
                 </div>
               </div>
             </div>
@@ -626,8 +695,7 @@ export default function RealtimeSession({ onNav }: Props) {
             {/* Stats */}
             <SidebarSection title="Stats">
               <SidebarRow label="Utterances" value={messages.length} />
-              <SidebarRow label="Avg ASR Conf." value={stats.avgAsr} />
-              <SidebarRow label="Avg NMT Conf." value={stats.avgNmt} />
+              <SidebarRow label="Avg Legal Accuracy" value={stats.avgLegalDisplay} />
               <SidebarRow label="Llama Corrections" value={stats.corrections} />
               <SidebarRow label="TTS Segments" value={stats.ttsSegments} />
             </SidebarSection>

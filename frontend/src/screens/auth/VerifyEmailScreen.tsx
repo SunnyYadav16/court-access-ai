@@ -47,7 +47,7 @@ export default function VerifyEmailScreen({ onNav }: Props) {
               ))}
             </div>
 
-            <Button className="w-full" style={{ background: "#0B1D3A" }}
+            <Button className="w-full" style={{ background: "#1D4ED8" }}
               onClick={() => onNav(SCREENS.HOME_PUBLIC)}>
               Verify Email
             </Button>

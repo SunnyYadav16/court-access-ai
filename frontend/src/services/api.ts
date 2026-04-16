@@ -59,6 +59,7 @@ export interface DocumentStatus {
   llama_corrections_count: number;
   processing_time_seconds: number | null;
   error_message: string | null;
+  original_filename: string | null;
 }
 
 export interface PipelineStep {
@@ -329,6 +330,27 @@ export interface RoomCreateResponse {
   join_url: string;
 }
 
+export interface RealtimeSessionSummary {
+  session_id: string;
+  status: string;           // waiting | active | ended
+  target_language: string;  // es | pt
+  court_division: string | null;
+  courtroom: string | null;
+  case_docket: string | null;
+  partner_name: string | null;
+  total_utterances: number;
+  duration_seconds: number | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface RealtimeSessionListResponse {
+  items: RealtimeSessionSummary[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 export interface RoomPreviewResponse {
   phase: "waiting" | "joining" | "active" | "ended";
   target_language: string;
@@ -361,6 +383,10 @@ export const realtimeApi = {
   /** End a room session (creator only). Idempotent — 204 if already ended. */
   endRoom: (sessionId: string): Promise<void> =>
     api.post(`/sessions/rooms/${sessionId}/end`).then(() => undefined),
+
+  /** List current user's realtime session history (paginated). */
+  history: (page = 1, pageSize = 20): Promise<RealtimeSessionListResponse> =>
+    api.get<RealtimeSessionListResponse>("/sessions/history", { params: { page, page_size: pageSize } }).then((r) => r.data),
 };
 
 export const sessionsApi = {
@@ -429,6 +455,34 @@ export interface TriggerScraperResponse {
   triggered_at: string;
 }
 
+export interface ContainerStat {
+  name: string;
+  cpu: string;
+  mem: string;
+  gpu: string | null;
+}
+
+export interface ScraperStats {
+  last_run_at: string | null;
+  dag_run_id: string | null;
+  scenario_a_new: number;
+  scenario_b_updated: number;
+  scenario_c_deleted: number;
+  scenario_d_renamed: number;
+  scenario_e_no_change: number;
+  pretranslation_queued: number;
+  active_forms: number;
+  forms_with_es: number;
+  forms_with_pt: number;
+}
+
+export interface SystemStats {
+  db_latency_ms: number;
+  active_form_count: number;
+  pending_review_count: number;
+  avg_pipeline_step_seconds: number | null;
+}
+
 export const adminApi = {
   getStats: (): Promise<AdminStats> =>
     api.get<AdminStats>("/admin/stats").then((r) => r.data),
@@ -453,6 +507,18 @@ export const adminApi = {
 
   triggerScraper: (): Promise<TriggerScraperResponse> =>
     api.post<TriggerScraperResponse>("/forms/scraper/trigger", { force: false }).then((r) => r.data),
+
+  getContainerStats: (): Promise<ContainerStat[]> =>
+    api.get<ContainerStat[]>("/admin/container-stats").then((r) => r.data),
+
+  cleanupStaleSessions: (): Promise<{ cleaned: number }> =>
+    api.post<{ cleaned: number }>("/admin/cleanup-stale-sessions", {}).then((r) => r.data),
+
+  getScraperStats: (): Promise<ScraperStats> =>
+    api.get<ScraperStats>("/admin/scraper-stats").then((r) => r.data),
+
+  getSystemStats: (): Promise<SystemStats> =>
+    api.get<SystemStats>("/admin/system-stats").then((r) => r.data),
 };
 
 // Re-export RoleRequestSummary for consumers that need it
@@ -465,5 +531,67 @@ export interface RoleRequestSummary {
   reviewed_by: string | null;
   reviewed_at: string | null;
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Interpreter endpoints
+// ══════════════════════════════════════════════════════════════════════════════
+
+export interface InterpreterReviewSummary {
+  session_id: string;
+  target_language: string;
+  status: string;
+  review_status: "pending" | "approved" | "flagged";
+  avg_confidence_score: number | null;
+  llama_corrections_count: number;
+  original_filename: string | null;
+  signed_url_original: string | null;
+  signed_url_translated: string | null;
+  signed_url_expires_at: string | null;
+  created_at: string;
+}
+
+export const interpreterApi = {
+  /** List completed translations for review. */
+  listReview: (page = 1, targetLanguage?: string): Promise<InterpreterReviewSummary[]> =>
+    api
+      .get<InterpreterReviewSummary[]>("/interpreter/review", {
+        params: { page, ...(targetLanguage ? { target_language: targetLanguage } : {}) },
+      })
+      .then((r) => r.data),
+
+  /** Get a single session's review details. */
+  getReview: (sessionId: string): Promise<InterpreterReviewSummary> =>
+    api.get<InterpreterReviewSummary>(`/interpreter/review/${sessionId}`).then((r) => r.data),
+
+  /** Approve a translation. */
+  approve: (sessionId: string): Promise<{ status: string; session_id: string }> =>
+    api.post(`/interpreter/review/${sessionId}/approve`).then((r) => r.data),
+
+  /** Flag a translation for recorrection. */
+  flag: (
+    sessionId: string,
+    notes: string,
+    correctionRequested = true,
+  ): Promise<{ status: string; session_id: string }> =>
+    api
+      .post(`/interpreter/review/${sessionId}/flag`, {
+        notes,
+        correction_requested: correctionRequested,
+      })
+      .then((r) => r.data),
+
+  /** Submit a manual correction. */
+  submitCorrection: (
+    sessionId: string,
+    body: {
+      original_text: string;
+      original_language: string;
+      corrected_translation: string;
+      target_language: string;
+      correction_notes?: string;
+    },
+  ): Promise<{ status: string; session_id: string }> =>
+    api.post(`/interpreter/review/${sessionId}/correct`, body).then((r) => r.data),
+};
 
 export default api;

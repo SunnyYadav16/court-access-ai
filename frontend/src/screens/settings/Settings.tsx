@@ -46,14 +46,6 @@ export default function Settings({ onNav: _onNav }: Props) {
     })
   }
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text)
-  }
-
-  const truncateUserId = (id: string) => {
-    return id.slice(0, 8) + "..." + id.slice(-4)
-  }
-
   return (
     <div className="px-6 lg:px-8 py-8 max-w-5xl mx-auto space-y-8">
 
@@ -95,28 +87,21 @@ export default function Settings({ onNav: _onNav }: Props) {
           </div>
         </section>
 
-        {/* ── Status Sidebar (4-col) ───────────────────────────────── */}
-        <section className="md:col-span-4 bg-surface-container-low rounded-xl p-6 border border-outline-variant/10 flex flex-col justify-between">
-          <div>
-            <h3 className="text-on-surface-variant text-[10px] uppercase tracking-[0.2em] mb-4">System Status</h3>
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-400">Database Sync</span>
-                <span className="w-2 h-2 rounded-full bg-emerald-500" style={{ boxShadow: "0 0 8px rgba(16,185,129,0.6)" }} />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-400">Security Node</span>
-                <span className="w-2 h-2 rounded-full bg-emerald-500" style={{ boxShadow: "0 0 8px rgba(16,185,129,0.6)" }} />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-400">Audit Trail</span>
-                <span className="w-2 h-2 rounded-full bg-secondary" style={{ boxShadow: "0 0 8px rgba(255,193,7,0.6)" }} />
-              </div>
-            </div>
+        {/* ── Mission Quote (4-col) ────────────────────────────────── */}
+        <section className="md:col-span-4 bg-surface-container-low rounded-xl p-6 border border-outline-variant/10 flex flex-col justify-between relative overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-bl from-secondary/5 to-transparent pointer-events-none" />
+          <div className="relative flex-1 flex flex-col justify-center gap-6">
+            <span className="material-symbols-outlined text-secondary/40 text-5xl">format_quote</span>
+            <blockquote className="text-base text-on-surface leading-relaxed italic font-headline">
+              "Justice delayed is justice denied — but justice lost in translation is justice denied twice."
+            </blockquote>
+            <p className="text-[11px] text-on-surface-variant uppercase tracking-widest">
+              CourtAccess AI Mission
+            </p>
           </div>
-          <div className="mt-8 p-4 bg-surface-container-lowest rounded-lg border border-white/5">
+          <div className="mt-6 p-4 bg-surface-container-lowest rounded-lg border border-white/5 relative">
             <p className="text-[10px] text-slate-500 leading-relaxed">
-              Your account is currently operating under high-security protocols. All actions are logged to the magistrate ledger.
+              Member since {formatDate(backendUser?.created_at)}. All actions are logged to the audit trail.
             </p>
           </div>
         </section>
@@ -129,13 +114,10 @@ export default function Settings({ onNav: _onNav }: Props) {
           </div>
           <div className="p-8 space-y-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-              {/* User ID */}
+              {/* Display Name */}
               <div>
-                <label className="block text-[10px] uppercase tracking-widest text-on-surface-variant mb-2">Internal User ID</label>
-                <div className="flex items-center gap-2 group cursor-pointer" role="button" tabIndex={0} onClick={() => copyToClipboard(backendUser?.user_id || "")} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); copyToClipboard(backendUser?.user_id || "") } }} aria-label="Copy User ID to clipboard">
-                  <span className="font-mono text-sm text-secondary-fixed">{truncateUserId(backendUser?.user_id || "")}</span>
-                  <span className="material-symbols-outlined text-xs text-slate-600 group-hover:text-secondary">content_copy</span>
-                </div>
+                <label className="block text-[10px] uppercase tracking-widest text-on-surface-variant mb-2">Display Name</label>
+                <p className="text-sm">{backendUser?.name || "—"}</p>
               </div>
 
               {/* Auth Provider */}

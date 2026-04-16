@@ -19,9 +19,9 @@ import useAuthStore from "@/store/authStore"
 // ── Step config ──────────────────────────────────────────────────────────────
 
 const STEP_LABELS: Record<string, string> = {
-  validate_upload:   "Ingestion",
+  validate_upload:   "Upload Check",
   classify_document: "Classification",
-  ocr_printed_text:  "OCR Layering",
+  ocr_printed_text:  "Text Extraction",
   translate:         "Translation",
   legal_review:      "Legal Review",
   reconstruct_pdf:   "Rebuilding",
@@ -253,6 +253,12 @@ export default function DocProcessing({ onNav }: Props) {
   const successCount = steps.filter((s) => s.status === "success").length
   const progressPct  = Math.round((successCount / STEP_ORDER.length) * 100)
 
+  // Find the index of the failed step (if any) so subsequent steps
+  // show "Cancelled" instead of "Pending" when the pipeline has stopped.
+  const failedStepIndex = terminalError
+    ? STEP_ORDER.findIndex((s) => stepMap.get(s)?.status === "failed")
+    : -1
+
   // ── Results derived data ────────────────────────────────────────────────────
 
   const avgConf     = documentResult?.avg_confidence_score
@@ -303,7 +309,7 @@ export default function DocProcessing({ onNav }: Props) {
       <section>
         <h1 className="font-headline text-4xl text-on-surface mb-2">Process Intelligence</h1>
         <p className="text-on-surface-variant font-body max-w-2xl">
-          Session {sessionId.slice(0, 8)}… · {isComplete ? `${langLabel} translation complete.` : `Translating to ${langLabel}. Systems are currently executing neural translation and cross-jurisdictional verification.`}
+          {isComplete ? `${langLabel} translation complete.` : `Translating to ${langLabel}. Your document is being translated and verified for legal accuracy.`}
         </p>
       </section>
 
@@ -360,11 +366,12 @@ export default function DocProcessing({ onNav }: Props) {
           <div className="grid grid-cols-3 md:grid-cols-9 gap-4 relative">
             <div className="hidden md:block absolute top-6 left-0 w-full h-[2px] bg-surface-container-highest -z-0" />
 
-            {STEP_ORDER.map((stepName) => {
-              const status    = getStepStatus(stepName)
-              const isSuccess = status === "success"
-              const isRunning = status === "running"
-              const isFailed  = status === "failed"
+            {STEP_ORDER.map((stepName, i) => {
+              const status      = getStepStatus(stepName)
+              const isSuccess   = status === "success"
+              const isRunning   = status === "running"
+              const isFailed    = status === "failed"
+              const isCancelled = failedStepIndex >= 0 && i > failedStepIndex
 
               return (
                 <div key={stepName} className="flex flex-col items-center text-center gap-3 relative z-10">
@@ -376,6 +383,8 @@ export default function DocProcessing({ onNav }: Props) {
                         ? "bg-surface-container-highest border-2 border-secondary text-secondary"
                         : isFailed
                         ? "bg-error-container text-error"
+                        : isCancelled
+                        ? "bg-surface-container-highest border border-outline-variant/30 text-outline/30 opacity-30"
                         : "bg-surface-container-highest border border-outline-variant/30 text-outline opacity-40"
                     }`}
                     style={isRunning ? {
@@ -389,21 +398,23 @@ export default function DocProcessing({ onNav }: Props) {
                       <span className="material-symbols-outlined animate-spin" style={{ fontSize: "20px" }}>autorenew</span>
                     ) : isFailed ? (
                       <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>cancel</span>
+                    ) : isCancelled ? (
+                      <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 0" }}>block</span>
                     ) : (
                       <span className="material-symbols-outlined">{STEP_ICONS[stepName] ?? "radio_button_unchecked"}</span>
                     )}
                   </div>
 
                   <span className={`text-[10px] font-bold uppercase tracking-tighter ${
-                    isRunning ? "text-secondary" : isSuccess ? "text-on-surface" : isFailed ? "text-error" : "text-outline"
+                    isRunning ? "text-secondary" : isSuccess ? "text-on-surface" : isFailed ? "text-error" : isCancelled ? "text-outline/30" : "text-outline"
                   }`}>
                     {STEP_LABELS[stepName] ?? stepName}
                   </span>
 
                   <div className={`text-[9px] ${
-                    isRunning ? "text-secondary/70" : isSuccess ? "text-on-surface-variant" : isFailed ? "text-error/70" : "text-outline-variant"
+                    isRunning ? "text-secondary/70" : isSuccess ? "text-on-surface-variant" : isFailed ? "text-error/70" : isCancelled ? "text-outline-variant/50" : "text-outline-variant"
                   }`}>
-                    {isSuccess ? "Complete" : isRunning ? "Processing…" : isFailed ? "Failed" : "Pending"}
+                    {isSuccess ? "Complete" : isRunning ? "Processing…" : isFailed ? "Failed" : isCancelled ? "Cancelled" : "Pending"}
                   </div>
                 </div>
               )
@@ -415,7 +426,7 @@ export default function DocProcessing({ onNav }: Props) {
       {/* ══════════════════════════════════════════════════════════════
            PROCESSING STATE: show detailed log
          ══════════════════════════════════════════════════════════════ */}
-      {!isComplete && !terminalError && (
+      {!isComplete && (
         <section className="bg-surface-container-low rounded-xl overflow-hidden border border-white/5">
           <div className="px-8 py-5 bg-surface-container-high/40 border-b border-white/5">
             <div className="flex items-center justify-between mb-3">
@@ -426,7 +437,11 @@ export default function DocProcessing({ onNav }: Props) {
             </div>
             <div className="h-1.5 rounded-full overflow-hidden bg-surface-container-highest">
               <div
-                className="h-full rounded-full transition-all duration-700 bg-gradient-to-r from-secondary-container to-secondary"
+                className={`h-full rounded-full transition-all duration-700 ${
+                  terminalError
+                    ? "bg-gradient-to-r from-error-container to-error"
+                    : "bg-gradient-to-r from-secondary-container to-secondary"
+                }`}
                 style={{ width: `${progressPct}%` }}
               />
             </div>
@@ -438,6 +453,7 @@ export default function DocProcessing({ onNav }: Props) {
               const status = step?.status
               const detail = step?.detail ?? ""
               const cleaned = formatDetail(stepName, detail)
+              const isCancelled = failedStepIndex >= 0 && i > failedStepIndex
 
               return (
                 <div
@@ -454,6 +470,8 @@ export default function DocProcessing({ onNav }: Props) {
                       <span className="material-symbols-outlined text-error text-lg" style={{ fontVariationSettings: "'FILL' 1" }}>cancel</span>
                     ) : status === "skipped" ? (
                       <span className="material-symbols-outlined text-outline text-lg">remove_circle_outline</span>
+                    ) : isCancelled ? (
+                      <span className="material-symbols-outlined text-outline-variant/40 text-lg">block</span>
                     ) : (
                       <span className="material-symbols-outlined text-outline-variant text-lg">radio_button_unchecked</span>
                     )}
@@ -464,6 +482,7 @@ export default function DocProcessing({ onNav }: Props) {
                       status === "running" ? "text-on-surface font-semibold"
                       : status === "failed" ? "text-error"
                       : status === "success" ? "text-on-surface"
+                      : isCancelled ? "text-outline/30"
                       : "text-on-surface-variant"
                     }`}>
                       {STEP_LABELS[stepName] ?? stepName}
@@ -471,6 +490,11 @@ export default function DocProcessing({ onNav }: Props) {
                       {status === "running" && (
                         <span className="ml-2 inline-block text-[10px] px-2 py-0.5 rounded-full font-bold bg-secondary-container/20 text-secondary border border-secondary/20">
                           RUNNING
+                        </span>
+                      )}
+                      {isCancelled && (
+                        <span className="ml-2 inline-block text-[10px] px-2 py-0.5 rounded-full font-bold bg-surface-container-highest text-outline-variant/50">
+                          CANCELLED
                         </span>
                       )}
                     </div>
@@ -485,9 +509,11 @@ export default function DocProcessing({ onNav }: Props) {
             })}
           </div>
 
-          <div className="px-8 py-4 text-center text-xs bg-surface-container-high/20 border-t border-white/5 text-on-surface-variant">
-            Pipeline running — this page updates automatically every 2.5 s
-          </div>
+          {!terminalError && (
+            <div className="px-8 py-4 text-center text-xs bg-surface-container-high/20 border-t border-white/5 text-on-surface-variant">
+              Pipeline running — this page updates automatically every 2.5 s
+            </div>
+          )}
         </section>
       )}
 
@@ -502,7 +528,7 @@ export default function DocProcessing({ onNav }: Props) {
               <div>
                 <h2 className="font-headline text-2xl text-on-surface">Certified Deliverables</h2>
                 <p className="text-on-surface-variant text-sm italic">
-                  High-precision legal PDFs available for immediate download.
+                  Your translated legal documents are ready to download.
                 </p>
               </div>
               {avgConf != null && (

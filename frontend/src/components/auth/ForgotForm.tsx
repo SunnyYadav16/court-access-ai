@@ -91,7 +91,7 @@ export default function ForgotForm() {
         <Button
           type="submit"
           className="w-full cursor-pointer"
-          style={{ background: "#0B1D3A" }}
+          style={{ background: "#1D4ED8" }}
           disabled={isLoading}
         >
           {isLoading ? (

@@ -2,28 +2,321 @@
  * screens/admin/InterpreterReview.tsx
  *
  * Translation review queue — renders INSIDE AppShell.
- * Dark-themed with side-by-side original/translation panels,
- * corrections textarea, action buttons, and contextual stats.
- *
- * Static mock — no backend integration yet.
+ * Two views:
+ *   A) Queue table — lists all completed translations with review status
+ *   B) Detail view — download originals, review, approve/flag for recorrection
  */
 
+import { useCallback, useEffect, useState } from "react"
 import { ScreenId } from "@/lib/constants"
+import { interpreterApi, type InterpreterReviewSummary } from "@/services/api"
 
 interface Props { onNav: (s: ScreenId) => void }
 
+type View = "queue" | "detail"
+
+const LANG_LABEL: Record<string, string> = { es: "Spanish", pt: "Portuguese" }
+
+function formatDate(iso: string): string {
+  const d = new Date(iso)
+  const now = new Date()
+  const diffMs = now.getTime() - d.getTime()
+  const diffMins = Math.floor(diffMs / 60_000)
+  if (diffMins < 1) return "Just now"
+  if (diffMins < 60) return `${diffMins}m ago`
+  const diffHrs = Math.floor(diffMins / 60)
+  if (diffHrs < 24) return `${diffHrs}h ago`
+  return d.toLocaleDateString([], { month: "short", day: "numeric" })
+}
+
+function ReviewStatusBadge({ status }: { status: string }) {
+  if (status === "approved")
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-green-900/30 text-green-400">
+        <span className="material-symbols-outlined text-[10px]">check_circle</span>
+        Approved
+      </span>
+    )
+  if (status === "flagged")
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-red-900/30 text-red-400">
+        <span className="material-symbols-outlined text-[10px]">flag</span>
+        Flagged
+      </span>
+    )
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-900/30 text-amber-400">
+      <span className="material-symbols-outlined text-[10px]">pending</span>
+      Pending
+    </span>
+  )
+}
+
+function StatCard({ label, value, icon, color }: { label: string; value: string; icon: string; color: string }) {
+  return (
+    <div className={`bg-surface-container-low p-5 rounded-lg border-l-4 ${color} flex items-center gap-4`}>
+      <div className="w-10 h-10 rounded-full bg-surface-container-high flex items-center justify-center">
+        <span className="material-symbols-outlined text-on-surface-variant">{icon}</span>
+      </div>
+      <div>
+        <p className="text-[10px] uppercase text-outline tracking-wider">{label}</p>
+        <p className="text-xl font-bold text-on-surface">{value}</p>
+      </div>
+    </div>
+  )
+}
+
+function ConfidenceLabel({ score }: { score: number | null }) {
+  if (score == null) return <span className="text-sm text-on-surface-variant">--</span>
+  const pct = (score * 100).toFixed(1)
+  const color = score >= 0.9 ? "text-green-400" : score >= 0.7 ? "text-amber-400" : "text-red-400"
+  return <span className={`text-sm font-bold ${color}`}>{pct}%</span>
+}
+
 export default function InterpreterReview({ onNav: _onNav }: Props) {
+  const [view, setView] = useState<View>("queue")
+  const [sessions, setSessions] = useState<InterpreterReviewSummary[]>([])
+  const [selectedSession, setSelectedSession] = useState<InterpreterReviewSummary | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [langFilter, setLangFilter] = useState<"" | "es" | "pt">("")
+  const [page, setPage] = useState(1)
+  const [notes, setNotes] = useState("")
+  const [submitting, setSubmitting] = useState(false)
+
+  // ── Fetch review queue ───────────────────────────────────────────────────
+
+  const fetchSessions = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const data = await interpreterApi.listReview(page, langFilter || undefined)
+      setSessions(data)
+    } catch {
+      setError("Failed to load review queue. Please try again.")
+    } finally {
+      setLoading(false)
+    }
+  }, [page, langFilter])
+
+  useEffect(() => {
+    fetchSessions()
+  }, [fetchSessions])
+
+  // ── Actions ──────────────────────────────────────────────────────────────
+
+  async function handleApprove() {
+    if (!selectedSession) return
+    setSubmitting(true)
+    setError(null)
+    try {
+      await interpreterApi.approve(selectedSession.session_id)
+      const updated = { ...selectedSession, review_status: "approved" as const }
+      setSessions((prev) =>
+        prev.map((s) => (s.session_id === selectedSession.session_id ? updated : s)),
+      )
+      setSelectedSession(updated)
+      setNotes("")
+      setView("queue")
+    } catch {
+      setError("Failed to approve translation.")
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function handleFlag() {
+    if (!selectedSession || !notes.trim()) return
+    setSubmitting(true)
+    setError(null)
+    try {
+      await interpreterApi.flag(selectedSession.session_id, notes, true)
+      const updated = { ...selectedSession, review_status: "flagged" as const }
+      setSessions((prev) =>
+        prev.map((s) => (s.session_id === selectedSession.session_id ? updated : s)),
+      )
+      setNotes("")
+      setView("queue")
+    } catch {
+      setError("Failed to flag translation.")
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  function openDetail(session: InterpreterReviewSummary) {
+    setSelectedSession(session)
+    setNotes("")
+    setError(null)
+    setView("detail")
+  }
+
+  // ── Derived counts ───────────────────────────────────────────────────────
+
+  const pendingCount = sessions.filter((s) => s.review_status === "pending").length
+  const approvedCount = sessions.filter((s) => s.review_status === "approved").length
+  const flaggedCount = sessions.filter((s) => s.review_status === "flagged").length
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // Detail View
+  // ══════════════════════════════════════════════════════════════════════════
+
+  if (view === "detail" && selectedSession) {
+    const s = selectedSession
+    return (
+      <div className="px-6 lg:px-8 py-8 max-w-5xl mx-auto space-y-8">
+        {/* Back + Header */}
+        <header className="space-y-4">
+          <button
+            onClick={() => setView("queue")}
+            className="flex items-center gap-1 text-sm text-on-surface-variant hover:text-on-surface cursor-pointer bg-transparent border-none transition-colors"
+          >
+            <span className="material-symbols-outlined text-sm">arrow_back</span>
+            Back to queue
+          </button>
+          <div className="flex items-center gap-3">
+            <span className="bg-secondary text-on-secondary px-3 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider">
+              Interpreter Review
+            </span>
+            <ReviewStatusBadge status={s.review_status} />
+          </div>
+          <h1 className="font-headline text-3xl text-on-surface">
+            {s.original_filename?.replace(/\.[^.]+$/, "").replace(/_/g, " ") ?? `Session ${s.session_id.slice(0, 8)}`}
+          </h1>
+          <p className="text-on-surface-variant text-sm">
+            {LANG_LABEL[s.target_language] ?? s.target_language} translation &middot; {formatDate(s.created_at)}
+          </p>
+        </header>
+
+        {/* Error banner */}
+        {error && (
+          <div className="px-4 py-3 rounded-lg bg-error-container/20 text-error text-sm flex items-center gap-2">
+            <span className="material-symbols-outlined text-sm">error</span>
+            {error}
+          </div>
+        )}
+
+        {/* Download panels */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="bg-surface-container-low rounded-xl p-6 border border-white/5">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="material-symbols-outlined text-primary text-lg">description</span>
+              <h3 className="font-headline text-lg text-on-surface">English (Original)</h3>
+            </div>
+            <p className="text-xs text-on-surface-variant mb-4">Source document from upload</p>
+            {s.signed_url_original ? (
+              <button
+                onClick={() => window.open(s.signed_url_original!, "_blank")}
+                className="w-full py-2.5 bg-[#FFD700] text-[#0D1B2A] rounded-lg font-bold text-sm flex items-center justify-center gap-2 cursor-pointer border-none hover:brightness-110 active:scale-[0.98] transition-all"
+              >
+                <span className="material-symbols-outlined text-sm">download</span>
+                Download Original
+              </button>
+            ) : (
+              <span className="text-xs text-on-surface-variant italic">Not available</span>
+            )}
+          </div>
+
+          <div className="bg-surface-container-low rounded-xl p-6 border border-secondary/20">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="material-symbols-outlined text-secondary text-lg">translate</span>
+              <h3 className="font-headline text-lg text-on-surface">
+                {LANG_LABEL[s.target_language] ?? s.target_language} (Translated)
+              </h3>
+            </div>
+            <p className="text-xs text-on-surface-variant mb-4">
+              AI-translated &middot; {s.llama_corrections_count} Llama correction{s.llama_corrections_count !== 1 ? "s" : ""}
+            </p>
+            {s.signed_url_translated ? (
+              <button
+                onClick={() => window.open(s.signed_url_translated!, "_blank")}
+                className="w-full py-2.5 border border-secondary/30 text-secondary rounded-lg font-bold text-sm flex items-center justify-center gap-2 cursor-pointer bg-transparent hover:bg-secondary/5 active:scale-[0.98] transition-all"
+              >
+                <span className="material-symbols-outlined text-sm">download</span>
+                Download Translation
+              </button>
+            ) : (
+              <span className="text-xs text-on-surface-variant italic">Not available</span>
+            )}
+          </div>
+        </div>
+
+        {/* Stats row */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <StatCard
+            label="AI Confidence"
+            value={s.avg_confidence_score != null ? `${(s.avg_confidence_score * 100).toFixed(1)}%` : "--"}
+            icon="psychology"
+            color="border-tertiary"
+          />
+          <StatCard
+            label="Llama Corrections"
+            value={String(s.llama_corrections_count)}
+            icon="gavel"
+            color="border-secondary"
+          />
+          <StatCard
+            label="Review Status"
+            value={s.review_status.charAt(0).toUpperCase() + s.review_status.slice(1)}
+            icon="verified_user"
+            color="border-primary"
+          />
+        </div>
+
+        {/* Notes textarea */}
+        <div className="space-y-2">
+          <label htmlFor="review-notes" className="text-xs uppercase tracking-widest text-outline ml-1">
+            Reviewer Notes / Corrections
+          </label>
+          <div className="relative group">
+            <textarea
+              id="review-notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              className="w-full bg-surface-container-highest rounded-xl p-4 text-on-surface placeholder:text-outline/50 min-h-[120px] resize-y outline-none border-none focus:ring-2 focus:ring-secondary/50 transition-all"
+              placeholder="Add reviewer notes, corrections, or reasons for flagging..."
+            />
+          </div>
+        </div>
+
+        {/* Action buttons */}
+        <div className="flex flex-col sm:flex-row gap-4">
+          <button
+            onClick={handleApprove}
+            disabled={submitting || s.review_status === "approved"}
+            className="flex-1 h-12 bg-secondary text-on-secondary font-bold rounded-lg flex items-center justify-center gap-2 cursor-pointer border-none hover:brightness-110 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{ boxShadow: "0px 8px 24px rgba(0, 0, 0, 0.3)" }}
+          >
+            <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>verified_user</span>
+            {s.review_status === "approved" ? "Already Approved" : "Approve & Certify"}
+          </button>
+          <button
+            onClick={handleFlag}
+            disabled={submitting || !notes.trim() || s.review_status === "flagged"}
+            className="flex-1 h-12 bg-error-container/20 text-error border border-error/30 font-bold rounded-lg flex items-center justify-center gap-2 cursor-pointer hover:bg-error-container/30 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <span className="material-symbols-outlined">flag</span>
+            {s.review_status === "flagged" ? "Already Flagged" : "Flag for Recorrection"}
+          </button>
+        </div>
+        {!notes.trim() && s.review_status !== "flagged" && (
+          <p className="text-xs text-on-surface-variant -mt-2">Notes are required to flag a translation.</p>
+        )}
+      </div>
+    )
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // Queue Table View
+  // ══════════════════════════════════════════════════════════════════════════
+
   return (
     <div className="px-6 lg:px-8 py-8 max-w-6xl mx-auto space-y-8">
-
       {/* Header */}
       <header className="space-y-4">
         <div className="flex items-center gap-3">
           <span className="bg-secondary text-on-secondary px-3 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider">
             Interpreter Role
-          </span>
-          <span className="px-2 py-1 bg-primary-container text-on-primary-container text-[10px] font-bold tracking-widest uppercase rounded">
-            Priority Review
           </span>
           <span className="text-tertiary font-medium text-sm flex items-center gap-1">
             <span className="material-symbols-outlined text-xs" style={{ fontVariationSettings: "'FILL' 1" }}>bolt</span>
@@ -34,172 +327,149 @@ export default function InterpreterReview({ onNav: _onNav }: Props) {
           <div>
             <h1 className="font-headline text-4xl text-on-surface mb-2">Translation Review Queue</h1>
             <p className="text-on-surface-variant max-w-2xl">
-              Audit pending AI-assisted transcripts and legal documents for linguistic precision and legal preservation.
+              Review AI-translated Massachusetts court forms automatically scraped from mass.gov
+              and processed through the DAG pipeline. Download originals and translations to compare,
+              then approve or flag for recorrection.
             </p>
           </div>
         </div>
       </header>
 
-      {/* Metadata bar */}
-      <div className="flex items-center justify-between px-4 py-3 bg-surface-container rounded-lg border border-outline-variant/5">
-        <div className="flex items-center gap-4">
-          <span className="material-symbols-outlined text-secondary">description</span>
-          <div>
-            <p className="text-xs font-bold text-on-surface">Order_of_Remand_CR2024.pdf</p>
-            <p className="text-[10px] text-outline uppercase tracking-wider">Court Order • PDF Document</p>
-          </div>
-        </div>
-        <span className="text-[10px] uppercase tracking-tighter text-outline hidden sm:inline">
-          Document ID: #CR-2024-0082
-        </span>
+      {/* Summary stats */}
+      <div className="grid grid-cols-3 gap-4">
+        <StatCard label="Pending Review" value={String(pendingCount)} icon="pending" color="border-amber-500" />
+        <StatCard label="Approved" value={String(approvedCount)} icon="check_circle" color="border-green-500" />
+        <StatCard label="Flagged" value={String(flaggedCount)} icon="flag" color="border-red-500" />
       </div>
 
-      {/* Side-by-side panels */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Original */}
-        <div className="flex flex-col gap-4">
-          <div className="flex items-center justify-between px-4">
-            <span className="font-headline italic text-lg text-primary">Original Text (English)</span>
-            <span className="flex items-center gap-1 text-[10px] uppercase text-outline">
-              <span className="w-1.5 h-1.5 rounded-full bg-primary" />
-              Source
-            </span>
-          </div>
-          <div className="bg-surface-container-low p-8 rounded-xl min-h-[400px] border border-outline-variant/10 leading-relaxed text-on-surface shadow-inner">
-            <p className="mb-6 font-semibold">IT IS HEREBY ORDERED:</p>
-            <p className="mb-4">
-              1. The defendant shall be remanded to the custody of the Sheriff pending the outcome of the
-              preliminary hearing scheduled for November 14th.
-            </p>
-            <p className="mb-4">
-              2. Bail is set at $250,000.00, to be posted in cash or by corporate surety bond.
-            </p>
-            <p className="mb-4">
-              3. The defendant is prohibited from contacting the victim, either directly or through a third
-              party, while this order remains in effect.
-            </p>
-            <p className="mb-4 italic">
-              Failure to comply with these conditions may result in immediate revocation of release status
-              and additional criminal charges.
-            </p>
-          </div>
-        </div>
-
-        {/* Translation */}
-        <div className="flex flex-col gap-4">
-          <div className="flex items-center justify-between px-4">
-            <span className="font-headline italic text-lg text-secondary">AI Translation (Spanish)</span>
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-secondary animate-pulse" />
-              <span className="text-[10px] uppercase tracking-tighter text-on-surface-variant font-bold">
-                Certification Active
-              </span>
-            </div>
-          </div>
-          <div className="bg-surface-container-high p-8 rounded-xl min-h-[400px] border border-secondary/20 leading-relaxed text-on-surface relative overflow-hidden"
-               style={{ boxShadow: "0px 12px 32px rgba(0, 0, 0, 0.4)" }}
-          >
-            <div className="absolute top-0 right-0 p-4 opacity-10">
-              <span className="material-symbols-outlined text-6xl">gavel</span>
-            </div>
-            <p className="mb-6 font-semibold">POR LA PRESENTE SE ORDENA:</p>
-            <p className="mb-4">
-              1. El acusado será{" "}
-              <span className="bg-secondary-container/20 border-b border-secondary-container text-secondary font-medium px-0.5 rounded-t-sm">
-                puesto bajo custodia
-              </span>{" "}
-              del Sheriff a la espera del resultado de la audiencia preliminar programada para el 14 de noviembre.
-            </p>
-            <p className="mb-4">
-              2. La fianza se fija en $250,000.00, a ser depositada en efectivo o mediante{" "}
-              <span className="bg-secondary-container/20 border-b border-secondary-container text-secondary font-medium px-0.5 rounded-t-sm">
-                fianza de una compañía de seguros
-              </span>.
-            </p>
-            <p className="mb-4">
-              3. Se prohíbe al acusado ponerse en contacto con la víctima, ya sea directamente o a través de un
-              tercero, mientras esta orden permanezca{" "}
-              <span className="bg-secondary-container/20 border-b border-secondary-container text-secondary font-medium px-0.5 rounded-t-sm">
-                vigente
-              </span>.
-            </p>
-            <p className="mb-4 italic">
-              El incumplimiento de estas condiciones puede dar lugar a la{" "}
-              <span className="bg-secondary-container/20 border-b border-secondary-container text-secondary font-medium px-0.5 rounded-t-sm">
-                revocación inmediata
-              </span>{" "}
-              del estatus de libertad y cargos penales adicionales.
-            </p>
-          </div>
+      {/* Filter bar */}
+      <div className="flex items-center gap-4">
+        <label className="text-xs uppercase tracking-widest text-outline">Language:</label>
+        <div className="flex gap-2">
+          {[
+            { value: "" as const, label: "All" },
+            { value: "es" as const, label: "Spanish" },
+            { value: "pt" as const, label: "Portuguese" },
+          ].map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => { setLangFilter(opt.value); setPage(1) }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer border transition-all ${
+                langFilter === opt.value
+                  ? "bg-secondary text-on-secondary border-secondary"
+                  : "bg-surface-container-high text-on-surface-variant border-white/10 hover:bg-surface-container-highest"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Corrections & Actions */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-end">
-        <div className="lg:col-span-7 flex flex-col gap-3">
-          <label htmlFor="corrections-notes" className="font-sans text-xs uppercase tracking-widest text-outline ml-1">
-            Manual Corrections / Translator Notes
-          </label>
-          <div className="relative group">
-            <textarea
-              id="corrections-notes"
-              className="w-full bg-surface-container-highest border-none rounded-xl p-4 text-on-surface placeholder:text-outline/50 focus:ring-2 focus:ring-secondary/50 min-h-[100px] resize-y transition-all duration-300 outline-none"
-              placeholder="e.g., 'Update clause 2 to use specific jurisdictional terminology for surety.'"
-            />
-            <div className="absolute bottom-3 right-3 text-[10px] text-outline pointer-events-none group-focus-within:opacity-100 opacity-40 transition-opacity">
-              CMD + Enter to quick-submit
-            </div>
-          </div>
+      {/* Error banner */}
+      {error && (
+        <div className="px-4 py-3 rounded-lg bg-error-container/20 text-error text-sm flex items-center gap-2">
+          <span className="material-symbols-outlined text-sm">error</span>
+          {error}
+          <button onClick={fetchSessions} className="ml-auto text-xs underline cursor-pointer bg-transparent border-none text-error">
+            Retry
+          </button>
         </div>
-        <div className="lg:col-span-5 flex flex-col gap-3">
+      )}
+
+      {/* Table */}
+      {loading ? (
+        <div className="flex items-center justify-center py-20 text-on-surface-variant">
+          <span className="material-symbols-outlined animate-spin mr-2">progress_activity</span>
+          Loading review queue...
+        </div>
+      ) : sessions.length === 0 ? (
+        <div className="text-center py-20 text-on-surface-variant">
+          <span className="material-symbols-outlined text-4xl mb-2 block">inbox</span>
+          <p className="text-sm">No translations to review{langFilter ? ` for ${LANG_LABEL[langFilter]}` : ""}.</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="text-[10px] uppercase tracking-widest text-on-surface-variant border-b border-white/5">
+                <th className="pb-3 pr-4">Document</th>
+                <th className="pb-3 pr-4">Language</th>
+                <th className="pb-3 pr-4">Confidence</th>
+                <th className="pb-3 pr-4">Corrections</th>
+                <th className="pb-3 pr-4">Date</th>
+                <th className="pb-3 pr-4">Status</th>
+                <th className="pb-3">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sessions.map((s) => (
+                <tr
+                  key={s.session_id}
+                  className="border-b border-white/[0.03] hover:bg-surface-container-high/50 transition-colors"
+                >
+                  <td className="py-3.5 pr-4">
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-secondary text-base">description</span>
+                      <span className="text-sm font-medium text-on-surface truncate max-w-[200px]">
+                        {s.original_filename
+                          ?.replace(/\.[^.]+$/, "")
+                          .replace(/_/g, " ") ?? s.session_id.slice(0, 8)}
+                      </span>
+                    </div>
+                  </td>
+                  <td className="py-3.5 pr-4">
+                    <span className="text-xs text-on-surface-variant">
+                      {LANG_LABEL[s.target_language] ?? s.target_language}
+                    </span>
+                  </td>
+                  <td className="py-3.5 pr-4">
+                    <ConfidenceLabel score={s.avg_confidence_score} />
+                  </td>
+                  <td className="py-3.5 pr-4">
+                    <span className="text-sm text-on-surface">{s.llama_corrections_count}</span>
+                  </td>
+                  <td className="py-3.5 pr-4">
+                    <span className="text-xs text-on-surface-variant">{formatDate(s.created_at)}</span>
+                  </td>
+                  <td className="py-3.5 pr-4">
+                    <ReviewStatusBadge status={s.review_status} />
+                  </td>
+                  <td className="py-3.5">
+                    <button
+                      onClick={() => openDetail(s)}
+                      className="text-xs text-secondary font-bold cursor-pointer bg-transparent border-none hover:underline transition-all"
+                    >
+                      Review &rarr;
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Pagination */}
+      {!loading && sessions.length > 0 && (
+        <div className="flex items-center justify-between pt-2">
           <button
-            className="w-full h-12 bg-secondary text-on-secondary font-bold rounded-lg flex items-center justify-center gap-2 hover:brightness-110 active:scale-[0.98] transition-all cursor-pointer border-none"
-            style={{ boxShadow: "0px 12px 32px rgba(0, 0, 0, 0.4)" }}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page <= 1}
+            className="px-4 py-2 text-xs font-bold text-on-surface-variant bg-surface-container-high rounded-lg cursor-pointer border border-white/10 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-surface-container-highest transition-all"
           >
-            <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>verified_user</span>
-            Approve & Certify Translation
+            Previous
           </button>
-          <button className="w-full h-12 bg-surface-container-low text-secondary border border-secondary/20 font-bold rounded-lg flex items-center justify-center gap-2 hover:bg-secondary/5 active:scale-[0.98] transition-all cursor-pointer">
-            <span className="material-symbols-outlined">edit_note</span>
-            Submit Manual Corrections
+          <span className="text-xs text-on-surface-variant">Page {page}</span>
+          <button
+            onClick={() => setPage((p) => p + 1)}
+            disabled={sessions.length < 20}
+            className="px-4 py-2 text-xs font-bold text-on-surface-variant bg-surface-container-high rounded-lg cursor-pointer border border-white/10 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-surface-container-highest transition-all"
+          >
+            Next
           </button>
         </div>
-      </div>
-
-      {/* Contextual Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-surface-container-low p-5 rounded-lg border-l-4 border-tertiary flex items-center gap-4">
-          <div className="w-10 h-10 rounded-full bg-tertiary-container flex items-center justify-center">
-            <span className="material-symbols-outlined text-tertiary">psychology</span>
-          </div>
-          <div>
-            <p className="text-[10px] uppercase text-outline tracking-wider">AI Confidence Score</p>
-            <p className="text-xl font-bold text-on-surface">
-              98.4% <span className="text-xs font-normal text-tertiary">High</span>
-            </p>
-          </div>
-        </div>
-        <div className="bg-surface-container-low p-5 rounded-lg border-l-4 border-secondary flex items-center gap-4">
-          <div className="w-10 h-10 rounded-full bg-secondary-container/10 flex items-center justify-center">
-            <span className="material-symbols-outlined text-secondary">gavel</span>
-          </div>
-          <div>
-            <p className="text-[10px] uppercase text-outline tracking-wider">Legal Terms Flagged</p>
-            <p className="text-xl font-bold text-on-surface">4 Matches</p>
-          </div>
-        </div>
-        <div className="bg-surface-container-low p-5 rounded-lg border-l-4 border-primary flex items-center gap-4">
-          <div className="w-10 h-10 rounded-full bg-primary-container flex items-center justify-center">
-            <span className="material-symbols-outlined text-primary">timer</span>
-          </div>
-          <div>
-            <p className="text-[10px] uppercase text-outline tracking-wider">Queue Position</p>
-            <p className="text-xl font-bold text-on-surface">
-              1 / 12 <span className="text-xs font-normal text-primary">Pending</span>
-            </p>
-          </div>
-        </div>
-      </div>
+      )}
     </div>
   )
 }

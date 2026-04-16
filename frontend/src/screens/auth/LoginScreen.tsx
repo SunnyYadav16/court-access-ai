@@ -121,7 +121,7 @@ export default function LoginScreen({ onNav }: Props) {
 
             <Button
               className="w-full cursor-pointer"
-              style={{ background: "#0B1D3A" }}
+              style={{ background: "#1D4ED8" }}
               onClick={() => onNav(SCREENS.MFA)}>
               Sign In
             </Button>

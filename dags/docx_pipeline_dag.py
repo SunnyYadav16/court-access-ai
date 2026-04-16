@@ -365,13 +365,16 @@ def task_translate_docx(**context) -> dict:
 
     output_path = str(Path(meta["work_dir"]) / f"output_{target_lang}.docx")
 
-    summary = translate_docx(
-        input_path=meta["local_docx"],
-        output_path=output_path,
-        translator=translator,
-        reviewer=reviewer,
-        nllb_target=nllb_target,
-    )
+    try:
+        summary = translate_docx(
+            input_path=meta["local_docx"],
+            output_path=output_path,
+            translator=translator,
+            reviewer=reviewer,
+            nllb_target=nllb_target,
+        )
+    finally:
+        translator.unload()
 
     # Copy output to mounted data dir for inspection (dev only)
     if os.getenv("APP_ENV") == "development":
@@ -697,7 +700,7 @@ with DAG(
     start_date=datetime(2024, 1, 1),
     default_args=DEFAULT_ARGS,
     catchup=False,
-    max_active_runs=1,
+    max_active_runs=2,
     is_paused_upon_creation=False,
     on_failure_callback=_on_dag_failure,
     render_template_as_native_obj=True,

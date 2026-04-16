@@ -126,8 +126,7 @@ export default function DocHistory({ onNav }: Props) {
       <section className="mb-10">
         <h1 className="font-headline text-4xl text-on-surface mb-2">Translation History</h1>
         <p className="text-on-surface-variant max-w-2xl">
-          A comprehensive ledger of all cross-jurisdictional legal document translations
-          processed by Court Access AI.
+          A record of all your legal document translations processed by Court Access AI.
         </p>
       </section>
 

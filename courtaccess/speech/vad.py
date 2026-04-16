@@ -116,9 +116,14 @@ class VADService:
         model_device = next(model.parameters()).device if hasattr(model, "parameters") else torch.device("cpu")
         audio_tensor = audio_tensor.to(model_device)
 
-        # Get speech probability — lock protects the model's recurrent state
-        # so concurrent sessions don't corrupt each other.
+        # Reset recurrent state before each inference so interleaved
+        # sessions (two participants sharing the singleton model) don't
+        # corrupt each other's boundary predictions.  This makes each
+        # chunk a stateless classification, which is less accurate than
+        # full temporal context but eliminates the cross-session
+        # contamination that prevented speech_end from ever firing.
         with self._lock, torch.no_grad():
+            model.reset_states()
             speech_prob = model(audio_tensor, sample_rate).item()
 
         # Threshold for speech detection

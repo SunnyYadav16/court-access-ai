@@ -527,11 +527,14 @@ def task_translate(**context) -> dict:
     try:
         config = _lang_config(target_lang)
         translator = Translator(config).load()
-        texts = [r["text"] for r in translatable]
+        try:
+            texts = [r["text"] for r in translatable]
 
-        t0 = time.time()
-        nllb_out = translator.batch_translate(texts, nllb_target)
-        elapsed = round(time.time() - t0, 1)
+            t0 = time.time()
+            nllb_out = translator.batch_translate(texts, nllb_target)
+            elapsed = round(time.time() - t0, 1)
+        finally:
+            translator.unload()
 
         # Count regions where NLLB actually changed the text (same logic as test script)
         nllb_changed = sum(1 for o, n in zip(texts, nllb_out, strict=False) if o != n)
