@@ -192,7 +192,7 @@ export default function DocResults({ onNav }: Props) {
       <section>
         <h2 className="font-headline text-2xl text-on-surface mb-2">Certified Deliverables</h2>
         <p className="text-on-surface-variant text-sm italic mb-6">
-          High-precision legal PDFs available for immediate download.
+          Your translated legal documents are ready to download.
         </p>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

@@ -15,7 +15,7 @@
  * AI transparency notice, and styled guest name input.
  */
 
-import { useEffect, useState, type ReactNode } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { GoogleAuthProvider, getRedirectResult, signInWithRedirect, type User as FirebaseUser } from "firebase/auth"
 import { auth } from "@/config/firebase"
@@ -111,12 +111,36 @@ export default function JoinRoomScreen() {
   const [error, setError]         = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
 
-  const reset       = useRealtimeStore((s) => s.reset)
-  const setRoomCode = useRealtimeStore((s) => s.setRoomCode)
-  const setMyName   = useRealtimeStore((s) => s.setMyName)
-  const setMyLanguage = useRealtimeStore((s) => s.setMyLanguage)
-  const setIsCreator  = useRealtimeStore((s) => s.setIsCreator)
-  const setCourtInfo  = useRealtimeStore((s) => s.setCourtInfo)
+  // Guards fetchPreview from running when auth auto-join is in progress.
+  const authJoinInProgressRef = useRef(false)
+
+  // ── Reconnect: if store already has a live guest session for this room, skip
+  //    straight to the session view instead of re-fetching the preview. ────────
+  //    Computed synchronously so the initial render already shows GuestSession
+  //    and the preview-fetch effect can skip itself.
+  const storeState = useRealtimeStore.getState()
+  const _canReconnect =
+    !!code &&
+    storeState.isGuest &&
+    !!storeState.roomToken &&
+    storeState.roomCode.toUpperCase() === code.toUpperCase() &&
+    storeState.phase !== "idle" &&
+    storeState.phase !== "ended"
+
+  const [reconnecting] = useState(() => _canReconnect)
+
+  useEffect(() => {
+    if (!reconnecting) return
+    setJoinMeta({
+      roomToken: storeState.roomToken!,
+      partnerName: storeState.myName,
+      targetLanguage: storeState.myLanguage,
+      courtDivision: storeState.courtDivision || null,
+      courtroom: storeState.courtroom || null,
+    })
+    setPagePhase("session")
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // mount only
 
   // ── Fetch room preview on mount ─────────────────────────────────────────────
 
@@ -126,6 +150,10 @@ export default function JoinRoomScreen() {
       setPagePhase("error")
       return
     }
+
+    // Skip fetching if we're reconnecting to an existing session or if
+    // an auth-based auto-join is in progress (post sign-in redirect).
+    if (reconnecting || authJoinInProgressRef.current) return
 
     async function fetchPreview() {
       try {
@@ -170,6 +198,13 @@ export default function JoinRoomScreen() {
     if (!code) return
 
     async function checkAuthOnMount() {
+      // Only auto-join after a redirect-based sign-in (join_room_code was
+      // stored before the redirect).  Without this guard, any signed-in user
+      // who visits /join/:code would be silently auto-joined without seeing
+      // the landing page first.
+      const pendingJoinCode = sessionStorage.getItem("join_room_code")
+      if (!pendingJoinCode || pendingJoinCode.toUpperCase() !== code!.toUpperCase()) return
+
       let user: FirebaseUser | null = null
       try {
         const result = await getRedirectResult(auth)
@@ -183,6 +218,8 @@ export default function JoinRoomScreen() {
       }
 
       if (user) {
+        sessionStorage.removeItem("join_room_code")
+        authJoinInProgressRef.current = true
         await handleAuthJoin(user)
       }
     }
@@ -192,6 +229,9 @@ export default function JoinRoomScreen() {
   }, [])
 
   // ── Authenticated join ─────────────────────────────────────────────────────
+  // Stays on /join/:code and renders GuestSession with the room JWT — same as
+  // the guest flow, but the POST includes the Firebase Bearer token so the
+  // backend can record partner_user_id in the DB.
 
   async function handleAuthJoin(user: FirebaseUser) {
     if (!code) return
@@ -219,14 +259,16 @@ export default function JoinRoomScreen() {
         courtroom: string | null
       }
 
-      reset()
-      setRoomCode(code)
-      setMyName(data.partner_name)
-      setMyLanguage(data.target_language)
-      setIsCreator(false)
-      setCourtInfo(data.court_division ?? "", data.courtroom ?? "", "")
-      sessionStorage.setItem("app_screen", "REALTIME_SESSION")
-      navigate("/")
+      // Render GuestSession in-place (same as guest flow) — the room JWT
+      // is what authenticates the WebSocket, not the Firebase token.
+      setJoinMeta({
+        roomToken: data.room_token,
+        partnerName: data.partner_name,
+        targetLanguage: data.target_language,
+        courtDivision: data.court_division,
+        courtroom: data.courtroom,
+      })
+      setPagePhase("session")
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to join session.")
       setPagePhase("error")
@@ -437,7 +479,10 @@ export default function JoinRoomScreen() {
                     <OutlineButton onClick={handleSignIn} icon="login">
                       Sign In
                     </OutlineButton>
-                    <OutlineButton onClick={() => navigate("/signup")} icon="app_registration">
+                    <OutlineButton onClick={() => {
+                      if (code) sessionStorage.setItem("join_room_code", code)
+                      navigate("/signup")
+                    }} icon="app_registration">
                       Create Account
                     </OutlineButton>
                   </div>

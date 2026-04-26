@@ -177,12 +177,12 @@ export default function FormDetail({ onNav }: Props) {
               </span>
               <div className="space-y-1">
                 <h4 className="text-amber-500 font-bold text-sm uppercase tracking-wider">
-                  Machine Translation Warning
+                  Pending Human Review
                 </h4>
                 <p className="text-on-surface text-sm leading-relaxed">
-                  The Spanish and Portuguese versions are generated via AI analysis.
-                  While high-precision, these documents must be verified by a licensed
-                  legal professional for official court proceedings.
+                  The translated versions of this form have not yet been reviewed by a licensed
+                  legal professional. They may be used for reference but should not be submitted
+                  for official court proceedings without verification.
                 </p>
               </div>
             </div>
@@ -209,8 +209,20 @@ export default function FormDetail({ onNav }: Props) {
                     <div>
                       <p className="font-semibold text-on-surface">{d.lang}</p>
                       <p className="text-xs text-on-surface-variant">
-                        {d.signedUrl ? (d.isPrimary ? "Standard Document" : "AI Translated") : "Not available"}
+                        {d.signedUrl
+                          ? d.isPrimary
+                            ? "Standard Document"
+                            : form.needs_human_review
+                              ? "AI Translated · Pending Review"
+                              : "AI Translated · Verified"
+                          : "Not available"}
                       </p>
+                      {!d.isPrimary && form.needs_human_review && d.signedUrl && (
+                        <span className="text-[10px] font-bold text-amber-400 flex items-center gap-1 mt-0.5">
+                          <span className="material-symbols-outlined text-[10px]">pending</span>
+                          Pending Human Review
+                        </span>
+                      )}
                     </div>
                   </div>
                   {d.signedUrl ? (

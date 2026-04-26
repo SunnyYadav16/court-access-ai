@@ -120,7 +120,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libatspi2.0-0 libxcomposite1 libxdamage1 libxfixes3 \
     libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2 \
     libx11-xcb1 \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3 /usr/bin/python
 
 USER airflow
 
@@ -136,7 +137,7 @@ RUN uv pip install '/opt/airflow/[airflow]'
 RUN uv pip install "dvc[gs]>=3.50.0"
 
 # # spaCy model — required by Translator.load() for proper noun protection
-RUN python -m spacy download en_core_web_lg
+RUN python3 -m spacy download en_core_web_lg
 
 # Install Playwright's Chromium browser for the form scraper
 RUN playwright install chromium

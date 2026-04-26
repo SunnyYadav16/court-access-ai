@@ -42,6 +42,8 @@ _VERTEX_PROJECT_ID = os.getenv("VERTEX_PROJECT_ID")
 _VERTEX_LOCATION = os.getenv("VERTEX_LOCATION")
 _VERTEX_MODEL = os.getenv("VERTEX_LEGAL_LLM_MODEL")
 _GCP_SA_JSON = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
+_GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+_GROQ_MODEL = os.getenv("GROQ_LEGAL_LLM_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
 _MAX_PAGES = 3  # only classify first 3 pages
 
 
@@ -141,27 +143,99 @@ def _get_vertex_client():
     )
 
 
+def _get_groq_client():
+    """Return a Groq client. Raises RuntimeError if groq package not installed."""
+    try:
+        from groq import Groq
+    except ImportError:
+        raise RuntimeError("groq package is not installed — run: pip install groq") from None
+    return Groq(api_key=_GROQ_API_KEY)
+
+
+def _groq_classify(pdf_path: str, excerpt: str, pages_read: int) -> dict:
+    """Groq fallback classifier — called when Vertex AI is unavailable/rate-limited."""
+    prompt = (
+        "You are a document classifier for Massachusetts courts. "
+        "Determine if the following document excerpt is a legal document "
+        "(court forms, legal filings, affidavits, motions, orders, etc.) "
+        "or a non-legal document. "
+        "Respond ONLY with JSON: "
+        '{"classification":"legal"|"non_legal","confidence":0.0-1.0,"reason":"..."}\n\n'
+        f"DOCUMENT EXCERPT:\n{excerpt}"
+    )
+
+    try:
+        client = _get_groq_client()
+        response = client.chat.completions.create(
+            model=_GROQ_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+            max_tokens=200,
+        )
+        if not response or not response.choices:
+            raise RuntimeError(f"Groq returned empty response for '{pdf_path}'")
+        raw = response.choices[0].message.content.strip()
+        raw = raw.replace("```json", "").replace("```", "").strip()
+
+        try:
+            result = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            logger.error(
+                "[GROQ CLASSIFY] Groq returned non-JSON for '%s' — failing closed. raw=%r error=%s",
+                pdf_path,
+                raw[:200],
+                exc,
+            )
+            raise ClassificationError(f"Groq returned unparseable JSON for '{pdf_path}': {exc}") from exc
+
+        missing = [k for k in ("classification", "confidence") if k not in result]
+        if missing:
+            logger.error(
+                "[GROQ CLASSIFY] Groq response missing keys %s for '%s' — failing closed.",
+                missing,
+                pdf_path,
+            )
+            raise ClassificationError(f"Groq response missing required keys {missing} for '{pdf_path}'")
+
+        result["pages_reviewed"] = pages_read
+        logger.info(
+            "[GROQ CLASSIFY] '%s' → %s (confidence=%.2f)",
+            pdf_path,
+            result["classification"],
+            result["confidence"],
+        )
+        return result
+
+    except ClassificationError:
+        raise
+    except Exception as exc:
+        logger.error("[GROQ CLASSIFY] Groq failed: %s", exc)
+        raise RuntimeError(f"Document classification failed (Groq): {exc}") from exc
+
+
 def _real_classify(pdf_path: str) -> dict:
     """
-    Production classifier via Vertex AI (Llama 4 Maverick).
+    Production classifier via Vertex AI (Llama 4 Maverick) with Groq fallback.
     Reads first 3 pages via PyMuPDF, sends text to Llama for classification.
 
     Fail-closed on bad AI responses: a non-JSON reply or a response missing
     required keys raises ClassificationError rather than falling back to a
     stub that unconditionally approves documents.
 
+    Provider priority:
+      1. Vertex AI (primary)
+      2. Groq (fallback, if GROQ_API_KEY is set)
+
     RAISES:
         ClassificationError: AI response is unparseable or missing required keys.
-        RuntimeError: Vertex auth or network failure.
+        RuntimeError: All providers failed (Vertex auth/network + no Groq key).
     """
     import pymupdf
 
     # ── Extract text from first N pages ──────────────────────────────────────
     doc = pymupdf.open(pdf_path)
-    pages_text = []
     pages_read = min(_MAX_PAGES, len(doc))
-    for i in range(pages_read):
-        pages_text.append(doc[i].get_text("text"))
+    pages_text = [doc[i].get_text("text") for i in range(pages_read)]
     doc.close()
 
     excerpt = "\n\n".join(pages_text)[:4000]  # cap tokens
@@ -176,6 +250,7 @@ def _real_classify(pdf_path: str) -> dict:
         f"DOCUMENT EXCERPT:\n{excerpt}"
     )
 
+    # ── Vertex AI attempt ────────────────────────────────────────────────────
     try:
         client = _get_vertex_client()
         response = client.chat.completions.create(
@@ -220,7 +295,14 @@ def _real_classify(pdf_path: str) -> dict:
         return result
 
     except ClassificationError:
-        raise  # propagate as-is — distinct from a transport/auth failure
+        raise  # fail-closed — don't fall back on bad AI responses
+
     except Exception as exc:
         logger.error("[REAL CLASSIFY] Vertex AI failed: %s", exc)
+
+        # ── Groq fallback ────────────────────────────────────────────────────
+        if _GROQ_API_KEY:
+            logger.warning("[REAL CLASSIFY] Falling back to Groq for '%s'", pdf_path)
+            return _groq_classify(pdf_path, excerpt, pages_read)
+
         raise RuntimeError(f"Document classification failed: {exc}") from exc

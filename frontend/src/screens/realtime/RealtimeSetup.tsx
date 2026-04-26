@@ -275,7 +275,7 @@ export default function RealtimeSetup({ onNav }: Props) {
               <div className="w-8 h-8 rounded-full bg-primary-container flex items-center justify-center text-primary">
                 <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>verified_user</span>
               </div>
-              <p className="text-xs font-medium text-slate-300">Justice Ledger Verified AI</p>
+              <p className="text-xs font-medium text-slate-300">AI-verified legal translation</p>
             </div>
           </div>
 

@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     legal_verify_timeout: float
     gcp_service_account_json: str
 
+    # ── Groq (Llama fallback — used when Vertex AI is unavailable) ─────────
+    groq_api_key: str | None = None
+    groq_legal_llm_model: str | None = None
+
     # ── Signed URLs ───────────────────────────────────────────────────────────
     signed_url_expiry_seconds: int
 

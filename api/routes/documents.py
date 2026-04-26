@@ -53,17 +53,24 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
-async def _get_airflow_token(client: httpx.AsyncClient) -> str:
-    """Exchange Airflow credentials for a JWT (required by Airflow 3.x REST API)."""
-    token_resp = await client.post(
+async def _airflow_auth_headers(client: httpx.AsyncClient) -> dict[str, str]:
+    """Fetch a JWT from Airflow's ``/auth/token`` and return Bearer headers.
+
+    Airflow 3.x's ``/api/v2/`` endpoints only accept JWT Bearer tokens.
+    SimpleAuthManager provides ``/auth/token`` without Flask dependencies.
+    """
+    resp = await client.post(
         f"{settings.airflow_base_url}/auth/token",
         json={"username": settings.airflow_username, "password": settings.airflow_password},
     )
-    token_resp.raise_for_status()
-    return token_resp.json()["access_token"]
+    resp.raise_for_status()
+    token = resp.json().get("access_token")
+    if not token:
+        raise ValueError(f"Airflow /auth/token response missing access_token: {resp.text}")
+    return {"Authorization": f"Bearer {token}"}
 
 
-async def _unpause_for_trigger(client: httpx.AsyncClient, dag_id: str, token: str) -> None:
+async def _unpause_for_trigger(client: httpx.AsyncClient, dag_id: str, auth_headers: dict[str, str]) -> None:
     """Unpause a DAG so a triggered run will be picked up by the scheduler.
 
     DAGs start paused (AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=true).
@@ -74,7 +81,7 @@ async def _unpause_for_trigger(client: httpx.AsyncClient, dag_id: str, token: st
     """
     resp = await client.patch(
         f"{settings.airflow_base_url}/api/v2/dags/{dag_id}",
-        headers={"Authorization": f"Bearer {token}"},
+        headers=auth_headers,
         json={"is_paused": False},
     )
     resp.raise_for_status()
@@ -366,12 +373,12 @@ async def upload_document(
     # so even if the trigger call fails the user can retry via the Airflow UI
     # or a re-trigger endpoint. We log the error but don't fail the upload.
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            airflow_token = await _get_airflow_token(client)
-            await _unpause_for_trigger(client, dag_id, airflow_token)
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            auth_headers = await _airflow_auth_headers(client)
+            await _unpause_for_trigger(client, dag_id, auth_headers)
             resp = await client.post(
                 f"{settings.airflow_base_url}/api/v2/dags/{dag_id}/dagRuns",
-                headers={"Authorization": f"Bearer {airflow_token}"},
+                headers=auth_headers,
                 json={
                     "logical_date": start_time,
                     "conf": {
@@ -484,6 +491,7 @@ async def get_document_status(
         llama_corrections_count=req_obj.llama_corrections_count or 0,
         processing_time_seconds=req_obj.processing_time_seconds,
         error_message=req_obj.error_message,
+        original_filename=req_obj.input_file_gcs_path.split("/")[-1] if req_obj.input_file_gcs_path else None,
     )
 
 
@@ -605,6 +613,7 @@ async def list_documents(
             llama_corrections_count=r.llama_corrections_count or 0,
             processing_time_seconds=r.processing_time_seconds,
             error_message=r.error_message,
+            original_filename=r.input_file_gcs_path.split("/")[-1] if r.input_file_gcs_path else None,
         )
         for s, r in rows
     ]
@@ -784,12 +793,12 @@ async def retranslate_document(
 
     # ── Trigger Airflow DAG ────────────────────────────────────────────────
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            airflow_token = await _get_airflow_token(client)
-            await _unpause_for_trigger(client, "document_pipeline_dag", airflow_token)
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            auth_headers = await _airflow_auth_headers(client)
+            await _unpause_for_trigger(client, "document_pipeline_dag", auth_headers)
             resp = await client.post(
                 f"{settings.airflow_base_url}/api/v2/dags/document_pipeline_dag/dagRuns",
-                headers={"Authorization": f"Bearer {airflow_token}"},
+                headers=auth_headers,
                 json={
                     "logical_date": now.isoformat(),
                     "conf": {

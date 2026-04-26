@@ -113,6 +113,7 @@ interface RealtimeActions {
   setMyName: (name: string) => void;
   setMyLanguage: (lang: string) => void;
   setIsCreator: (val: boolean) => void;
+  setIsGuest: (val: boolean) => void;
   setLobbyInfo: (sessionId: string, roomCode: string, joinUrl: string, roomCodeExpiresAt: string, partnerName: string, partnerLanguage: string) => void;
   setPartner: (info: PartnerInfo | null) => void;
   setPartnerMuted: (val: boolean) => void;
@@ -185,6 +186,8 @@ const useRealtimeStore = create<RealtimeStore>()(
   setMyLanguage: (lang) => set({ myLanguage: lang }),
 
   setIsCreator: (val) => set({ isCreator: val }),
+
+  setIsGuest: (val) => set({ isGuest: val }),
 
   setLobbyInfo: (sessionId, roomCode, joinUrl, roomCodeExpiresAt, partnerName, partnerLanguage) =>
     set({
@@ -277,6 +280,8 @@ const useRealtimeStore = create<RealtimeStore>()(
         myName: state.myName,
         myLanguage: state.myLanguage,
         isCreator: state.isCreator,
+        isGuest: state.isGuest,
+        roomToken: state.roomToken,
         partner: state.partner,
         courtDivision: state.courtDivision,
         courtroom: state.courtroom,

@@ -194,6 +194,17 @@ export function useAudioCapture() {
     [startAudioAnalysis, setIsRecording, incrementDuration, setError]
   );
 
+  // ── Clear speaking state when muted ────────────────────────────────────────
+  // The AnalyserNode keeps running while muted (we don't tear down the stream),
+  // so isSpeaking can go true even though no audio is being sent. Force it off
+  // whenever the user mutes so the UI doesn't show "you're speaking" incorrectly.
+  const isMuted = useRealtimeStore((s) => s.isMuted);
+  useEffect(() => {
+    if (isMuted) {
+      setIsSpeaking(false);
+    }
+  }, [isMuted, setIsSpeaking]);
+
   // ── Cleanup on unmount ────────────────────────────────────────────────────
 
   useEffect(() => {

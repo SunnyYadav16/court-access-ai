@@ -34,8 +34,10 @@ x-airflow-common:
     AIRFLOW__CORE__INTERNAL_API_SECRET_KEY: ${AIRFLOW_SECRET_KEY}
 
     # ── Auth ──
-    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
-    AIRFLOW__API__AUTH_BACKENDS: 'airflow.providers.fab.auth_manager.api.auth.backend.basic_auth'
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.api_fastapi.auth.managers.simple.simple_auth_manager.SimpleAuthManager
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: 'airflow:ADMIN'
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: 'True'
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: '/opt/airflow/config/simple_auth_passwords.json'
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_SECRET_KEY}
 
     # ── Database ──
@@ -43,6 +45,13 @@ x-airflow-common:
 
     # ── Scheduler ──
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    AIRFLOW__SCHEDULER__SCHEDULER_HEARTBEAT_SEC: '30'
+    AIRFLOW__SCHEDULER__LOCAL_TASK_JOB_HEARTBEAT_SEC: '30'
+
+    # ── Task execution ──
+    AIRFLOW__CORE__INTERNAL_API_TIMEOUT: '120'
+    AIRFLOW__CORE__PARALLELISM: '8'
+    AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: '4'
 
     # ── courtaccess package path ──
     PYTHONPATH: /opt/airflow
@@ -144,6 +153,7 @@ x-airflow-common:
   volumes:
     &airflow-common-volumes
     - ./dags:/opt/airflow/dags
+    - ./config/simple_auth_passwords.json:/opt/airflow/config/simple_auth_passwords.json
     - ./courtaccess:/opt/airflow/courtaccess    # live code changes in dev
     - ./db:/opt/airflow/db                      # Added missing db module
     - ./logs:/opt/airflow/logs
@@ -335,6 +345,10 @@ services:
       PDF_RENDER_DPI: ${PDF_RENDER_DPI}
       VALIDATION_CONFIDENCE_THRESHOLD: ${VALIDATION_CONFIDENCE_THRESHOLD}
 
+      # ── Groq (Llama fallback) ──
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_LEGAL_LLM_MODEL: ${GROQ_LEGAL_LLM_MODEL:-}
+
       # ── Airflow (API Client) ──
       AIRFLOW_BASE_URL: ${AIRFLOW_BASE_URL}
       AIRFLOW_USERNAME: ${AIRFLOW_USERNAME}
@@ -455,7 +469,7 @@ services:
       - |
         mkdir -p /opt/airflow/data/forms /opt/airflow/forms /opt/airflow/models /opt/airflow/dvc_storage /opt/airflow/logs
         chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/data /opt/airflow/forms /opt/airflow/models /opt/airflow/dvc_storage /opt/airflow/logs
-        exec /entrypoint airflow version
+        /entrypoint airflow version
     environment:
       <<: *airflow-common-env
       _AIRFLOW_DB_MIGRATE: 'true'
@@ -477,6 +491,7 @@ services:
     environment:
       <<: *airflow-common-env
       MODEL_LOADER_MODE: local
+      DVC_NO_ANALYTICS: '1'
     volumes: *airflow-common-volumes
     user: "0:0"
     restart: "no"
@@ -488,6 +503,7 @@ services:
     build:
       context: .
       dockerfile: gpu.Dockerfile
+      target: api
     profiles: [gpu]
     deploy:
       resources:

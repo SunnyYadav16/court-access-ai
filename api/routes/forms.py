@@ -86,27 +86,31 @@ async def trigger_form_scraper(
             detail="Airflow configuration is missing. Cannot trigger scraper DAG.",
         )
 
-    token_url = f"{settings.airflow_base_url}/auth/token"
     dag_run_url = f"{settings.airflow_base_url}/api/v2/dags/form_scraper_dag/dagRuns"
     triggered_at = datetime.now(tz=UTC)
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            # Airflow 3 requires a JWT exchange before calling the REST API.
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            # Fetch JWT — Airflow 3.x /api/v2/ requires Bearer tokens.
             token_resp = await client.post(
-                token_url,
+                f"{settings.airflow_base_url}/auth/token",
                 json={"username": settings.airflow_username, "password": settings.airflow_password},
             )
             token_resp.raise_for_status()
-            airflow_token = token_resp.json()["access_token"]
-
+            token = token_resp.json().get("access_token")
+            if not token:
+                raise httpx.HTTPStatusError(
+                    "Airflow /auth/token response missing access_token",
+                    request=token_resp.request,
+                    response=token_resp,
+                )
+            auth_headers = {"Authorization": f"Bearer {token}"}
             # Unpause → trigger → re-pause.
             # A paused DAG leaves triggered runs queued forever, so we must
             # unpause first. We re-pause immediately after queuing the run so
             # the weekly scheduler does NOT fire automatically — only API
             # calls should start this DAG.
             dag_url = f"{settings.airflow_base_url}/api/v2/dags/form_scraper_dag"
-            auth_headers = {"Authorization": f"Bearer {airflow_token}"}
 
             await client.patch(dag_url, headers=auth_headers, json={"is_paused": False})
 
@@ -126,6 +130,7 @@ async def trigger_form_scraper(
                 await client.patch(dag_url, headers=auth_headers, json={"is_paused": True})
             except Exception as repause_exc:
                 logger.warning("Could not re-pause form_scraper_dag after trigger: %s", repause_exc)
+
     except httpx.RequestError as exc:
         logger.error("Airflow unreachable while triggering form_scraper_dag: %s", exc)
         raise HTTPException(

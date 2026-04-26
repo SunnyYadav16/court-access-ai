@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useState } from "react"
 import { ScreenId } from "@/lib/constants"
-import { adminApi, type AdminMetrics, type AdminStats } from "@/services/api"
+import { adminApi, type AdminMetrics, type AdminStats, type ContainerStat } from "@/services/api"
 
 interface Props { onNav: (s: ScreenId) => void }
 
@@ -21,19 +21,10 @@ const MODEL_HEALTH_CONFIG: { name: string; icon: string; stepKey: string | null 
   { name: "Faster-Whisper Large V3", icon: "mic",             stepKey: null },
   { name: "NLLB-200 Distilled 1.3B", icon: "translate",       stepKey: "translate" },
   { name: "PaddleOCR v3",            icon: "document_scanner", stepKey: "ocr_printed_text" },
-  { name: "Qwen2.5-VL",              icon: "image_search",     stepKey: "classify_document" },
+  { name: "Llama 4 (Classifier)",     icon: "category",          stepKey: "classify_document" },
   { name: "Silero VAD v4",           icon: "graphic_eq",       stepKey: null },
   { name: "Piper TTS",               icon: "record_voice_over", stepKey: null },
   { name: "Llama 4 (Vertex AI)",     icon: "gavel",            stepKey: "legal_review" },
-]
-
-const infrastructure = [
-  { resource: "API (FastAPI)", cpu: "23%", mem: "41%", gpu: "—" },
-  { resource: "Whisper",       cpu: "45%", mem: "62%", gpu: "71%" },
-  { resource: "NLLB",          cpu: "38%", mem: "55%", gpu: "58%" },
-  { resource: "OCR",           cpu: "12%", mem: "34%", gpu: "22%" },
-  { resource: "TTS",           cpu: "8%",  mem: "18%", gpu: "—" },
-  { resource: "Airflow Worker", cpu: "15%", mem: "28%", gpu: "—" },
 ]
 
 const ACTION_LABELS: Record<string, string> = {
@@ -83,6 +74,9 @@ export default function AdminDashboard({ onNav: _onNav }: Props) {
   const [loading, setLoading] = useState(true)
   const [statsError, setStatsError] = useState<string | null>(null)
   const [metricsError, setMetricsError] = useState<string | null>(null)
+  const [containerStats, setContainerStats] = useState<ContainerStat[] | null>(null)
+  const [infraLoading, setInfraLoading] = useState(false)
+  const [cleaning, setCleaning] = useState(false)
 
   const fetchAll = useCallback(async () => {
     setLoading(true)
@@ -101,8 +95,25 @@ export default function AdminDashboard({ onNav: _onNav }: Props) {
 
   useEffect(() => {
     void fetchAll()
-    const id = setInterval(() => void fetchAll(), 30_000)
-    return () => clearInterval(id)
+  }, [fetchAll])
+
+  useEffect(() => {
+    if (tab === "infrastructure") {
+      setInfraLoading(true)
+      adminApi.getContainerStats()
+        .then(setContainerStats)
+        .catch(() => setContainerStats(null))
+        .finally(() => setInfraLoading(false))
+    }
+  }, [tab])
+
+  const handleCleanup = useCallback(async () => {
+    setCleaning(true)
+    try {
+      const result = await adminApi.cleanupStaleSessions()
+      if (result.cleaned > 0) void fetchAll()
+    } catch { /* non-critical */ }
+    finally { setCleaning(false) }
   }, [fetchAll])
 
   const driftRows = [
@@ -182,10 +193,18 @@ export default function AdminDashboard({ onNav: _onNav }: Props) {
           </div>
           <h1 className="text-5xl font-headline text-on-surface tracking-tight">System Monitoring</h1>
           <p className="text-on-surface-variant mt-2 max-w-xl">
-            Real-time oversight of neural machine translation pipelines and judicial data ingestion nodes.
+            Monitor translation processing, system health, and recent activity across all services.
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={handleCleanup}
+            disabled={cleaning}
+            className="flex items-center gap-2 px-5 py-2.5 bg-surface-container-high rounded-lg text-sm font-medium hover:bg-surface-bright transition-colors border border-outline-variant/15 cursor-pointer disabled:opacity-50"
+          >
+            <span className="material-symbols-outlined text-sm">cleaning_services</span>
+            {cleaning ? "Cleaning…" : "Clean Stale Sessions"}
+          </button>
           <button
             onClick={() => void fetchAll()}
             disabled={loading}
@@ -333,7 +352,7 @@ export default function AdminDashboard({ onNav: _onNav }: Props) {
               })}
             </div>
             <div className="text-[11px] mt-4 pt-3 border-t border-white/5 text-slate-600">
-              7-day rolling average · refreshes every 30 seconds
+              7-day rolling average · manual refresh only
             </div>
           </div>
 
@@ -384,28 +403,31 @@ export default function AdminDashboard({ onNav: _onNav }: Props) {
         <div className="bg-surface-container-low rounded-xl p-6 border border-white/5">
           <div className="flex items-center gap-2 mb-5">
             <span className="material-symbols-outlined text-secondary">dns</span>
-            <h3 className="text-lg text-white font-headline">GCE VM Infrastructure</h3>
+            <h3 className="text-lg text-white font-headline">Container Resource Usage</h3>
           </div>
           {/* Table header */}
           <div className="grid grid-cols-4 py-2 text-[11px] uppercase tracking-widest font-label text-on-surface-variant border-b border-white/10">
-            <span>Resource</span>
+            <span>Container</span>
             <span>CPU</span>
             <span>Memory</span>
             <span>GPU</span>
           </div>
-          {infrastructure.map((r, i) => (
+          {infraLoading && (
+            <div className="text-sm text-on-surface-variant py-4">Loading container stats…</div>
+          )}
+          {!infraLoading && containerStats && containerStats.map((r, i) => (
             <div key={i} className={`grid grid-cols-4 py-3 text-sm ${
               i ? "border-t border-white/5" : ""
             }`}>
-              <span className="text-on-surface font-medium">{r.resource}</span>
-              <span className="text-on-surface-variant">{r.cpu}</span>
-              <span className="text-on-surface-variant">{r.mem}</span>
-              <span className="text-on-surface-variant">{r.gpu !== "—" ? r.gpu : "—"}</span>
+              <span className="text-on-surface font-medium">{r.name}</span>
+              <span className={parseFloat(r.cpu) > 80 ? "text-red-400" : "text-on-surface-variant"}>{r.cpu}</span>
+              <span className={parseFloat(r.mem) > 80 ? "text-red-400" : "text-on-surface-variant"}>{r.mem}</span>
+              <span className="text-on-surface-variant">{r.gpu ?? "—"}</span>
             </div>
           ))}
-          <div className="text-[11px] mt-4 pt-3 border-t border-white/5 text-slate-600">
-            Static — live VM metrics pending GCP Monitoring integration
-          </div>
+          {!infraLoading && !containerStats && (
+            <div className="text-sm text-on-surface-variant py-4">Container stats unavailable.</div>
+          )}
         </div>
       )}
     </div>

@@ -153,7 +153,7 @@ export default function SignupScreen({ onNav }: Props) {
 
             <Button
               className="w-full cursor-pointer"
-              style={{ background: "#0B1D3A" }}
+              style={{ background: "#1D4ED8" }}
               onClick={() => onNav(SCREENS.VERIFY_EMAIL)}>
               Create Account
             </Button>

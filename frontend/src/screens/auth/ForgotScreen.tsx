@@ -31,7 +31,7 @@ export default function ForgotScreen({ onNav }: Props) {
               <label className="text-xs font-semibold block mb-1" style={{ color: "#4A5568" }}>Email address</label>
               <Input placeholder="name@mass.gov" type="email" />
             </div>
-            <Button className="w-full" style={{ background: "#0B1D3A" }}
+            <Button className="w-full" style={{ background: "#1D4ED8" }}
               onClick={() => onNav(SCREENS.RESET)}>
               Send Reset Link
             </Button>

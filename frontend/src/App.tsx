@@ -177,6 +177,7 @@ function PublicSignupRoute() {
 
 function ProtectedApp() {
   const { authState, role, authModalOpen } = useAuth()
+  const protectedNavigate = useNavigate()
   const [screen, setScreen] = useState<ScreenId>(SCREENS.LANDING)
   const onNav = (s: ScreenId) => {
     // Silently redirect to role home if the target screen is not permitted
@@ -193,6 +194,16 @@ function ProtectedApp() {
     }
 
     if (authState === "authenticated" && role) {
+      // If the user signed up / signed in from a /join/:code page, redirect
+      // them back so the join flow can complete with their new credentials.
+      const pendingJoinCode = sessionStorage.getItem("join_room_code")
+      if (pendingJoinCode) {
+        // Keep join_room_code so JoinRoomScreen's checkAuthOnMount picks it up
+        // and auto-joins with the now-authenticated user.
+        protectedNavigate(`/join/${pendingJoinCode}`)
+        return
+      }
+
       const saved = sessionStorage.getItem("app_screen") as ScreenId | null
       const AUTH_SCREENS = new Set<string>([
         SCREENS.LOGIN,
@@ -213,7 +224,7 @@ function ProtectedApp() {
         setScreen(ROLE_HOME[role])
       }
     }
-  }, [authState, role])
+  }, [authState, role, protectedNavigate])
 
   // Screen renderer
   const renderScreen = () => {
@@ -280,6 +291,12 @@ function ProtectedApp() {
   }
 
   if (authState === "authenticated") {
+    // RealtimeSession gets full-screen treatment — no sidebar, no topbar.
+    // It renders its own header with session controls.
+    if (screen === SCREENS.REALTIME_SESSION && role && ROLE_SCREENS[role].has(SCREENS.REALTIME_SESSION)) {
+      return <RealtimeSession onNav={onNav} />
+    }
+
     return (
       <AppShell current={screen} onNav={onNav} role={role}>
         {renderScreen()}

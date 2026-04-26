@@ -6,7 +6,13 @@ Scheduled: every Monday at 06:00 UTC
 
 Pipeline flow:
   scrape_and_classify → preprocess_data → validate_catalog → detect_anomalies
-      → detect_bias → trigger_pretranslation → log_summary → write_manifest
+      → detect_bias → prepare_pdf_confs → trigger_pdf_pretranslation
+                    → prepare_docx_confs → trigger_docx_pretranslation
+                    → log_summary → write_manifest
+
+  PDF forms are fully processed (OCR + translation + catalog update) before
+  DOCX forms are triggered. This prevents the two pipelines from competing
+  for RAM / CPU during the GPU-free translation step.
 
 MIGRATED from data_pipeline/dags/form_scraper_dag.py.
 All src.* imports updated to courtaccess.* package imports.
@@ -22,6 +28,7 @@ from pathlib import Path
 import sqlalchemy as sa
 from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
+from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
 
 from courtaccess.core import gcs
 from courtaccess.core.validation import run_preprocessing
@@ -906,44 +913,73 @@ def task_detect_bias(**context) -> dict:
     return report
 
 
-def task_prepare_trigger_confs(**context) -> list[dict]:
+def task_prepare_pdf_confs(**context) -> list[dict]:
     """
-    Task 6a — Prepare confs for trigger_pretranslation task.
+    Task 6a — Prepare trigger confs for PDF forms only.
 
-    Each entry includes a unique ``trigger_run_id`` to prevent ``logical_date``
-    collision deduplication when multiple forms are triggered in the same second.
-    Without this, ``TriggerDagRunOperator.expand()`` silently drops runs whose
-    auto-generated ``run_id`` collides with an earlier mapped instance's.
-
-    Routing:
-      - DOCX forms  → ``docx_pipeline_dag``  (triggered twice: once per language,
-        because that DAG processes one target language per run).
-      - PDF / other → ``form_pretranslation_dag`` (handles both languages in one run).
-
-    Returns a list of dicts shaped for ``expand_kwargs()``:
-        [
-            {
-                "trigger_dag_id": "form_pretranslation_dag" | "docx_pipeline_dag",
-                "conf": {...},
-                "trigger_run_id": "<prefix>__<uuid>__<dag_run>",
-            },
-            ...
-        ]
+    PDF forms → ``form_pretranslation_dag`` (handles both ES + PT in one run).
+    Returns a list of dicts shaped for ``expand_kwargs()``.
     """
     ti = context["ti"]
     result = ti.xcom_pull(task_ids="scrape_and_classify", key="scrape_result")
     if result is None:
-        logger.warning("No scrape result found in XCom — nothing to trigger.")
+        logger.warning("No scrape result found in XCom — nothing to trigger (PDF).")
         return []
 
     queue: list[str] = result.get("pretranslation_queue", [])
     if not queue:
-        logger.info("No forms need pre-translation this cycle.")
+        logger.info("No forms need pre-translation this cycle — PDF phase skipped.")
         return []
 
-    # ── Build form_id → catalog entry lookup from XCom (avoids a DB round-trip) ──
-    # Prefer the GCS-resolved list from upload_forms_to_gcs; fall back to the
-    # raw scrape output if the upload task was skipped.
+    forms: list[dict] = (
+        ti.xcom_pull(task_ids="upload_forms_to_gcs", key="forms")
+        or ti.xcom_pull(task_ids="scrape_and_classify", key="forms")
+        or []
+    )
+    form_lookup: dict[str, dict] = {str(f["form_id"]): f for f in forms if f.get("form_id")}
+
+    dag_run_id = context["dag_run"].run_id if context.get("dag_run") else "manual"
+    logger.info("Preparing PDF trigger confs for %d candidate form(s).", len(queue))
+
+    confs: list[dict] = []
+    for form_id in queue:
+        entry = form_lookup.get(str(form_id)) or {}
+        file_type = (entry.get("file_type") or "pdf").lower()
+        if file_type != "docx":
+            # PDF (or unknown) — two-language pipeline in a single run.
+            confs.append(
+                {
+                    "trigger_dag_id": "form_pretranslation_dag",
+                    "conf": {"form_id": form_id},
+                    "trigger_run_id": f"pretranslation__{form_id}__{dag_run_id}",
+                }
+            )
+            logger.info("PDF form '%s' → form_pretranslation_dag", form_id)
+
+    logger.info("PDF confs prepared: %d", len(confs))
+    return confs
+
+
+def task_prepare_docx_confs(**context) -> list[dict]:
+    """
+    Task 6c — Prepare trigger confs for DOCX forms only.
+
+    Runs AFTER all PDF pretranslation runs are complete (``trigger_pdf_pretranslation``
+    uses ``wait_for_completion=True``). DOCX forms → ``docx_pipeline_dag``
+    (one language per run → two confs per DOCX form).
+    Returns a list of dicts shaped for ``expand_kwargs()``.
+    """
+    ti = context["ti"]
+    result = ti.xcom_pull(task_ids="scrape_and_classify", key="scrape_result")
+    if result is None:
+        logger.warning("No scrape result found in XCom — nothing to trigger (DOCX).")
+        return []
+
+    queue: list[str] = result.get("pretranslation_queue", [])
+    if not queue:
+        logger.info("No forms need pre-translation this cycle — DOCX phase skipped.")
+        return []
+
     forms: list[dict] = (
         ti.xcom_pull(task_ids="upload_forms_to_gcs", key="forms")
         or ti.xcom_pull(task_ids="scrape_and_classify", key="forms")
@@ -953,16 +989,13 @@ def task_prepare_trigger_confs(**context) -> list[dict]:
 
     dag_run_id = context["dag_run"].run_id if context.get("dag_run") else "manual"
     start_time = datetime.utcnow().isoformat() + "Z"
-    logger.info("Preparing trigger confs for %d form(s): %s", len(queue), queue)
+    logger.info("Preparing DOCX trigger confs for %d candidate form(s).", len(queue))
 
     confs: list[dict] = []
     for form_id in queue:
         entry = form_lookup.get(str(form_id)) or {}
         file_type = (entry.get("file_type") or "pdf").lower()
-
         if file_type == "docx":
-            # docx_pipeline_dag translates one language per run — emit one entry
-            # for ES and one for PT so both translations are produced.
             versions = entry.get("versions") or []
             latest_ver = versions[0] if versions else {}
             gcs_input_path = latest_ver.get("file_path_original") or ""
@@ -970,10 +1003,6 @@ def task_prepare_trigger_confs(**context) -> list[dict]:
             filename = f"{slug}.docx"
 
             for target_lang, nllb_target in (("es", "spa_Latn"), ("pt", "por_Latn")):
-                # Each triggered run is fully independent (one language per run),
-                # so session_id and request_id must both be fresh UUIDs — never
-                # shared across languages — to avoid cross-run collisions in the
-                # sessions / pipeline_steps / document_translation_requests tables.
                 confs.append(
                     {
                         "trigger_dag_id": "docx_pipeline_dag",
@@ -989,7 +1018,7 @@ def task_prepare_trigger_confs(**context) -> list[dict]:
                             "start_time": start_time,
                             "original_format": "docx",
                         },
-                        "trigger_run_id": (f"docx_pretranslation__{form_id}__{target_lang}__{dag_run_id}"),
+                        "trigger_run_id": f"docx_pretranslation__{form_id}__{target_lang}__{dag_run_id}",
                     }
                 )
             logger.info(
@@ -997,17 +1026,8 @@ def task_prepare_trigger_confs(**context) -> list[dict]:
                 form_id,
                 gcs_input_path,
             )
-        else:
-            # PDF (or unknown) — existing two-language pipeline.
-            confs.append(
-                {
-                    "trigger_dag_id": "form_pretranslation_dag",
-                    "conf": {"form_id": form_id},
-                    "trigger_run_id": f"pretranslation__{form_id}__{dag_run_id}",
-                }
-            )
-            logger.info("PDF form '%s' → form_pretranslation_dag", form_id)
 
+    logger.info("DOCX confs prepared: %d", len(confs))
     return confs
 
 
@@ -1179,6 +1199,7 @@ with DAG(
     start_date=datetime(2024, 1, 1),
     default_args=DEFAULT_ARGS,
     catchup=False,
+    max_active_tasks=64,
     is_paused_upon_creation=True,
     tags=["courtaccess", "forms", "scraping", "preprocessing", "anomaly-detection", "bias-detection"],
 ) as dag:
@@ -1190,25 +1211,43 @@ with DAG(
     t3_validate = PythonOperator(task_id="validate_catalog", python_callable=task_validate_catalog)
     t4_anomaly = PythonOperator(task_id="detect_anomalies", python_callable=task_detect_anomalies)
     t5_bias = PythonOperator(task_id="detect_bias", python_callable=task_detect_bias)
-    from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
 
-    t6_prepare = PythonOperator(task_id="prepare_trigger_confs", python_callable=task_prepare_trigger_confs)
-    t6_trigger = TriggerDagRunOperator.partial(
-        task_id="trigger_pretranslation",
-        # trigger_dag_id is NOT hardcoded here — it is supplied per-entry by
-        # task_prepare_trigger_confs via the expand_kwargs dict key
-        # "trigger_dag_id", routing PDFs to form_pretranslation_dag and
-        # DOCX forms to docx_pipeline_dag.
-    ).expand_kwargs(t6_prepare.output)
+    # ── Phase 1: trigger PDF forms and WAIT for all to complete ──────────────
+    # wait_for_completion=True blocks the parent DAG run until every mapped
+    # form_pretranslation_dag run has reached a terminal state (success, failed,
+    # or skipped).  Only then does prepare_docx_confs and the DOCX trigger run,
+    # ensuring the two pipelines never compete for memory.
+    t6a_prepare_pdf = PythonOperator(
+        task_id="prepare_pdf_confs",
+        python_callable=task_prepare_pdf_confs,
+    )
+    t6a_trigger_pdf = TriggerDagRunOperator.partial(
+        task_id="trigger_pdf_pretranslation",
+        wait_for_completion=True,
+        # "none_failed" so the step is SKIPPED (not FAILED) when there are
+        # no PDF confs — this propagates correctly to the DOCX phase below.
+        trigger_rule="none_failed",
+    ).expand_kwargs(t6a_prepare_pdf.output)
+
+    # ── Phase 2: trigger DOCX forms (only after all PDFs are done) ───────────
+    t6b_prepare_docx = PythonOperator(
+        task_id="prepare_docx_confs",
+        python_callable=task_prepare_docx_confs,
+        # "none_failed" so this runs even when the PDF trigger was SKIPPED
+        # (i.e. no PDF forms this cycle) — we still want DOCX forms processed.
+        trigger_rule="none_failed",
+    )
+    t6b_trigger_docx = TriggerDagRunOperator.partial(
+        task_id="trigger_docx_pretranslation",
+        wait_for_completion=True,
+        trigger_rule="none_failed",
+    ).expand_kwargs(t6b_prepare_docx.output)
+
     t7_summary = PythonOperator(
         task_id="log_summary",
         python_callable=task_log_summary,
-        # "none_failed" ensures this task runs even when trigger_pretranslation is
-        # SKIPPED (i.e. task_prepare_trigger_confs returned []), but blocks on
-        # upstream FAILED states. Without this, the default "all_success" rule
-        # propagates the skip state, silently dropping the form_scrape_completed
-        # audit row and breaking the _prev_active_forms_count() baseline used
-        # by detect_anomalies.
+        # "none_failed" ensures this task runs even when trigger steps are
+        # SKIPPED (empty pretranslation queue), but blocks on FAILED states.
         trigger_rule="none_failed",
     )
     t8_manifest = PythonOperator(
@@ -1226,8 +1265,10 @@ with DAG(
         >> t3_validate
         >> t4_anomaly
         >> t5_bias
-        >> t6_prepare
-        >> t6_trigger
+        >> t6a_prepare_pdf  # build PDF conf list
+        >> t6a_trigger_pdf  # fire & WAIT for all PDF pretranslations
+        >> t6b_prepare_docx  # build DOCX conf list (only runs after PDFs done)
+        >> t6b_trigger_docx  # fire & WAIT for all DOCX translations
         >> t7_summary
         >> t8_manifest
     )

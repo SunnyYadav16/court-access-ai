@@ -41,7 +41,7 @@ export default function ResetScreen({ onNav }: Props) {
               <label className="text-xs font-semibold block mb-1" style={{ color: "#4A5568" }}>Confirm new password</label>
               <Input placeholder="Confirm new password" type="password" />
             </div>
-            <Button className="w-full" style={{ background: "#0B1D3A" }}
+            <Button className="w-full" style={{ background: "#1D4ED8" }}
               onClick={() => onNav(SCREENS.LOGIN)}>
               Reset Password
             </Button>
